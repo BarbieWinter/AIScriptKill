@@ -1,96 +1,234 @@
+/**
+ * LibraryPage — 剧本库
+ *
+ * 第一印象决定一切。这个页面要让玩家感觉"我即将进入一个神秘的世界"。
+ * 采用电影化布局：全屏主视觉 + 精致卡片网格
+ */
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { Sparkles, Clock, Star } from "lucide-react";
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 24 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.25, 0.1, 0.25, 1] } },
+};
+
+const stagger = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08 } },
+};
+
+const pkg = {
+  id: "snow-village",
+  title: "雪乡连环杀人事件",
+  subtitle: "AI 沉浸式悬疑互动剧",
+  tagline: "雪乡，一个被大雪覆盖的东北村庄。除夕夜，一桩离奇的命案打破了这份宁静。",
+  difficulty: 3,
+  duration: 120,
+  genre: ["悬疑", "推理", "惊悚"],
+  rating: 4.5,
+  players: "1人 · 单人沉浸",
+};
 
 export default function LibraryPage() {
-  const [packages, setPackages] = useState<any[]>([]);
-
-  useEffect(() => {
-    // TODO: 从后端获取剧本包列表
-    // GET /api/v1/packages
-    setPackages([
-      {
-        id: "snow-village",
-        title: "雪乡连环杀人事件",
-        description: "雪乡，一个被大雪覆盖的东北村庄。新年将至，村子里却接连发生命案……",
-        difficulty: 3,
-        duration_minutes: 120,
-        genre: ["悬疑", "推理", "惊悚"],
-      },
-    ]);
-  }, []);
-
   return (
     <main className="min-h-screen bg-[var(--background)]">
-      {/* 顶部导航 */}
-      <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <h1 className="text-lg font-bold tracking-wider text-[var(--theme-primary)]">
-            AI 剧本杀
-          </h1>
-        </div>
-      </header>
-
-      {/* 主视觉横幅 */}
-      <section className="relative h-[60vh] min-h-[400px] overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--background)]" />
-        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-          <h2 className="mb-4 text-4xl font-bold tracking-wider md:text-6xl">
-            雪乡连环杀人事件
-          </h2>
-          <p className="mb-8 max-w-2xl text-lg text-[var(--muted-foreground)]">
-            雪乡，一个被大雪覆盖的东北村庄。
-            <br />
-            新年将至，村子里却接连发生命案……
-          </p>
-          <div className="flex gap-4">
-            <span className="rounded-full border border-[var(--border)] px-4 py-1 text-sm text-[var(--muted-foreground)]">
-              悬疑
-            </span>
-            <span className="rounded-full border border-[var(--border)] px-4 py-1 text-sm text-[var(--muted-foreground)]">
-              推理
-            </span>
-            <span className="rounded-full border border-[var(--border)] px-4 py-1 text-sm text-[var(--muted-foreground)]">
-              惊悚
-            </span>
+      {/* ══ 全屏主视觉 ══ */}
+      <section className="relative h-screen w-full overflow-hidden">
+        {/* 背景层 */}
+        <div className="absolute inset-0">
+          <div className="absolute inset-0 bg-gradient-to-b from-[#0f0f23] via-[#1a1a3e] to-[#0a0a0b]" />
+          {/* 雪花粒子 */}
+          <div className="absolute inset-0 overflow-hidden">
+            {Array.from({ length: 30 }, (_, i) => (
+              <div
+                key={i}
+                className="absolute rounded-full bg-white"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: `-${2 + Math.random() * 4}px`,
+                  width: 1.5 + Math.random() * 2.5,
+                  height: 1.5 + Math.random() * 2.5,
+                  opacity: 0.2 + Math.random() * 0.3,
+                  animation: `snow-fall ${8 + Math.random() * 10}s -${Math.random() * 10}s linear infinite`,
+                  filter: "blur(0.5px)",
+                }}
+              />
+            ))}
           </div>
+          {/* 底部渐隐 */}
+          <div className="absolute inset-x-0 bottom-0 h-[40vh] bg-gradient-to-t from-[var(--background)] to-transparent" />
         </div>
+
+        {/* 内容层 */}
+        <div className="relative z-10 flex h-full flex-col items-center justify-center px-6 text-center">
+          <motion.p
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.2 }}
+            className="mb-3 text-xs tracking-[0.3em] text-white/30 uppercase"
+          >
+            {pkg.subtitle}
+          </motion.p>
+
+          <motion.h1
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.4 }}
+            className="mb-4 text-5xl md:text-7xl font-bold text-white tracking-tight"
+          >
+            {pkg.title}
+          </motion.h1>
+
+          <motion.p
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.6 }}
+            className="mb-8 max-w-xl text-sm md:text-base text-white/50 leading-relaxed"
+          >
+            {pkg.tagline}
+          </motion.p>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.8 }}
+            className="flex flex-wrap items-center justify-center gap-3 mb-10"
+          >
+            {pkg.genre.map((g) => (
+              <span key={g}
+                className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-white/50 tracking-wider"
+              >
+                {g}
+              </span>
+            ))}
+            <span className="flex items-center gap-1 text-white/30 text-xs">·</span>
+            <span className="flex items-center gap-1 text-white/50 text-xs">
+              <Star className="h-3 w-3 text-[var(--warning)]" />
+              {pkg.rating}
+            </span>
+            <span className="flex items-center gap-1 text-white/50 text-xs">
+              <Clock className="h-3 w-3" />
+              {pkg.duration}分钟
+            </span>
+          </motion.div>
+
+          <motion.a
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 1.0 }}
+            href={`/library/${pkg.id}`}
+            className="group relative inline-flex items-center gap-2 rounded-xl bg-[var(--theme-primary)] px-8 py-3.5 text-sm font-bold text-white transition-all hover:bg-[var(--theme-primary)]/80 shadow-xl shadow-[var(--theme-primary)]/20"
+          >
+            <Sparkles className="h-4 w-4" />
+            进入雪乡
+            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--theme-primary)] opacity-75" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--theme-primary)]" />
+            </span>
+          </motion.a>
+        </div>
+
+        {/* 底部滚动提示 */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.5 }}
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10"
+        >
+          <div className="flex flex-col items-center gap-2 text-white/20 text-xs">
+            <span>探索更多剧本</span>
+            <svg className="w-4 h-4 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </div>
+        </motion.div>
       </section>
 
-      {/* 剧本库网格 */}
-      <section className="mx-auto max-w-7xl px-6 py-12">
-        <div className="mb-8 flex items-center justify-between">
-          <h3 className="text-xl font-bold">剧本库</h3>
-          <div className="flex gap-2">
-            <button className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm transition-colors hover:bg-[var(--accent)]">
-              难度筛选
-            </button>
-            <button className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm transition-colors hover:bg-[var(--accent)]">
-              类型筛选
-            </button>
-          </div>
-        </div>
+      {/* ══ 剧本库 ══ */}
+      <section className="relative px-6 pb-24 -mt-20">
+        <div className="mx-auto max-w-6xl">
+          <motion.h2
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="mb-8 text-lg font-bold text-white/80"
+          >
+            剧本库
+          </motion.h2>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {packages.map((pkg) => (
-            <a
-              key={pkg.id}
+          <motion.div
+            variants={stagger}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true }}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
+          >
+            {/* 雪乡卡片 */}
+            <motion.a
+              variants={fadeUp}
               href={`/library/${pkg.id}`}
-              className="group rounded-xl border border-[var(--border)] bg-[var(--accent)] p-6 transition-all duration-300 hover:border-[var(--theme-primary)] hover:shadow-lg hover:shadow-[var(--theme-primary)]/10"
+              className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/10 transition-all duration-500"
             >
-              <div className="mb-4 aspect-[3/4] rounded-lg bg-gradient-to-br from-[var(--theme-primary)]/20 to-[var(--theme-accent)]/20" />
-              <h4 className="mb-2 text-lg font-bold group-hover:text-[var(--theme-primary)]">
-                {pkg.title}
-              </h4>
-              <p className="mb-4 line-clamp-2 text-sm text-[var(--muted-foreground)]">
-                {pkg.description}
-              </p>
-              <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
-                <span>{'★'.repeat(pkg.difficulty)}{'☆'.repeat(5 - pkg.difficulty)}</span>
-                <span>{pkg.duration_minutes}分钟</span>
+              {/* 卡片顶部氛围图 */}
+              <div className="h-48 bg-gradient-to-br from-[#1a1a3e] via-[#2a1a3e] to-[#0a0a0b] relative overflow-hidden">
+                <div className="absolute inset-0 opacity-20">
+                  {Array.from({ length: 15 }, (_, i) => (
+                    <div key={i} className="absolute rounded-full bg-white"
+                      style={{
+                        left: `${Math.random() * 100}%`,
+                        top: `${Math.random() * 100}%`,
+                        width: 1 + Math.random() * 2,
+                        height: 1 + Math.random() * 2,
+                        opacity: 0.3 + Math.random() * 0.5,
+                      }} />
+                  ))}
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                <div className="absolute bottom-3 left-4">
+                  <div className="flex gap-2">
+                    {pkg.genre.slice(0, 2).map((g) => (
+                      <span key={g} className="rounded-full bg-black/40 backdrop-blur-sm px-2.5 py-0.5 text-[10px] text-white/60 border border-white/5">
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </a>
-          ))}
+
+              {/* 卡片内容 */}
+              <div className="p-5">
+                <h3 className="text-base font-bold text-white mb-1.5 group-hover:text-[var(--theme-primary)] transition-colors">
+                  {pkg.title}
+                </h3>
+                <p className="text-sm text-white/40 line-clamp-2 mb-4 leading-relaxed">
+                  {pkg.tagline}
+                </p>
+                <div className="flex items-center justify-between text-xs text-white/30">
+                  <span className="flex items-center gap-1">
+                    <Star className="h-3 w-3 text-[var(--warning)]" />
+                    {pkg.rating}
+                  </span>
+                  <span>{pkg.players}</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {pkg.duration}min
+                  </span>
+                </div>
+              </div>
+            </motion.a>
+
+            {/* 占位卡片（更多剧本即将上线） */}
+            <motion.div
+              variants={fadeUp}
+              className="rounded-2xl border border-dashed border-white/5 p-8 flex flex-col items-center justify-center text-center h-[350px] bg-white/[0.02]"
+            >
+              <p className="text-3xl mb-3 opacity-30">🎭</p>
+              <p className="text-sm text-white/20">更多剧本即将上线</p>
+            </motion.div>
+          </motion.div>
         </div>
       </section>
     </main>
