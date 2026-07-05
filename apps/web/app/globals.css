@@ -2,141 +2,133 @@
 
 /* ── 主题色变量系统（支持剧本包覆盖） ── */
 :root {
-  /* 基础色板（深色主题） */
   --background: #0a0a0b;
   --foreground: #e4e4e7;
   --muted: #27272a;
   --muted-foreground: #a1a1aa;
   --border: #27272a;
   --accent: #18181b;
-
-  /* 主题色（剧本包可覆盖） */
   --theme-primary: #7c3aed;
   --theme-secondary: #1e293b;
   --theme-accent: #f43f5e;
-
-  /* 语义色 */
   --danger: #dc2626;
   --warning: #f59e0b;
   --success: #22c55e;
   --info: #3b82f6;
-
-  /* 层叠 */
   --overlay: rgba(0, 0, 0, 0.7);
   --panel-bg: rgba(10, 10, 11, 0.95);
   --scene-overlay: rgba(0, 0, 0, 0.3);
-
-  /* 排版 */
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
-/* ── 基础样式 ── */
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html {
-  scroll-behavior: smooth;
-}
+html { scroll-behavior: smooth; }
 
 body {
-  margin: 0;
-  padding: 0;
+  margin: 0; padding: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-mono);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── 滚动条 ── */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--background);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+/* ── 场景粒子 ── */
+@keyframes snow-fall {
+  0% { transform: translateY(-10vh) translateX(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(110vh) translateX(50px); opacity: 0; }
 }
 
-/* ── 动画关键帧 ── */
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes slide-in-left {
-  from { opacity: 0; transform: translateX(-20px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 5px var(--theme-primary); }
-  50% { box-shadow: 0 0 20px var(--theme-primary); }
-}
-
-@keyframes typing {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-
-@keyframes shake {
+@keyframes snow-drift {
   0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-3px); }
-  75% { transform: translateX(3px); }
+  50% { transform: translateX(30px); }
 }
 
-@keyframes flash {
+@keyframes ember-rise {
+  0% { transform: translateY(0) scale(1); opacity: 0.8; }
+  50% { opacity: 0.4; }
+  100% { transform: translateY(-60px) scale(0.3); opacity: 0; }
+}
+
+@keyframes flicker {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  25% { opacity: 0.6; }
+  50% { opacity: 0.9; }
+  75% { opacity: 0.5; }
+}
+
+@keyframes vignette-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.75; }
+}
+
+@keyframes float-up {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes type-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.05); opacity: 0.3; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+@keyframes screen-flash {
+  0% { opacity: 0; }
+  20% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+@keyframes letter-fade-in {
+  from { opacity: 0; transform: translateY(5px); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
 }
 
 /* ── 工具类 ── */
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out;
+.snow-particle {
+  animation: snow-fall linear infinite;
 }
-.animate-fade-in-up {
-  animation: fade-in-up 0.4s ease-out;
+.ember-particle {
+  animation: ember-rise ease-out infinite;
 }
-.animate-slide-in-left {
-  animation: slide-in-left 0.3s ease-out;
-}
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-.animate-shake {
-  animation: shake 0.3s ease-in-out;
-}
+.flicker { animation: flicker 3s ease-in-out infinite; }
+.vignette-pulse { animation: vignette-pulse 4s ease-in-out infinite; }
 
 /* ── 文本样式 ── */
 .dm-narration {
   color: var(--muted-foreground);
   font-style: italic;
   text-align: center;
-  padding: 1rem 0;
+  padding: 0.75rem 1rem;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
-.npc-emotion-shaken {
-  animation: shake 0.3s ease-in-out;
+.npc-emotion-lying {
+  border-left: 2px solid var(--danger);
+  background: linear-gradient(90deg, rgba(220,38,38,0.05), transparent);
 }
 
 .npc-emotion-fear {
   color: var(--danger);
 }
 
-.npc-emotion-lying {
-  background: rgba(220, 38, 38, 0.05);
-  border-left: 2px solid var(--danger);
+.npc-emotion-shocked {
+  animation: flicker 0.5s ease-in-out 3;
 }

@@ -1,0 +1,1456 @@
+{
+  "version": 1,
+  "exportedAt": "2026-07-05T14:49:15Z",
+  "name": "AIScriptKill 目标总架构",
+  "description": "按目标架构哲学重画的一张完整 Clapet 总图：先分大块，再在每个板块内嵌套职责分组，并标注代码路径。",
+  "context": "依据 docs/ARCHITECTURE_OVERVIEW.md、API_REFERENCE.md、CONDITION_DSL_REFERENCE.md、FRONTEND_EXPERIENCE_DESIGN.md、SCRIPT_PACKAGE_SCHEMA.md、EXECUTION_PLAN.md、SONNET5_HANDOFF.md、doc/剧本系统设计.md 和当前代码目录生成。核心哲学：引擎不等于剧本；状态机优先；权限和防剧透先于模型生成；剧本包像编译器输入；前端是沉浸式游戏运行台。该图表达目标架构，不表达当前完成度；Start here 节点只用于任务拆解和阅读入口。",
+  "graph": {
+    "nodes": [
+      {
+        "id": "group-00-philosophy",
+        "type": "group",
+        "name": "00 架构哲学与读图起点",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 3180,
+        "height": 300
+      },
+      {
+        "id": "group-00-principles",
+        "type": "group",
+        "name": "核心原则",
+        "position": {
+          "x": 40,
+          "y": 70
+        },
+        "width": 620,
+        "height": 210
+      },
+      {
+        "id": "group-00-start",
+        "type": "group",
+        "name": "任务起点标注",
+        "position": {
+          "x": 700,
+          "y": 70
+        },
+        "width": 500,
+        "height": 210
+      },
+      {
+        "id": "group-00-target",
+        "type": "group",
+        "name": "目标边界",
+        "position": {
+          "x": 1240,
+          "y": 70
+        },
+        "width": 860,
+        "height": 210
+      },
+      {
+        "id": "group-00-readflow",
+        "type": "group",
+        "name": "读图主线",
+        "position": {
+          "x": 2140,
+          "y": 70
+        },
+        "width": 1000,
+        "height": 210
+      },
+      {
+        "id": "principle-engine-script",
+        "type": "node",
+        "name": "引擎 != 剧本",
+        "position": {
+          "x": 80,
+          "y": 160
+        },
+        "description": "稳定通用引擎消费可插拔剧本包；剧本事实不写死在运行时代码。",
+        "implementationDetails": "文档依据: docs/ARCHITECTURE_OVERVIEW.md §1, §4, §5; docs/SCRIPT_PACKAGE_SCHEMA.md; doc/剧本系统设计.md §2。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "principle-state-first",
+        "type": "node",
+        "name": "状态机优先",
+        "position": {
+          "x": 360,
+          "y": 160
+        },
+        "description": "玩家动作先进入阶段状态机；LLM 只是 DM/NPC/Guard/Hint 的执行能力。",
+        "implementationDetails": "目标落点: engine/core/script_engine.py, engine/core/game_state.py, engine/core/condition_evaluator.py。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "start-here-marker",
+        "type": "node",
+        "name": "Start here / 当前推进起点",
+        "position": {
+          "x": 780,
+          "y": 160
+        },
+        "description": "任务推进从这里对照：先看目标边界，再按每个大分组拆模块。",
+        "implementationDetails": "Clapet 严格导入不支持 decoration 类型，因此用普通 node 表示截图中的 Start here 标记。",
+        "appearance": {
+          "accentColor": "#a855f7"
+        },
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "target-fixed-script",
+        "type": "node",
+        "name": "固定剧本事实源",
+        "position": {
+          "x": 1280,
+          "y": 160
+        },
+        "description": "AI 不重新编故事；角色剧本、DM资料、真相、线索和证物是事实源。",
+        "implementationDetails": "资料来源: Organizing/; doc/剧本系统设计.md; docs/SCRIPT_PACKAGE_SCHEMA.md。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "target-permission-first",
+        "type": "node",
+        "name": "权限先于生成",
+        "position": {
+          "x": 1552,
+          "y": 160
+        },
+        "description": "SQL/RLS/阶段过滤先约束上下文，Guard 再审查模型输出。",
+        "implementationDetails": "目标落点: supabase/migrations/004_rls_policies.sql, engine/rag/retriever.py, engine/agents/guard_agent.py。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "target-immersive",
+        "type": "node",
+        "name": "沉浸式运行台",
+        "position": {
+          "x": 1824,
+          "y": 160
+        },
+        "description": "前端不是聊天页，而是场景、角色、线索、证物、媒体和复盘的游戏台。",
+        "implementationDetails": "目标落点: apps/web/app/play/[sessionId]/page.tsx, apps/web/components/game/, apps/web/stores/gameStore.ts。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "readline-runtime",
+        "type": "node",
+        "name": "主链路: 玩家运行时",
+        "position": {
+          "x": 2180,
+          "y": 160
+        },
+        "description": "玩家选择剧本和角色后，经 REST/WS 进入会话服务和 StateGraph。",
+        "implementationDetails": "阅读顺序: 01 -> 02 -> 03 -> 06。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "readline-content",
+        "type": "node",
+        "name": "主链路: 内容编译",
+        "position": {
+          "x": 2460,
+          "y": 160
+        },
+        "description": "原始素材整理为剧本包，经 Schema/导入/切片后写入数据域。",
+        "implementationDetails": "阅读顺序: 04 -> 05 -> 06。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "readline-ai-safe",
+        "type": "node",
+        "name": "主链路: AI安全",
+        "position": {
+          "x": 2740,
+          "y": 160
+        },
+        "description": "Agent 只拿被授权上下文，输出再过 Guard 和事件/媒体编排。",
+        "implementationDetails": "阅读顺序: 03 -> 05 -> 06 -> 07。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-01-frontend",
+        "type": "group",
+        "name": "01 玩家体验与前端运行台",
+        "position": {
+          "x": 0,
+          "y": 340
+        },
+        "width": 1020,
+        "height": 610
+      },
+      {
+        "id": "group-01-routes",
+        "type": "group",
+        "name": "页面路由与流程",
+        "position": {
+          "x": 40,
+          "y": 420
+        },
+        "width": 450,
+        "height": 220
+      },
+      {
+        "id": "group-01-client-state",
+        "type": "group",
+        "name": "客户端状态与通信",
+        "position": {
+          "x": 530,
+          "y": 420
+        },
+        "width": 450,
+        "height": 220
+      },
+      {
+        "id": "group-01-immersive-ui",
+        "type": "group",
+        "name": "沉浸式游戏UI",
+        "position": {
+          "x": 40,
+          "y": 670
+        },
+        "width": 940,
+        "height": 230
+      },
+      {
+        "id": "frontend-routes",
+        "type": "frontend",
+        "name": "Routes / Pages",
+        "position": {
+          "x": 100,
+          "y": 510
+        },
+        "description": "剧本库、详情、选角、游戏主界面、推理、真相、复盘。",
+        "implementationDetails": "路径: apps/web/app/page.tsx; apps/web/app/library/page.tsx; apps/web/app/library/[id]/page.tsx; apps/web/app/play/[sessionId]/select/page.tsx; apps/web/app/play/[sessionId]/page.tsx; apps/web/app/play/[sessionId]/review/page.tsx。",
+        "renderingMode": "hybrid",
+        "hostingRuntime": "managedPlatform",
+        "hydration": "full",
+        "chunking": [
+          "routeChunks"
+        ],
+        "apiBoundary": [
+          "rest"
+        ],
+        "browserCachePolicy": [
+          "shortTtl"
+        ],
+        "authHandling": [
+          "none"
+        ],
+        "offlineSupport": "notRelevant",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "frontend-client-state",
+        "type": "frontend",
+        "name": "API / WS / Store",
+        "position": {
+          "x": 590,
+          "y": 510
+        },
+        "description": "前端 API 封装、WebSocket 客户端、mock fallback 与 Zustand 游戏状态。",
+        "implementationDetails": "路径: apps/web/lib/api.ts; apps/web/lib/ws.ts; apps/web/lib/mock-ws.ts; apps/web/lib/mock-data.ts; apps/web/stores/gameStore.ts; apps/web/types/index.ts。",
+        "renderingMode": "spa",
+        "hostingRuntime": "managedPlatform",
+        "hydration": "full",
+        "chunking": [
+          "componentChunks"
+        ],
+        "apiBoundary": [
+          "rest"
+        ],
+        "browserCachePolicy": [
+          "noStore"
+        ],
+        "authHandling": [
+          "none"
+        ],
+        "offlineSupport": "notRelevant",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "ui-game-layout",
+        "type": "frontend",
+        "name": "Game Main Layout",
+        "position": {
+          "x": 80,
+          "y": 760
+        },
+        "description": "5层游戏界面：背景/场景/状态HUD/对话/行动入口。",
+        "implementationDetails": "路径: apps/web/app/play/[sessionId]/page.tsx; docs/FRONTEND_EXPERIENCE_DESIGN.md §3.4; docs/SONNET5_HANDOFF.md §4.4。",
+        "renderingMode": "spa",
+        "hostingRuntime": "managedPlatform",
+        "hydration": "full",
+        "chunking": [
+          "componentChunks"
+        ],
+        "apiBoundary": [
+          "rest"
+        ],
+        "browserCachePolicy": [
+          "shortTtl"
+        ],
+        "authHandling": [
+          "none"
+        ],
+        "offlineSupport": "notRelevant",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "ui-clue-evidence",
+        "type": "frontend",
+        "name": "Clue / Evidence / Cards",
+        "position": {
+          "x": 390,
+          "y": 760
+        },
+        "description": "线索板、证物背包、卡牌和最终推理入口。",
+        "implementationDetails": "路径: apps/web/components/game/ClueBoard.tsx; EvidenceBackpack.tsx; FinalSubmission.tsx; TruthReveal.tsx; docs/FRONTEND_EXPERIENCE_DESIGN.md §3.5-3.10。",
+        "renderingMode": "spa",
+        "hostingRuntime": "managedPlatform",
+        "hydration": "full",
+        "chunking": [
+          "componentChunks"
+        ],
+        "apiBoundary": [
+          "rest"
+        ],
+        "browserCachePolicy": [
+          "shortTtl"
+        ],
+        "authHandling": [
+          "none"
+        ],
+        "offlineSupport": "notRelevant",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "ui-media-scene",
+        "type": "worker",
+        "name": "Scene / Audio / Motion",
+        "position": {
+          "x": 700,
+          "y": 760
+        },
+        "description": "场景热点、情绪显示、阶段切换、BGM/音效/媒体控制。",
+        "implementationDetails": "路径: apps/web/components/game/SceneBackground.tsx; SceneHotspots.tsx; AudioManager.ts; MediaController.tsx; EmotionIndicator.tsx; StageTransition.tsx。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "recommended",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-02-ingress",
+        "type": "group",
+        "name": "02 接入层与会话运行时",
+        "position": {
+          "x": 1080,
+          "y": 340
+        },
+        "width": 960,
+        "height": 610
+      },
+      {
+        "id": "group-02-api-boundary",
+        "type": "group",
+        "name": "API网关与契约",
+        "position": {
+          "x": 1120,
+          "y": 420
+        },
+        "width": 420,
+        "height": 220
+      },
+      {
+        "id": "group-02-routes",
+        "type": "group",
+        "name": "会话操作路由",
+        "position": {
+          "x": 1580,
+          "y": 420
+        },
+        "width": 420,
+        "height": 220
+      },
+      {
+        "id": "group-02-realtime",
+        "type": "group",
+        "name": "WebSocket实时通道",
+        "position": {
+          "x": 1120,
+          "y": 670
+        },
+        "width": 880,
+        "height": 230
+      },
+      {
+        "id": "api-gateway",
+        "type": "apiGateway",
+        "name": "FastAPI Gateway",
+        "position": {
+          "x": 1180,
+          "y": 510
+        },
+        "description": "HTTP 入口、CORS、生命周期、API版本前缀与认证中间件边界。",
+        "implementationDetails": "路径: engine/api/main.py; engine/api/middleware/auth.py; docs/API_REFERENCE.md §1-§2。",
+        "protocols": [
+          "http",
+          "websocket"
+        ],
+        "routingMode": "path",
+        "authBoundary": "jwt",
+        "rateLimitPolicy": "perUser",
+        "edgePolicies": [
+          "cors",
+          "requestValidation"
+        ],
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "api-routes",
+        "type": "server",
+        "name": "Sessions / Actions / Packages",
+        "position": {
+          "x": 1640,
+          "y": 510
+        },
+        "description": "会话创建/恢复、玩家动作、剧本包后台导入和查询。",
+        "implementationDetails": "路径: engine/api/routes/sessions.py; engine/api/routes/actions.py; engine/api/routes/packages.py; docs/API_REFERENCE.md §2.1-§2.5。",
+        "runtime": "stateless",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "requests",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "ws-handler",
+        "type": "server",
+        "name": "WS Connection Manager",
+        "position": {
+          "x": 1180,
+          "y": 760
+        },
+        "description": "房间隔离、心跳、客户端事件、服务端推送和断线恢复。",
+        "implementationDetails": "路径: engine/api/websocket/handler.py; engine/api/websocket/__init__.py; apps/web/lib/ws.ts; docs/API_REFERENCE.md §3。",
+        "runtime": "stateful",
+        "protocol": "websocket",
+        "instances": 2,
+        "autoscaleTrigger": "connections",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "api-contract",
+        "type": "node",
+        "name": "API Contract Surface",
+        "position": {
+          "x": 1500,
+          "y": 760
+        },
+        "description": "REST 与 WS 协议是前后端和引擎之间的稳定契约。",
+        "implementationDetails": "路径: docs/API_REFERENCE.md; apps/web/lib/api.ts; apps/web/lib/ws.ts。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-03-engine",
+        "type": "group",
+        "name": "03 通用游戏引擎核心",
+        "position": {
+          "x": 2100,
+          "y": 340
+        },
+        "width": 1080,
+        "height": 610
+      },
+      {
+        "id": "group-03-stategraph",
+        "type": "group",
+        "name": "状态机模板",
+        "position": {
+          "x": 2140,
+          "y": 420
+        },
+        "width": 500,
+        "height": 220
+      },
+      {
+        "id": "group-03-rules-events",
+        "type": "group",
+        "name": "规则与事件",
+        "position": {
+          "x": 2680,
+          "y": 420
+        },
+        "width": 460,
+        "height": 220
+      },
+      {
+        "id": "group-03-services",
+        "type": "group",
+        "name": "运行服务",
+        "position": {
+          "x": 2140,
+          "y": 670
+        },
+        "width": 1000,
+        "height": 230
+      },
+      {
+        "id": "engine-stategraph",
+        "type": "server",
+        "name": "StateGraph + GameState",
+        "position": {
+          "x": 2180,
+          "y": 510
+        },
+        "description": "固定节点图由剧本包配置实例化，驱动 stage_entry/player_action/exit。",
+        "implementationDetails": "路径: engine/core/script_engine.py; engine/core/game_state.py; docs/ARCHITECTURE_OVERVIEW.md §4。",
+        "runtime": "stateful",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "requests",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "engine-rules-events",
+        "type": "worker",
+        "name": "Condition DSL + Event Bus",
+        "position": {
+          "x": 2720,
+          "y": 510
+        },
+        "description": "条件树评估、事件发布、阶段推进和媒体/线索/NPC状态触发。",
+        "implementationDetails": "路径: engine/core/condition_evaluator.py; engine/core/event_bus.py; docs/CONDITION_DSL_REFERENCE.md; docs/ARCHITECTURE_OVERVIEW.md §4.2。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "fixed",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "service-session",
+        "type": "server",
+        "name": "Session Service",
+        "position": {
+          "x": 2180,
+          "y": 760
+        },
+        "description": "创建会话、读取/更新状态、连接 API 与引擎运行时。",
+        "implementationDetails": "路径: engine/services/session_service.py; engine/api/routes/sessions.py; docs/EXECUTION_PLAN.md T-2.6。",
+        "runtime": "stateful",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "requests",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "service-checkpoint",
+        "type": "worker",
+        "name": "Checkpoint Manager",
+        "position": {
+          "x": 2530,
+          "y": 760
+        },
+        "description": "LangGraph 检查点持久化，支持恢复、存档和失败回滚。",
+        "implementationDetails": "路径: engine/core/checkpoint.py; supabase/migrations/002_runtime_tables.sql。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "fixed",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "service-scoring",
+        "type": "worker",
+        "name": "Scoring / Ending",
+        "position": {
+          "x": 2850,
+          "y": 760
+        },
+        "description": "最终推理判分、结局分支、复盘数据和最优路径对比。",
+        "implementationDetails": "路径: engine/services/scoring_service.py; docs/API_REFERENCE.md §2.5; docs/SCRIPT_PACKAGE_SCHEMA.md §12。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-04-content",
+        "type": "group",
+        "name": "04 剧本包与内容生产管道",
+        "position": {
+          "x": 0,
+          "y": 990
+        },
+        "width": 1020,
+        "height": 650
+      },
+      {
+        "id": "group-04-assets",
+        "type": "group",
+        "name": "原始素材与事实源",
+        "position": {
+          "x": 40,
+          "y": 1070
+        },
+        "width": 450,
+        "height": 220
+      },
+      {
+        "id": "group-04-package",
+        "type": "group",
+        "name": "剧本包蓝图",
+        "position": {
+          "x": 530,
+          "y": 1070
+        },
+        "width": 450,
+        "height": 220
+      },
+      {
+        "id": "group-04-import",
+        "type": "group",
+        "name": "编译导入流水线",
+        "position": {
+          "x": 40,
+          "y": 1320
+        },
+        "width": 940,
+        "height": 240
+      },
+      {
+        "id": "content-assets",
+        "type": "node",
+        "name": "Organizing Assets",
+        "position": {
+          "x": 80,
+          "y": 1160
+        },
+        "description": "角色PDF、线索图、音频、海报、视频、售后资料等原始素材。",
+        "implementationDetails": "路径: Organizing/【剧本】; Organizing/【线索】; Organizing/【开本资料】; doc/剧本系统设计.md §4, §9, §12。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "script-package-yaml",
+        "type": "node",
+        "name": "Script Package YAML",
+        "position": {
+          "x": 590,
+          "y": 1160
+        },
+        "description": "package、stages、characters、clues、evidences、scenes、media、dm_guide、endings。",
+        "implementationDetails": "目标路径: script-packages/<script_id>/; 规范: docs/SCRIPT_PACKAGE_SCHEMA.md §1-§14。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "schema-loader-import",
+        "type": "worker",
+        "name": "Schema / Loader / Import",
+        "position": {
+          "x": 180,
+          "y": 1410
+        },
+        "description": "Pydantic校验、引用校验、目录加载、素材上传和入库。",
+        "implementationDetails": "路径: engine/core/package_schema.py; engine/core/package_loader.py; engine/services/import_service.py; docs/EXECUTION_PLAN.md T-2.1, T-4.1。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "batch",
+        "retryPolicy": "fixed",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "chunk-embed-assets",
+        "type": "worker",
+        "name": "Chunk / Embedding / Review",
+        "position": {
+          "x": 560,
+          "y": 1410
+        },
+        "description": "剧本文本切片、向量索引、素材绑定和人工审核入口。",
+        "implementationDetails": "路径: engine/rag/chunker.py; engine/services/import_service.py; docs/SCRIPT_PACKAGE_SCHEMA.md §13; doc/剧本系统设计.md §16。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "batch",
+        "retryPolicy": "exponential",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-05-data",
+        "type": "group",
+        "name": "05 数据域与权限边界",
+        "position": {
+          "x": 1080,
+          "y": 990
+        },
+        "width": 960,
+        "height": 650
+      },
+      {
+        "id": "group-05-script-data",
+        "type": "group",
+        "name": "静态剧本数据",
+        "position": {
+          "x": 1120,
+          "y": 1070
+        },
+        "width": 420,
+        "height": 220
+      },
+      {
+        "id": "group-05-runtime-data",
+        "type": "group",
+        "name": "运行态数据",
+        "position": {
+          "x": 1580,
+          "y": 1070
+        },
+        "width": 420,
+        "height": 220
+      },
+      {
+        "id": "group-05-security-data",
+        "type": "group",
+        "name": "权限/存储/实时",
+        "position": {
+          "x": 1120,
+          "y": 1320
+        },
+        "width": 880,
+        "height": 240
+      },
+      {
+        "id": "db-script-tables",
+        "type": "coreDatabase",
+        "name": "script_* Tables",
+        "position": {
+          "x": 1160,
+          "y": 1160
+        },
+        "description": "剧本包、阶段、角色、线索、证物、场景、媒体等静态内容。",
+        "implementationDetails": "路径: supabase/migrations/001_script_tables.sql; docs/SCRIPT_PACKAGE_SCHEMA.md; doc/剧本系统设计.md §13。",
+        "tables": [
+          {
+            "id": "t-script-packages",
+            "name": "script_packages",
+            "fields": [
+              {
+                "id": "f-id",
+                "name": "id",
+                "type": "uuid",
+                "annotations": [
+                  "pk"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "t-stages",
+            "name": "script_stages",
+            "fields": [
+              {
+                "id": "f-stage-script",
+                "name": "script_id",
+                "type": "uuid",
+                "annotations": [
+                  "fk",
+                  "index"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "t-clues",
+            "name": "clues/evidences/media",
+            "fields": [
+              {
+                "id": "f-visible",
+                "name": "visibility",
+                "type": "string",
+                "annotations": [
+                  "index"
+                ]
+              }
+            ]
+          }
+        ],
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "db-runtime-tables",
+        "type": "coreDatabase",
+        "name": "runtime Tables",
+        "position": {
+          "x": 1620,
+          "y": 1160
+        },
+        "description": "game_sessions、checkpoints、chat_messages、events、player progress。",
+        "implementationDetails": "路径: supabase/migrations/002_runtime_tables.sql; engine/core/checkpoint.py; engine/services/session_service.py。",
+        "tables": [
+          {
+            "id": "t-sessions",
+            "name": "game_sessions",
+            "fields": [
+              {
+                "id": "f-session-id",
+                "name": "id",
+                "type": "uuid",
+                "annotations": [
+                  "pk"
+                ]
+              },
+              {
+                "id": "f-current-stage",
+                "name": "current_stage",
+                "type": "string",
+                "annotations": [
+                  "index"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "t-checkpoints",
+            "name": "session_checkpoints",
+            "fields": [
+              {
+                "id": "f-thread",
+                "name": "thread_id",
+                "type": "string",
+                "annotations": [
+                  "index"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "t-chat",
+            "name": "chat_messages/events",
+            "fields": [
+              {
+                "id": "f-session",
+                "name": "session_id",
+                "type": "uuid",
+                "annotations": [
+                  "fk",
+                  "index"
+                ]
+              }
+            ]
+          }
+        ],
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "db-knowledge-storage",
+        "type": "coreDatabase",
+        "name": "Knowledge + Storage",
+        "position": {
+          "x": 1160,
+          "y": 1410
+        },
+        "description": "pgvector知识表、素材bucket、签名URL和媒体访问权限。",
+        "implementationDetails": "路径: supabase/migrations/003_vector_tables.sql; Supabase Storage; engine/rag/retriever.py。",
+        "tables": [
+          {
+            "id": "t-knowledge",
+            "name": "script_knowledge",
+            "fields": [
+              {
+                "id": "f-embedding",
+                "name": "embedding",
+                "type": "json",
+                "annotations": [
+                  "index"
+                ]
+              },
+              {
+                "id": "f-stage",
+                "name": "stage_id",
+                "type": "string",
+                "annotations": [
+                  "index"
+                ]
+              },
+              {
+                "id": "f-role",
+                "name": "allowed_roles",
+                "type": "json",
+                "annotations": [
+                  "index"
+                ]
+              }
+            ]
+          }
+        ],
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "security-rls-realtime",
+        "type": "externalService",
+        "name": "Auth / RLS / Realtime",
+        "position": {
+          "x": 1540,
+          "y": 1410
+        },
+        "description": "匿名优先、角色/阶段过滤、玩家只读自身会话、实时状态广播。",
+        "implementationDetails": "路径: supabase/migrations/004_rls_policies.sql; Supabase Auth; Supabase Realtime; docs/ARCHITECTURE_OVERVIEW.md §8。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-06-ai",
+        "type": "group",
+        "name": "06 AI编排与防剧透",
+        "position": {
+          "x": 2100,
+          "y": 990
+        },
+        "width": 1080,
+        "height": 650
+      },
+      {
+        "id": "group-06-agent-factory",
+        "type": "group",
+        "name": "Agent角色工厂",
+        "position": {
+          "x": 2140,
+          "y": 1070
+        },
+        "width": 500,
+        "height": 220
+      },
+      {
+        "id": "group-06-context",
+        "type": "group",
+        "name": "Prompt与RAG上下文",
+        "position": {
+          "x": 2680,
+          "y": 1070
+        },
+        "width": 460,
+        "height": 220
+      },
+      {
+        "id": "group-06-output",
+        "type": "group",
+        "name": "输出安全与媒体",
+        "position": {
+          "x": 2140,
+          "y": 1320
+        },
+        "width": 1000,
+        "height": 240
+      },
+      {
+        "id": "agent-registry",
+        "type": "worker",
+        "name": "Agent Registry",
+        "position": {
+          "x": 2180,
+          "y": 1160
+        },
+        "description": "按剧本包实例化 DM、NPC、Guard、Hint；每类Agent有明确知识边界。",
+        "implementationDetails": "路径: engine/agents/base_agent.py; dm_agent.py; npc_agent.py; guard_agent.py; hint_agent.py; docs/ARCHITECTURE_OVERVIEW.md §6。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "fanout",
+        "retryPolicy": "fixed",
+        "idempotency": "recommended",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "prompt-rag-context",
+        "type": "server",
+        "name": "Prompt + RAG Context",
+        "position": {
+          "x": 2720,
+          "y": 1160
+        },
+        "description": "根据角色、阶段、已解锁线索和可见性检索上下文并组装Prompt。",
+        "implementationDetails": "路径: engine/rag/retriever.py; engine/rag/reranker.py; engine/agents/prompts/; doc/剧本系统设计.md §10-§11。",
+        "runtime": "stateless",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "latency",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "dm-npc-agents",
+        "type": "worker",
+        "name": "DM / NPC Agents",
+        "position": {
+          "x": 2180,
+          "y": 1410
+        },
+        "description": "DM控场、旁白、阶段推进；NPC按角色身份、情绪和当前知识回答。",
+        "implementationDetails": "路径: engine/agents/dm_agent.py; engine/agents/npc_agent.py; docs/ARCHITECTURE_OVERVIEW.md §6.1。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "fixed",
+        "idempotency": "recommended",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "guard-hint-agents",
+        "type": "worker",
+        "name": "Guard / Hint Agents",
+        "position": {
+          "x": 2500,
+          "y": 1410
+        },
+        "description": "Guard审查剧透/越权/编造；Hint只基于已解锁信息给轻提示。",
+        "implementationDetails": "路径: engine/agents/guard_agent.py; engine/agents/hint_agent.py; docs/ARCHITECTURE_OVERVIEW.md §8; doc/剧本系统设计.md §11。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "fixed",
+        "idempotency": "required",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "media-orchestrator",
+        "type": "worker",
+        "name": "Media / TTS Orchestrator",
+        "position": {
+          "x": 2820,
+          "y": 1410
+        },
+        "description": "将阶段、事件、线索和结局映射到BGM、音效、字幕、TTS和图片。",
+        "implementationDetails": "路径: engine/media/orchestrator.py; apps/web/components/game/AudioManager.ts; MediaController.tsx; docs/ARCHITECTURE_OVERVIEW.md §7。",
+        "instances": 2,
+        "trigger": "queue",
+        "processingMode": "singleMessage",
+        "retryPolicy": "exponential",
+        "idempotency": "recommended",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "group-07-delivery",
+        "type": "group",
+        "name": "07 部署与工程交付",
+        "position": {
+          "x": 0,
+          "y": 1680
+        },
+        "width": 3180,
+        "height": 460
+      },
+      {
+        "id": "group-07-local",
+        "type": "group",
+        "name": "本地开发与配置",
+        "position": {
+          "x": 40,
+          "y": 1760
+        },
+        "width": 700,
+        "height": 300
+      },
+      {
+        "id": "group-07-cloud",
+        "type": "group",
+        "name": "云部署目标",
+        "position": {
+          "x": 780,
+          "y": 1760
+        },
+        "width": 740,
+        "height": 300
+      },
+      {
+        "id": "group-07-plan",
+        "type": "group",
+        "name": "实施路线与验收",
+        "position": {
+          "x": 1560,
+          "y": 1760
+        },
+        "width": 760,
+        "height": 300
+      },
+      {
+        "id": "group-07-task",
+        "type": "group",
+        "name": "当前任务阅读标记",
+        "position": {
+          "x": 2360,
+          "y": 1760
+        },
+        "width": 780,
+        "height": 300
+      },
+      {
+        "id": "local-dev-runtime",
+        "type": "externalService",
+        "name": "Local Dev Runtime",
+        "position": {
+          "x": 80,
+          "y": 1880
+        },
+        "description": "uv/Python、Next.js、Supabase CLI、Docker Compose 本地闭环。",
+        "implementationDetails": "路径: README.md; Makefile; pyproject.toml; docker-compose.yml; .env.example。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "repo-config",
+        "type": "node",
+        "name": "Repo Config / Contracts",
+        "position": {
+          "x": 400,
+          "y": 1880
+        },
+        "description": "依赖、环境变量、API契约、设计文档和交付标准的集中入口。",
+        "implementationDetails": "路径: pyproject.toml; apps/web/package.json; docs/API_REFERENCE.md; docs/EXECUTION_PLAN.md; docs/SONNET5_HANDOFF.md。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "cloud-web-api",
+        "type": "externalService",
+        "name": "Vercel + Railway",
+        "position": {
+          "x": 820,
+          "y": 1880
+        },
+        "description": "目标部署：Next.js 前端在 Vercel，FastAPI/Engine 在 Railway。",
+        "implementationDetails": "路径: apps/web/next.config.ts; engine/api/main.py; docker-compose.yml; docs/EXECUTION_PLAN.md Phase 5。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "cloud-supabase",
+        "type": "externalService",
+        "name": "Supabase Platform",
+        "position": {
+          "x": 1160,
+          "y": 1880
+        },
+        "description": "Postgres、pgvector、Auth、Realtime、Storage、RLS 的云边界。",
+        "implementationDetails": "路径: supabase/migrations/*.sql; .env.example; docs/ARCHITECTURE_OVERVIEW.md §2。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "execution-roadmap",
+        "type": "node",
+        "name": "Execution Plan Phases",
+        "position": {
+          "x": 1600,
+          "y": 1880
+        },
+        "description": "Phase 1 地基、Phase 2 引擎、Phase 3 前端、Phase 4 内容、Phase 5 集成。",
+        "implementationDetails": "路径: docs/EXECUTION_PLAN.md; docs/SONNET5_HANDOFF.md §9。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "acceptance-gates",
+        "type": "node",
+        "name": "Acceptance / QA Gates",
+        "position": {
+          "x": 1920,
+          "y": 1880
+        },
+        "description": "API契约、RLS、防剧透、端到端试玩、性能、可恢复性和视觉验收。",
+        "implementationDetails": "路径: docs/EXECUTION_PLAN.md §附录C; docs/SONNET5_HANDOFF.md §十一; engine/tests/。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "task-start-marker",
+        "type": "node",
+        "name": "Start here / 下一步任务",
+        "position": {
+          "x": 2420,
+          "y": 1880
+        },
+        "description": "当需要找推进任务时，从实施路线映射到对应大分组和代码路径。",
+        "implementationDetails": "用作你截图中的 Start here 标记：不改变目标架构，只提示阅读/拆任务入口。",
+        "appearance": {
+          "accentColor": "#a855f7"
+        },
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      },
+      {
+        "id": "task-slice-guide",
+        "type": "node",
+        "name": "Task Slice Rule",
+        "position": {
+          "x": 2740,
+          "y": 1880
+        },
+        "description": "每个任务应落到一个小分组：先契约/数据边界，再服务，再UI或Agent。",
+        "implementationDetails": "拆任务建议: API_REFERENCE.md -> supabase/migrations -> engine/* -> apps/web/* -> 验收清单。",
+        "size": {
+          "width": 216,
+          "height": 88
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-frontend-client-to-api",
+        "sourceNodeId": "frontend-client-state",
+        "targetNodeId": "api-gateway",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-frontend-client-to-ws",
+        "sourceNodeId": "frontend-client-state",
+        "targetNodeId": "ws-handler",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "muted"
+      },
+      {
+        "id": "e-api-gateway-routes",
+        "sourceNodeId": "api-gateway",
+        "targetNodeId": "api-routes",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-api-routes-session",
+        "sourceNodeId": "api-routes",
+        "targetNodeId": "service-session",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-session-stategraph",
+        "sourceNodeId": "service-session",
+        "targetNodeId": "engine-stategraph",
+        "sourceHandle": "top",
+        "targetHandle": "bottom",
+        "style": "flowing"
+      },
+      {
+        "id": "e-stategraph-rules",
+        "sourceNodeId": "engine-stategraph",
+        "targetNodeId": "engine-rules-events",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-stategraph-checkpoint",
+        "sourceNodeId": "engine-stategraph",
+        "targetNodeId": "service-checkpoint",
+        "sourceHandle": "bottom",
+        "targetHandle": "top",
+        "style": "muted"
+      },
+      {
+        "id": "e-stategraph-scoring",
+        "sourceNodeId": "engine-stategraph",
+        "targetNodeId": "service-scoring",
+        "sourceHandle": "bottom",
+        "targetHandle": "top",
+        "style": "muted"
+      },
+      {
+        "id": "e-assets-package",
+        "sourceNodeId": "content-assets",
+        "targetNodeId": "script-package-yaml",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-package-import",
+        "sourceNodeId": "script-package-yaml",
+        "targetNodeId": "schema-loader-import",
+        "sourceHandle": "bottom",
+        "targetHandle": "top",
+        "style": "flowing"
+      },
+      {
+        "id": "e-import-chunk",
+        "sourceNodeId": "schema-loader-import",
+        "targetNodeId": "chunk-embed-assets",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-import-storage",
+        "sourceNodeId": "chunk-embed-assets",
+        "targetNodeId": "db-knowledge-storage",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-agent-prompt-rag",
+        "sourceNodeId": "agent-registry",
+        "targetNodeId": "prompt-rag-context",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-agent-dm-npc",
+        "sourceNodeId": "agent-registry",
+        "targetNodeId": "dm-npc-agents",
+        "sourceHandle": "bottom",
+        "targetHandle": "top",
+        "style": "flowing"
+      },
+      {
+        "id": "e-agent-guard",
+        "sourceNodeId": "dm-npc-agents",
+        "targetNodeId": "guard-hint-agents",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "e-guard-media",
+        "sourceNodeId": "guard-hint-agents",
+        "targetNodeId": "media-orchestrator",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "style": "flowing"
+      }
+    ]
+  }
+}

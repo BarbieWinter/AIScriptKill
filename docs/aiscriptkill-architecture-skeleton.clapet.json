@@ -1,0 +1,769 @@
+{
+  "version": 1,
+  "exportedAt": "2026-07-05T14:18:00.000Z",
+  "name": "AIScriptKill 人类可读架构",
+  "description": "按职责边界重新整理的 AIScriptKill 架构图，强调主流程、内容管道和数据权限。",
+  "context": "完整复核 docs/ARCHITECTURE_OVERVIEW.md、API_REFERENCE.md、CONDITION_DSL_REFERENCE.md、FRONTEND_EXPERIENCE_DESIGN.md、SCRIPT_PACKAGE_SCHEMA.md、EXECUTION_PLAN.md、SONNET5_HANDOFF.md 以及 Clapet JSON 布局规则后重绘。采用父分组 + 子分组：运行时主链路、内容与数据支撑、外部平台与部署。只保留读者需要的主链路连线，其余依赖写入节点说明，避免跨组线网。",
+    "graph": {
+      "nodes": [
+      {
+        "id": "group-runtime",
+        "type": "group",
+        "name": "运行时主链路",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 2840,
+        "height": 760
+      },
+      {
+        "id": "group-support",
+        "type": "group",
+        "name": "内容与数据支撑",
+        "position": {
+          "x": 0,
+          "y": 840
+        },
+        "width": 2500,
+        "height": 860
+      },
+      {
+        "id": "group-external",
+        "type": "group",
+        "name": "外部平台与部署",
+        "position": {
+          "x": 0,
+          "y": 1740
+        },
+        "width": 2840,
+        "height": 420
+      },
+      {
+        "id": "group-frontend",
+        "type": "group",
+        "name": "前端体验层",
+        "position": {
+          "x": 40,
+          "y": 80
+        },
+        "width": 680,
+        "height": 600
+      },
+      {
+        "id": "group-ingress",
+        "type": "group",
+        "name": "接入与通信契约",
+        "position": {
+          "x": 760,
+          "y": 80
+        },
+        "width": 560,
+        "height": 600
+      },
+      {
+        "id": "group-engine",
+        "type": "group",
+        "name": "通用游戏引擎",
+        "position": {
+          "x": 1360,
+          "y": 80
+        },
+        "width": 760,
+        "height": 600
+      },
+      {
+        "id": "group-intelligence",
+        "type": "group",
+        "name": "AI与媒体编排",
+        "position": {
+          "x": 2160,
+          "y": 80
+        },
+        "width": 680,
+        "height": 600
+      },
+      {
+        "id": "group-package",
+        "type": "group",
+        "name": "剧本包与导入管道",
+        "position": {
+          "x": 40,
+          "y": 920
+        },
+        "width": 840,
+        "height": 720
+      },
+      {
+        "id": "group-supabase",
+        "type": "group",
+        "name": "Supabase数据域",
+        "position": {
+          "x": 940,
+          "y": 920
+        },
+        "width": 1160,
+        "height": 720
+      },
+      {
+        "id": "group-model-media",
+        "type": "group",
+        "name": "模型与媒体服务",
+        "position": {
+          "x": 40,
+          "y": 1820
+        },
+        "width": 780,
+        "height": 260
+      },
+      {
+        "id": "group-deploy",
+        "type": "group",
+        "name": "部署目标",
+        "position": {
+          "x": 880,
+          "y": 1820
+        },
+        "width": 1580,
+        "height": 260
+      },
+      {
+        "id": "player",
+        "type": "node",
+        "name": "玩家 / Player",
+        "position": {
+          "x": 80,
+          "y": 250
+        },
+        "description": "选本、选角、搜证、对话、出示证物、提交最终推理。"
+      },
+      {
+        "id": "next-web",
+        "type": "frontend",
+        "name": "Next.js Web App",
+        "position": {
+          "x": 400,
+          "y": 220
+        },
+        "description": "剧本库、详情、选角、游戏主界面、复盘；强调沉浸场景和状态驱动 UI。",
+        "renderingMode": "hybrid",
+        "hostingRuntime": "managedPlatform",
+        "hydration": "full",
+        "chunking": [
+          "routeChunks",
+          "componentChunks"
+        ],
+        "apiBoundary": [
+          "rest"
+        ],
+        "browserCachePolicy": [
+          "immutableAssets",
+          "noStore"
+        ],
+        "authHandling": [
+          "tokenStorage"
+        ],
+        "offlineSupport": "notRelevant"
+      },
+      {
+        "id": "zustand-store",
+        "type": "worker",
+        "name": "Zustand Game Store",
+        "position": {
+          "x": 80,
+          "y": 470
+        },
+        "description": "保存 session、stage、scene、线索、证物、对话、媒体和面板状态。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "recommended"
+      },
+      {
+        "id": "immersive-runtime",
+        "type": "worker",
+        "name": "Howler + Konva UI",
+        "position": {
+          "x": 400,
+          "y": 470
+        },
+        "description": "音频五层混合、场景背景、热区交互、阶段转场、真相揭示。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "notRequired"
+      },
+      {
+        "id": "api-contract",
+        "type": "apiGateway",
+        "name": "REST API Contract",
+        "position": {
+          "x": 800,
+          "y": 210
+        },
+        "description": "API_REFERENCE：/api/v1 sessions、actions、packages、review；开发环境可切换 mock。",
+        "protocols": [
+          "http"
+        ],
+        "routingMode": "path",
+        "authBoundary": "jwt",
+        "rateLimitPolicy": "perUser",
+        "edgePolicies": [
+          "cors",
+          "requestValidation"
+        ]
+      },
+      {
+        "id": "ws-contract",
+        "type": "server",
+        "name": "WebSocket Contract",
+        "position": {
+          "x": 800,
+          "y": 470
+        },
+        "description": "目标 /api/v1/ws/{session_id}；chat、stage、media、clue、evidence、hint 事件。",
+        "runtime": "stateful",
+        "protocol": "websocket",
+        "instances": 2,
+        "autoscaleTrigger": "connections"
+      },
+      {
+        "id": "session-service",
+        "type": "server",
+        "name": "Session Service",
+        "position": {
+          "x": 1400,
+          "y": 190
+        },
+        "description": "创建、查询、恢复会话；管理 GameState 生命周期和 checkpoint 恢复。",
+        "runtime": "stateful",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "requests"
+      },
+      {
+        "id": "script-engine",
+        "type": "server",
+        "name": "ScriptEngine / StateGraph",
+        "position": {
+          "x": 1760,
+          "y": 190
+        },
+        "description": "一次编写的通用状态机：stage_entry、player_action、check_conditions、stage_exit、ending。",
+        "runtime": "stateful",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "latency"
+      },
+      {
+        "id": "condition-evaluator",
+        "type": "worker",
+        "name": "Condition DSL",
+        "position": {
+          "x": 1400,
+          "y": 450
+        },
+        "description": "评估 stage、线索、证物、对话、时间、提交、事件等声明式条件树。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "required"
+      },
+      {
+        "id": "event-bus",
+        "type": "queue",
+        "name": "Event Bus",
+        "position": {
+          "x": 1760,
+          "y": 450
+        },
+        "description": "游戏事件队列：stage.changed、media.play、clue.unlocked、npc.state_changed。",
+        "backing": "rabbitmq",
+        "pattern": "fanout",
+        "deliverySemantics": "atLeastOnce",
+        "ordering": "fifo",
+        "retention": "short",
+        "hasDlq": true,
+        "backpressurePolicy": "buffer"
+      },
+      {
+        "id": "agent-registry",
+        "type": "worker",
+        "name": "Agent Registry",
+        "position": {
+          "x": 2200,
+          "y": 190
+        },
+        "description": "按剧本包配置实例化 DM、NPC、Guard、Hint Agent；引擎内部函数调用。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "fanout",
+        "retryPolicy": "fixed",
+        "idempotency": "recommended"
+      },
+      {
+        "id": "rag-retriever",
+        "type": "server",
+        "name": "RAG Retriever",
+        "position": {
+          "x": 2520,
+          "y": 190
+        },
+        "description": "pgvector + BM25；SQL 层按 script、stage、角色、已解锁状态过滤防剧透。",
+        "runtime": "stateless",
+        "protocol": "http",
+        "instances": 2,
+        "autoscaleTrigger": "latency"
+      },
+      {
+        "id": "guard-hint",
+        "type": "worker",
+        "name": "Guard + Hint",
+        "position": {
+          "x": 2520,
+          "y": 450
+        },
+        "description": "Guard 审查剧透、越权、编造；Hint 只基于已解锁线索给轻提示。",
+        "instances": 2,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "fixed",
+        "idempotency": "required"
+      },
+      {
+        "id": "media-orchestrator",
+        "type": "worker",
+        "name": "Media Orchestrator",
+        "position": {
+          "x": 2200,
+          "y": 450
+        },
+        "description": "把 stage/event/clue/evidence/ending 映射为 BGM、音效、TTS、字幕、图片。",
+        "instances": 2,
+        "trigger": "queue",
+        "processingMode": "singleMessage",
+        "retryPolicy": "exponential",
+        "idempotency": "recommended"
+      },
+      {
+        "id": "script-package",
+        "type": "node",
+        "name": "Script Package YAML",
+        "position": {
+          "x": 80,
+          "y": 1060
+        },
+        "description": "可插拔剧本包：package、stages、characters、clues、evidences、scenes、media、dm_guide、endings。"
+      },
+      {
+        "id": "package-schema",
+        "type": "worker",
+        "name": "Package Schema",
+        "position": {
+          "x": 420,
+          "y": 1060
+        },
+        "description": "Pydantic v2 目标模型；验证结构、引用完整性、知识边界和可见性规则。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "singleMessage",
+        "retryPolicy": "none",
+        "idempotency": "required"
+      },
+      {
+        "id": "package-loader",
+        "type": "worker",
+        "name": "Package Loader",
+        "position": {
+          "x": 420,
+          "y": 1280
+        },
+        "description": "YAML 目录加载为标准 ScriptPackage 对象；引擎和导入管道的内容入口。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "batch",
+        "retryPolicy": "none",
+        "idempotency": "required"
+      },
+      {
+        "id": "import-pipeline",
+        "type": "worker",
+        "name": "Import Pipeline",
+        "position": {
+          "x": 80,
+          "y": 1280
+        },
+        "description": "解析 stage、角色、线索、证物、场景、媒体；上传素材并写入 script_* 表。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "batch",
+        "retryPolicy": "fixed",
+        "idempotency": "required"
+      },
+      {
+        "id": "embedding-builder",
+        "type": "worker",
+        "name": "Embedding Builder",
+        "position": {
+          "x": 420,
+          "y": 1460
+        },
+        "description": "角色知识、线索文本、剧本背景、证物描述切片后生成 script_knowledge 向量索引。",
+        "instances": 1,
+        "trigger": "manual",
+        "processingMode": "batch",
+        "retryPolicy": "exponential",
+        "idempotency": "required"
+      },
+      {
+        "id": "script-db",
+        "type": "coreDatabase",
+        "name": "script_* Tables",
+        "position": {
+          "x": 980,
+          "y": 1060
+        },
+        "description": "script_packages、stages、characters、clues、evidences、scenes、media。",
+        "tables": [
+          {
+            "id": "script-packages-table",
+            "name": "script_packages",
+            "fields": [
+              {
+                "id": "script-package-id",
+                "name": "id",
+                "type": "string",
+                "annotations": [
+                  "pk"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "script-stages-table",
+            "name": "script_stages",
+            "fields": [
+              {
+                "id": "script-stage-script-id",
+                "name": "script_id",
+                "type": "string",
+                "annotations": [
+                  "fk",
+                  "index"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "runtime-db",
+        "type": "coreDatabase",
+        "name": "runtime Tables",
+        "position": {
+          "x": 1320,
+          "y": 1060
+        },
+        "description": "game_sessions、session_checkpoints、chat_messages、discoveries、final_submissions、reviews。",
+        "tables": [
+          {
+            "id": "game-sessions-table",
+            "name": "game_sessions",
+            "fields": [
+              {
+                "id": "game-session-id",
+                "name": "id",
+                "type": "uuid",
+                "annotations": [
+                  "pk"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "checkpoints-table",
+            "name": "session_checkpoints",
+            "fields": [
+              {
+                "id": "checkpoint-session-id",
+                "name": "session_id",
+                "type": "uuid",
+                "annotations": [
+                  "fk",
+                  "index"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "vector-db",
+        "type": "coreDatabase",
+        "name": "script_knowledge",
+        "position": {
+          "x": 1660,
+          "y": 1060
+        },
+        "description": "pgvector 1536 维知识表；RAG 检索第一层权限过滤在 SQL 完成。",
+        "tables": [
+          {
+            "id": "knowledge-table",
+            "name": "script_knowledge",
+            "fields": [
+              {
+                "id": "knowledge-embedding",
+                "name": "embedding",
+                "type": "json",
+                "annotations": [
+                  "index"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "asset-storage",
+        "type": "blobStorage",
+        "name": "Supabase Storage",
+        "position": {
+          "x": 980,
+          "y": 1290
+        },
+        "description": "海报、头像、线索图、证物图、音频、字幕、视频素材；分权限 bucket。",
+        "objectKind": "mixed",
+        "accessPattern": "signedUrls",
+        "lifecyclePolicy": "none",
+        "versioning": true
+      },
+      {
+        "id": "auth-rls",
+        "type": "externalService",
+        "name": "Auth + RLS Policies",
+        "position": {
+          "x": 1320,
+          "y": 1290
+        },
+        "description": "匿名模式优先；RLS 限制玩家只读自己的会话和已解锁内容。"
+      },
+      {
+        "id": "realtime",
+        "type": "stream",
+        "name": "Realtime Events",
+        "position": {
+          "x": 1660,
+          "y": 1290
+        },
+        "description": "可用于状态推送、数据库变更广播和运行时事件同步。",
+        "backing": "pubsub",
+        "retention": "short",
+        "partitionKey": "session_id",
+        "ordering": "partition",
+        "consumerModel": "broadcast",
+        "replay": false
+      },
+      {
+        "id": "llm-providers",
+        "type": "externalService",
+        "name": "LLM Providers",
+        "position": {
+          "x": 80,
+          "y": 1930
+        },
+        "description": "Main/fallback model chain for DM, NPC, Guard and Hint generation."
+      },
+      {
+        "id": "tts-ffmpeg",
+        "type": "externalService",
+        "name": "TTS + FFmpeg",
+        "position": {
+          "x": 420,
+          "y": 1930
+        },
+        "description": "Edge-TTS/OpenAI TTS plus FFmpeg media processing target."
+      },
+      {
+        "id": "vercel",
+        "type": "externalService",
+        "name": "Vercel Frontend",
+        "position": {
+          "x": 920,
+          "y": 1930
+        },
+        "description": "Documented deployment target for the Next.js web application."
+      },
+      {
+        "id": "railway",
+        "type": "externalService",
+        "name": "Railway Backend",
+        "position": {
+          "x": 1260,
+          "y": 1930
+        },
+        "description": "Documented deployment target for FastAPI and engine runtime."
+      },
+      {
+        "id": "supabase-platform",
+        "type": "externalService",
+        "name": "Supabase Platform",
+        "position": {
+          "x": 1600,
+          "y": 1930
+        },
+        "description": "Postgres, pgvector, Auth, Realtime, Storage and RLS platform boundary."
+      },
+      {
+        "id": "docker-local",
+        "type": "externalService",
+        "name": "Docker Compose Local",
+        "position": {
+          "x": 1940,
+          "y": 1930
+        },
+        "description": "Local development orchestration with docker-compose and Makefile."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-player-web",
+        "sourceNodeId": "player",
+        "sourceHandle": "right",
+        "targetNodeId": "next-web",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-web-store",
+        "sourceNodeId": "next-web",
+        "sourceHandle": "bottom",
+        "targetNodeId": "zustand-store",
+        "targetHandle": "top",
+        "style": "muted"
+      },
+      {
+        "id": "edge-web-ui",
+        "sourceNodeId": "next-web",
+        "sourceHandle": "bottom",
+        "targetNodeId": "immersive-runtime",
+        "targetHandle": "top",
+        "style": "muted"
+      },
+      {
+        "id": "edge-web-api",
+        "sourceNodeId": "next-web",
+        "sourceHandle": "right",
+        "targetNodeId": "api-contract",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-web-ws",
+        "sourceNodeId": "next-web",
+        "sourceHandle": "right",
+        "targetNodeId": "ws-contract",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-api-session",
+        "sourceNodeId": "api-contract",
+        "sourceHandle": "right",
+        "targetNodeId": "session-service",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-session-engine",
+        "sourceNodeId": "session-service",
+        "sourceHandle": "right",
+        "targetNodeId": "script-engine",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-engine-condition",
+        "sourceNodeId": "script-engine",
+        "sourceHandle": "bottom",
+        "targetNodeId": "condition-evaluator",
+        "targetHandle": "top",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-engine-events",
+        "sourceNodeId": "script-engine",
+        "sourceHandle": "bottom",
+        "targetNodeId": "event-bus",
+        "targetHandle": "top",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-engine-agent",
+        "sourceNodeId": "script-engine",
+        "sourceHandle": "right",
+        "targetNodeId": "agent-registry",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-event-media",
+        "sourceNodeId": "event-bus",
+        "sourceHandle": "right",
+        "targetNodeId": "media-orchestrator",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-agent-rag",
+        "sourceNodeId": "agent-registry",
+        "sourceHandle": "right",
+        "targetNodeId": "rag-retriever",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-package-schema",
+        "sourceNodeId": "script-package",
+        "sourceHandle": "right",
+        "targetNodeId": "package-schema",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-package-import",
+        "sourceNodeId": "script-package",
+        "sourceHandle": "bottom",
+        "targetNodeId": "import-pipeline",
+        "targetHandle": "top",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-schema-loader",
+        "sourceNodeId": "package-schema",
+        "sourceHandle": "bottom",
+        "targetNodeId": "package-loader",
+        "targetHandle": "top",
+        "style": "muted"
+      },
+      {
+        "id": "edge-import-loader",
+        "sourceNodeId": "import-pipeline",
+        "sourceHandle": "right",
+        "targetNodeId": "package-loader",
+        "targetHandle": "left",
+        "style": "flowing"
+      },
+      {
+        "id": "edge-loader-embedding",
+        "sourceNodeId": "package-loader",
+        "sourceHandle": "bottom",
+        "targetNodeId": "embedding-builder",
+        "targetHandle": "top",
+        "style": "flowing"
+      }
+    ]
+  }
+}
