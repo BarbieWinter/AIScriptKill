@@ -4,7 +4,7 @@
 
 dev:
 	@echo "Starting engine (FastAPI)..."
-	cd engine && uvicorn api.main:app --reload --port 8000 &
+	uv run uvicorn engine.api.main:app --reload --port 8000 &
 
 .PHONY: dev-web
 dev-web:
@@ -14,24 +14,24 @@ dev-web:
 # ── 测试 ──
 
 test:
-	cd engine && python -m pytest tests/ -v
+	uv run pytest engine/tests/ -v
 
 test-coverage:
-	cd engine && python -m pytest tests/ --cov=engine --cov-report=term-missing
+	uv run pytest engine/tests/ --cov=engine --cov-report=term-missing
 
 # ── Lint ──
 
 lint:
-	cd engine && ruff check .
-	cd engine && ruff format --check .
+	uv run ruff check engine
+	uv run ruff format --check engine
 
 format:
-	cd engine && ruff format .
+	uv run ruff format engine
 
 # ── 安装 ──
 
 install:
-	cd engine && uv sync --dev
+	uv sync --dev
 	cd apps/web && npm install
 
 # ── 数据库 ──
