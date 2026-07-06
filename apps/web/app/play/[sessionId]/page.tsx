@@ -20,7 +20,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useGameStore } from "@/stores/gameStore";
+import { useGameStore, type ActionType } from "@/stores/gameStore";
+import { api, isMockMode } from "@/lib/api";
+import { WsClient } from "@/lib/ws";
 import { getMockEngine, mockScenes } from "@/lib/mock-data";
 import { SceneBackground } from "@/components/game/SceneBackground";
 import { SceneHotspots } from "@/components/game/SceneHotspots";
@@ -76,36 +78,93 @@ export default function GamePage() {
 
   // ══ 初始化 ══
   useEffect(() => {
-    const engine = engineRef.current;
-    if (!useGameStore.getState().sessionId) {
-      setSession(sessionId, "snow-village", "zhuosiyuan");
-    }
-    const stage = engine.getStage();
-    const scene = engine.getCurrentScene();
-    setStage(stage.id);
-    setScene(scene.id);
-    setActions(stage.available_actions as any);
-    stageRef.current = stage.id;
+    let cancelled = false;
+    const introTimers: ReturnType<typeof setTimeout>[] = [];
 
-    if (stage.id === "prologue") {
+    const syncMockSession = () => {
+      const engine = engineRef.current;
+      if (!useGameStore.getState().sessionId) {
+        setSession(sessionId, "snow-village", "zhuosiyuan");
+      }
+      const stage = engine.getStage();
+      const scene = engine.getCurrentScene();
+      setStage(stage.id);
+      setScene(scene.id);
+      setActions(stage.available_actions as ActionType[]);
+      stageRef.current = stage.id;
+      return stage.id;
+    };
+
+    const showPrologueIntro = () => {
       const msgs = [
         { id: "init-1", text: "夜幕降临，雪乡的灯笼一盏盏亮了起来。温暖的灯光映照着飘落的雪花，远处传来零星的爆竹声。" },
         { id: "init-2", text: "你推开饭店的木门，一股热浪扑面而来。炉火烧得正旺，几个客人正在喝酒聊天。王大达在柜台后面擦拭着酒杯。", delay: 2200 },
         { id: "init-3", text: "你注意到，虽然王大达在笑，但他的眼神中似乎藏着一丝不安。你的调查，从这里开始。", delay: 4500 },
       ];
       msgs.forEach(({ id, text, delay = 0 }) => {
-        setTimeout(() => addMessage({
+        const timer = setTimeout(() => addMessage({
           id: `init-${id}`,
           role: "npc", character_id: "dm", text,
           emotion: "calm", timestamp: new Date().toISOString(),
         }), delay);
+        introTimers.push(timer);
       });
-    }
-  }, []);
+    };
 
-  // ══ 模拟 WebSocket 事件 ══
+    if (isMockMode()) {
+      if (syncMockSession() === "prologue") {
+        showPrologueIntro();
+      }
+      return () => introTimers.forEach(clearTimeout);
+    }
+
+    api.getSession(sessionId)
+      .then((session) => {
+        if (cancelled) return;
+        setSession(session.session_id, session.script_id, session.player_character_id);
+        setStage(session.current_stage);
+        setScene(session.current_scene);
+        setActions(session.available_actions as ActionType[]);
+        stageRef.current = session.current_stage;
+      })
+      .catch((error) => {
+        console.error("[GamePage] 会话状态同步失败:", error);
+        toast.error("无法加载后端会话状态", { description: "已保留当前界面，等待后端会话恢复。" });
+      });
+
+    return () => {
+      cancelled = true;
+      introTimers.forEach(clearTimeout);
+    };
+  }, [addMessage, sessionId, setActions, setScene, setSession, setStage]);
+
+  // ══ WebSocket 事件 ══
   useEffect(() => {
     let wsCleanup: (() => void) | null = null;
+
+    if (!isMockMode()) {
+      const ws = new WsClient(sessionId);
+      let firstPong = true;
+      const heartbeatTimer = setTimeout(() => ws.send("session.ping", {}), 500);
+      const offPong = ws.on("session.pong", (data: { session_id?: string }) => {
+        if (firstPong) {
+          firstPong = false;
+          toast.success("后端实时通道已连接", {
+            description: data.session_id ? `会话 ${data.session_id}` : undefined,
+            duration: 2500,
+          });
+        }
+      });
+
+      ws.connect();
+      wsCleanup = () => {
+        clearTimeout(heartbeatTimer);
+        offPong();
+        ws.disconnect();
+      };
+      return () => wsCleanup?.();
+    }
+
     import("@/lib/mock-ws").then(({ MockWsClient }) => {
       const ws = new MockWsClient(sessionId);
 
@@ -141,8 +200,9 @@ export default function GamePage() {
       ws.connect();
       wsCleanup = () => ws.disconnect();
     });
+
     return () => wsCleanup?.();
-  }, []);
+  }, [addClue, addEvidence, addMessage, sessionId, setActions, setScene, setStage]);
 
   const currentSceneConfig = mockScenes.find((s) => s.id === currentScene);
   const canSubmitFinal = ["act2_investigation", "act2_confrontation", "act3_reveal"].includes(currentStage);

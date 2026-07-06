@@ -1,0 +1,24 @@
+# Python 构建缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node/Next.js 构建缓存
+node_modules/
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+
+# 本地配置和运行产物
+.env
+.env.local
+*.log
+uploads/
+
+# Git/系统文件
+.git/
+.DS_Store
+Thumbs.db

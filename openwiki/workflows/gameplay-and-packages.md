@@ -1,8 +1,8 @@
-# Gameplay And Package Workflows
+# 玩法与剧本包工作流
 
-## Player Gameplay Flow
+## 玩家玩法流程
 
-The intended user journey is documented in `/docs/FRONTEND_EXPERIENCE_DESIGN.md`:
+预期用户旅程记录在 `/docs/FRONTEND_EXPERIENCE_DESIGN.md`：
 
 ```text
 /library
@@ -12,40 +12,40 @@ The intended user journey is documented in `/docs/FRONTEND_EXPERIENCE_DESIGN.md`
   -> /play/{session_id}/review
 ```
 
-Current frontend implementation mostly follows this shape, but the character selection route is named `/play/[sessionId]/select` while it is actually using that segment as a script id before creating a session.
+当前前端实现大体遵循这个形态，但角色选择路由名为 `/play/[sessionId]/select`，而它在创建会话前实际把该片段当作 script id 使用。
 
-## Current Frontend Mock Flow
+## 当前前端 Mock 流程
 
-For the active gameplay screen, the richest behavior is frontend-local:
+对活跃玩法屏幕而言，最丰富的行为在前端本地：
 
-1. `/library` presents Snow Village as a hard-coded script option.
-2. `/library/[id]` can use `api.getPackage`, which falls back to mock mode by default in the browser.
-3. Character selection uses hard-coded characters and navigates to a generated local session id.
-4. `/play/[sessionId]` initializes the Zustand store from `getMockEngine()` and `mockScenes`.
-5. `MockWsClient` emits simulated events like chat, clue unlocks, evidence discovery, stage changes, and BGM changes.
-6. Components such as `SceneHotspots`, `ChatPanel`, `EvidenceBackpack`, and `FinalSubmission` call the mock engine directly.
-7. Review can call `api.getReview`, which uses mock review data unless `NEXT_PUBLIC_USE_MOCK=false`.
+1. `/library` 把雪村作为硬编码剧本选项展示。
+2. `/library/[id]` 可以使用 `api.getPackage`；live 模式读取后端 `GET /packages/{id}`，Mock 模式读取本地 Mock 包。
+3. 角色选择使用硬编码角色，并跳转到生成的本地 session id。
+4. `/play/[sessionId]` 在 live 模式从后端读取 session 状态并连接真实 WebSocket 心跳；Mock 模式从 `getMockEngine()` 和 `mockScenes` 初始化 Zustand store。
+5. `MockWsClient` 只在 Mock 模式发出模拟事件，例如聊天、线索解锁、证据发现、阶段变化和 BGM 变化。
+6. `SceneHotspots`、`ChatPanel`、`EvidenceBackpack` 和 `FinalSubmission` 等组件直接调用 Mock 引擎。
+7. 复盘可以调用 `api.getReview`；除非 `NEXT_PUBLIC_USE_MOCK=false`，否则使用 Mock 复盘数据。
 
-This is useful for UX iteration but not yet an end-to-end live backend flow.
+这对 UX 迭代有用，但还不是端到端的真实后端流程。
 
-## Current Live Backend Session Flow
+## 当前真实后端会话流程
 
-The implemented backend flow is:
+已实现的后端流程是：
 
-1. Import and publish a script package through `POST /api/v1/packages?publish=true`.
-2. Create a session with `POST /api/v1/sessions`, giving `script_id`, `preferred_character_id`, and optional `player_name`.
-3. `engine/repositories/session_seed.py` checks that the package is published, finds `engine.entry_stage`, verifies the chosen character is playable, and seeds a `SessionRuntimeState`.
-4. `engine/repositories/session_mutations.py` inserts `game_sessions`, creates an `initial` checkpoint, and commits.
-5. Game actions go through `POST /api/v1/sessions/{session_id}/actions` and deterministic mappings in `engine/services/action_mappers.py`.
-6. Effects persist chat messages, discoveries, state patches, and checkpoints.
-7. Final submission goes through `POST /api/v1/sessions/{session_id}/final-submission`, persists `final_submissions` and `reviews`, and marks the session completed.
-8. `/review` returns the persisted review.
+1. 通过 `POST /api/v1/packages?publish=true` 导入并发布剧本包。
+2. 使用 `POST /api/v1/sessions` 创建会话，传入 `script_id`、`preferred_character_id` 和可选 `player_name`。
+3. `engine/repositories/session_seed.py` 检查剧本包已发布、找到 `engine.entry_stage`、验证所选角色可玩，并 seed 一个 `SessionRuntimeState`。
+4. `engine/repositories/session_mutations.py` 插入 `game_sessions`，创建 `initial` 检查点并提交。
+5. 游戏动作经过 `POST /api/v1/sessions/{session_id}/actions`，并走 `engine/services/action_mappers.py` 中的确定性映射。
+6. 效果会持久化聊天消息、发现记录、状态 patch 和检查点。
+7. 最终提交经过 `POST /api/v1/sessions/{session_id}/final-submission`，持久化 `final_submissions` 和 `reviews`，并把会话标记为完成。
+8. `/review` 返回已持久化的复盘。
 
-The live backend does not yet perform AI DM/NPC generation, condition DSL evaluation, package-defined hotspot behavior, or real-time WebSocket event streaming.
+真实后端尚未执行 AI DM/NPC 生成、条件 DSL 求值、剧本包定义的热点行为或实时 WebSocket 事件流。
 
-## Package Import Workflow
+## 剧本包导入流程
 
-Current import path:
+当前导入路径：
 
 ```text
 zip upload
@@ -58,42 +58,42 @@ zip upload
   -> insert stages, characters, clues, evidences, scenes, media
 ```
 
-Important behavior:
+重要行为：
 
-- The archive must be a valid zip.
-- Hidden files are filtered by `engine/core/package_archive.py`.
-- There must be exactly one `package.yml` path.
-- Stages and characters are required.
-- Package status is `draft` by default or `published` when the import request uses `publish=true`.
-- Re-importing an existing package id replaces structure rows for that package.
+- 归档必须是有效 zip。
+- 隐藏文件由 `engine/core/package_archive.py` 过滤。
+- 必须恰好存在一个 `package.yml` 路径。
+- 阶段和角色是必需的。
+- 剧本包状态默认是 `draft`；当导入请求使用 `publish=true` 时为 `published`。
+- 重新导入已有 package id 会替换该剧本包的结构行。
 
-## Query Workflow And Spoiler Control
+## 查询流程和防剧透控制
 
-Session data queries load the session first, enforce service-level access, then read package/runtime data:
+会话数据查询会先加载会话，强制执行服务层访问检查，再读取剧本包/运行期数据：
 
-- Clues and evidences are joined through `session_discoveries`, so only discovered rows are returned by those endpoints.
-- Character and card queries use current session state plus stored package data.
-- `session_context.py` sets Postgres session settings for current stage and player character before visibility-sensitive queries, matching the RLS design in `supabase/migrations/004_rls_policies.sql`.
+- 线索和证据通过 `session_discoveries` join，所以这些端点只返回已发现行。
+- 角色和卡牌查询使用当前会话状态加已存储的剧本包数据。
+- `session_context.py` 在可见性敏感查询前设置当前阶段和玩家角色的 Postgres session settings，与 `supabase/migrations/004_rls_policies.sql` 中的 RLS 设计匹配。
 
-RLS policies protect authenticated direct table access, but the backend service itself still needs careful review when introducing service-role access, anonymous sessions, or new query endpoints.
+RLS 策略保护认证用户的直接表访问，但引入 service-role 访问、匿名会话或新查询端点时，仍需仔细审查后端服务本身。
 
-## Workflow Gaps To Watch
+## 需要关注的工作流缺口
 
-- Frontend character selection does not call live `api.createSession` in the inspected implementation.
-- Main gameplay does not use live `api.performAction` or `WsClient`; it uses mock engine paths.
-- Backend WebSocket only supports heartbeat, while docs and frontend mock expect many gameplay events.
-- Backend action behavior is not driven by imported package stage/hotspot/evidence rules yet.
-- Backend final scoring is a fixed placeholder.
-- `script-packages/snow-village` is not importable as-is because package YAML files are absent.
+- 已检查实现中，前端角色选择没有调用真实 `api.createSession`。
+- 主玩法 live 模式已使用真实 session 读取和 `WsClient` 心跳，但具体动作还没有走真实 `api.performAction`。
+- 后端 WebSocket 只支持心跳，而文档和前端 Mock 期望很多玩法事件。
+- 后端动作行为尚未由导入剧本包的阶段/热点/证据规则驱动。
+- 后端最终评分是固定占位逻辑。
+- `script-packages/snow-village` 缺少 package YAML 文件，因此不能按现状导入。
 
-## Change Guidance
+## 变更指引
 
-For live integration work, start with one thin vertical slice:
+做真实集成工作时，从一个很薄的纵向切片开始：
 
-1. Ensure a real package can be imported and published.
-2. Make character selection call `api.createSession` and navigate with the returned session id.
-3. Make one gameplay action call `api.performAction` and update Zustand from the response.
-4. Add backend WebSocket events only after REST state transitions are reliable.
-5. Add package-driven rules and condition DSL evaluation after imported package data is complete.
+1. 确保真实剧本包可以导入并发布。
+2. 让角色选择调用 `api.createSession`，并使用返回的 session id 跳转。
+3. 让一个玩法动作调用 `api.performAction`，并根据响应更新 Zustand。
+4. 仅在 REST 状态转换可靠后再添加后端 WebSocket 事件。
+5. 在导入剧本包数据完整后，再添加剧本包驱动规则和条件 DSL 求值。
 
-For content workflow work, create package fixtures and loader tests before expanding the schema. The package loader is currently the strongest source of truth for what the backend can ingest.
+做内容工作流时，扩展 schema 前先创建剧本包 fixtures 和 loader 测试。当前剧本包 loader 是后端可摄取内容范围的最强事实来源。

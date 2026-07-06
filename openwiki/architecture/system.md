@@ -1,34 +1,35 @@
-# System Architecture
+# 系统架构
 
-## Architectural Intent
+## 架构意图
 
-The intended architecture is documented in `/docs/ARCHITECTURE_OVERVIEW.md`: a reusable Script Engine loads pluggable Script Packages. Game logic belongs in the engine; story content, stage rules, clues, characters, scenes, media, and DM guidance belong in package YAML/assets. `/doc/剧本系统设计.md` adds the product boundary: AI performs and controls flow inside a fixed mystery, but should not rewrite the culprit, motive, or key evidence.
+预期架构记录在 `/docs/ARCHITECTURE_OVERVIEW.md`：一个可复用的 Script Engine 加载可插拔的 Script Package。游戏逻辑属于引擎；故事内容、阶段规则、线索、角色、场景、媒体和 DM 指引属于剧本包 YAML/资产。`/doc/剧本系统设计.md` 补充了产品边界：AI 在固定谜题内表演和控场，但不应改写凶手、动机或关键证据。
 
-## Runtime Shape Today
+## 当前运行形态
 
-Current source is a partial implementation of that target architecture.
+当前源码只是目标架构的部分实现。
 
 ```text
 Next.js web app
-  -> REST /api/v1 and WebSocket contract wrappers
+  -> REST /api/v1 和 WebSocket 契约封装
   -> FastAPI backend
   -> service layer
   -> repository layer
   -> Supabase/Postgres tables and RLS
 
-Frontend main gameplay path
-  -> mock data and MockWsClient directly
+前端主玩法路径
+  -> live 模式读取真实 session 并连接 WebSocket 心跳
+  -> 具体玩法交互仍大量依赖 mock data
 ```
 
-The live backend entrypoint is `engine/api/main.py`. It creates the FastAPI app, installs custom API/database error handlers, rate limiting, CORS, routers for sessions/actions/packages, WebSocket routing, and `/health` plus `/health/db`.
+真实后端入口是 `engine/api/main.py`。它创建 FastAPI 应用，安装自定义 API/数据库错误处理、限流、CORS、会话/动作/剧本包路由、WebSocket 路由，以及 `/health` 和 `/health/db`。
 
-The live frontend entrypoint is `apps/web/app/page.tsx`, which redirects to `/library`. App-wide providers and layout live in `apps/web/app/layout.tsx`.
+真实前端入口是 `apps/web/app/page.tsx`，会重定向到 `/library`。全应用 provider 和 layout 位于 `apps/web/app/layout.tsx`。
 
-## Major Components
+## 主要组件
 
-### Frontend
+### 前端
 
-`apps/web` is a Next.js App Router application with TypeScript, React 19, Zustand, TanStack Query, framer-motion, Howler, Konva/react-konva, lucide-react, and Tailwind. The product route flow is:
+`apps/web` 是一个 Next.js App Router 应用，使用 TypeScript、React 19、Zustand、TanStack Query、framer-motion、Howler、Konva/react-konva、lucide-react 和 Tailwind。产品路由流是：
 
 ```text
 /library
@@ -38,71 +39,71 @@ The live frontend entrypoint is `apps/web/app/page.tsx`, which redirects to `/li
 /play/[sessionId]/review
 ```
 
-The API wrapper in `apps/web/lib/api.ts` matches the documented `/api/v1` contract and supports mock mode. The WebSocket wrapper in `apps/web/lib/ws.ts` connects to `/api/v1/ws/{sessionId}` and sends periodic `session.ping` messages. The main gameplay page currently bypasses those live wrappers for core play and imports `getMockEngine`, `mockScenes`, and `MockWsClient`.
+`apps/web/lib/api.ts` 中的 API wrapper 对齐文档化的 `/api/v1` 契约，并支持 Mock 模式。`apps/web/lib/ws.ts` 中的 WebSocket wrapper 连接 `/api/v1/ws/{sessionId}`，并定期发送 `session.ping`。主玩法页面在 live 模式会使用真实 session 状态和 WebSocket 心跳，但场景、热点和复杂玩法反馈仍主要来自 Mock 数据。
 
-See [Frontend Architecture](frontend.md).
+参见[前端架构](frontend.md)。
 
-### FastAPI Gateway
+### FastAPI 网关
 
-The backend exposes these route groups under `/api/v1`:
+后端在 `/api/v1` 下暴露这些路由组：
 
-- `/sessions`: create/get/restore sessions and query clues, evidences, characters, chat history, cards, and review.
-- `/sessions/{session_id}/actions`: perform gameplay action.
-- `/sessions/{session_id}/final-submission`: submit final deduction and persist review records.
-- `/packages`: import zip package archives, update package status, and list published packages.
-- `/ws/{session_id}`: heartbeat-only WebSocket skeleton.
+- `/sessions`：创建/获取/恢复会话，并查询线索、证据、角色、聊天历史、卡牌和复盘。
+- `/sessions/{session_id}/actions`：执行玩法动作。
+- `/sessions/{session_id}/final-submission`：提交最终推理并持久化复盘记录。
+- `/packages`：导入 zip 剧本包归档、更新剧本包状态、列出和读取已发布剧本包。
+- `/ws/{session_id}`：目前只有心跳的 WebSocket 骨架。
 
-Authentication is optional at the API dependency level. `engine/api/middleware/auth.py` returns an anonymous user when there is no bearer token and validates Supabase JWTs when a token is present.
+在 API 依赖层，认证是可选的。没有 bearer token 时，`engine/api/middleware/auth.py` 返回匿名用户；有 token 时会校验 Supabase JWT。
 
-See [Backend Architecture](backend.md).
+参见[后端架构](backend.md)。
 
-### Package And Runtime Services
+### 剧本包和运行期服务
 
-Script package import is implemented as:
+剧本包导入实现为：
 
 ```text
 UploadFile zip
   -> engine/services/import_service.py
   -> engine/core/package_loader.py
-  -> Pydantic YAML models in engine/core/package_schema.py
+  -> engine/core/package_schema.py 中的 Pydantic YAML 模型
   -> engine/repositories/package_import_repository.py
-  -> script_* structure tables
+  -> script_* 结构表
 ```
 
-Session runtime is implemented as:
+会话运行期实现为：
 
 ```text
 route
   -> engine/services/session_service.py
   -> engine/repositories/session_repository.py
-  -> focused session_* repository modules
-  -> game_sessions.state JSONB, checkpoints, chat, discoveries, submissions, reviews
+  -> 聚焦的 session_* repository 模块
+  -> game_sessions.state JSONB、checkpoints、chat、discoveries、submissions、reviews
 ```
 
-`engine/services/action_mappers.py` is currently deterministic placeholder gameplay logic. It returns canned NPC replies, scene discoveries, stage transition patches, and final scoring.
+`engine/services/action_mappers.py` 目前是确定性的玩法占位逻辑。它返回固定 NPC 回复、场景发现、阶段转换 patch 和最终评分。
 
-### Data Platform
+### 数据平台
 
-Supabase/Postgres schema is in `supabase/migrations/`:
+Supabase/Postgres schema 位于 `supabase/migrations/`：
 
-- `001_script_tables.sql`: package, stage, character, clue, evidence, scene, and media tables.
-- `002_runtime_tables.sql`: game sessions, checkpoints, chat messages, discoveries, final submissions, reviews.
-- `003_vector_tables.sql`: `script_knowledge` pgvector table for future RAG.
-- `004_rls_policies.sql`: RLS policies for service role, authenticated player access, and stage/character visibility.
-- `005_runtime_persistence_indexes.sql`: indexes for sessions, packages, submissions, reviews, checkpoints, and card/evidence queries.
-- `006_api_role_privileges.sql`: grants and public published-package policy.
+- `001_script_tables.sql`：剧本包、阶段、角色、线索、证据、场景和媒体表。
+- `002_runtime_tables.sql`：游戏会话、检查点、聊天消息、发现记录、最终提交和复盘。
+- `003_vector_tables.sql`：未来 RAG 使用的 `script_knowledge` pgvector 表。
+- `004_rls_policies.sql`：service role、认证玩家访问、阶段/角色可见性的 RLS 策略。
+- `005_runtime_persistence_indexes.sql`：会话、剧本包、提交、复盘、检查点、卡牌/证据查询索引。
+- `006_api_role_privileges.sql`：授权和公开已发布剧本包策略。
 
-`engine/db/session.py` creates an async SQLAlchemy engine using `DATABASE_POOLER_URL` first, then `DATABASE_URL`, and requires SSL.
+`engine/db/session.py` 创建异步 SQLAlchemy engine，优先使用 `DATABASE_POOLER_URL`，其次使用 `DATABASE_URL`，并要求 SSL。
 
-### AI, RAG, Media, And LangGraph
+### AI、RAG、媒体和 LangGraph
 
-The repo names and docs point toward LangGraph, DM/NPC/Guard/Hint agents, RAG retrieval, and media orchestration. Current source does not yet wire these into gameplay. Representative skeleton files include `engine/agents/*.py`, `engine/rag/*.py`, `engine/media/orchestrator.py`, `engine/core/script_engine.py`, `engine/core/condition_evaluator.py`, and `engine/services/scoring_service.py`.
+仓库命名和文档指向 LangGraph、DM/NPC/Guard/Hint agent、RAG 检索和媒体编排。当前源码尚未把这些接入玩法。代表性的骨架文件包括 `engine/agents/*.py`、`engine/rag/*.py`、`engine/media/orchestrator.py`、`engine/core/script_engine.py`、`engine/core/condition_evaluator.py` 和 `engine/services/scoring_service.py`。
 
-When adding these features, do not assume the documented architecture is already active. Start from the real route/service/repository flow and introduce integrations deliberately.
+添加这些功能时，不要假设文档化架构已经生效。应从真实 route/service/repository 流程出发，谨慎引入集成点。
 
-## Important Cross-Cutting Constraints
+## 重要横切约束
 
-- Spoiler control is a core product requirement. RLS policies and package metadata fields like `stage_visible`, `visibility`, and `character_id` exist to prevent premature disclosure, but application-level behavior is still incomplete.
-- The backend currently permits anonymous sessions with `player_id = NULL`; `session_service._assert_session_access` allows access to those sessions if the UUID is known.
-- The frontend and backend both know the API contract, but active gameplay is still mock-first.
-- Existing docs may describe intended acceptance criteria, not current behavior. Source wins when they conflict.
+- 防剧透是核心产品要求。RLS 策略和 `stage_visible`、`visibility`、`character_id` 等剧本包元数据字段用于防止过早泄露，但应用层行为仍不完整。
+- 后端目前允许 `player_id = NULL` 的匿名会话；只要知道 UUID，`session_service._assert_session_access` 就允许访问这些会话。
+- 前端和后端都知道 API 契约，但活跃玩法仍然以 Mock 为先。
+- 现有文档可能描述的是预期验收标准，而不是当前行为。发生冲突时以源码为准。

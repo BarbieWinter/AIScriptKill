@@ -20,6 +20,44 @@ const stagger = {
   show: { transition: { staggerChildren: 0.08 } },
 };
 
+const stableRandom = (index: number, salt: number) => {
+  const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+};
+
+const cssNumber = (value: number) => value.toFixed(4);
+const cssPercent = (value: number) => `${cssNumber(value)}%`;
+const cssPx = (value: number) => `${cssNumber(value)}px`;
+const cssSeconds = (value: number) => `${cssNumber(value)}s`;
+
+type ParticleStyle = {
+  readonly left: string;
+  readonly top: string;
+  readonly width: string;
+  readonly height: string;
+  readonly opacity: string;
+  readonly animation?: string;
+  readonly filter?: string;
+};
+
+const heroSnowflakes: readonly ParticleStyle[] = Array.from({ length: 30 }, (_, index) => ({
+  left: cssPercent(stableRandom(index, 1) * 100),
+  top: cssPx(-(2 + stableRandom(index, 2) * 4)),
+  width: cssPx(1.5 + stableRandom(index, 3) * 2.5),
+  height: cssPx(1.5 + stableRandom(index, 4) * 2.5),
+  opacity: cssNumber(0.2 + stableRandom(index, 5) * 0.3),
+  animation: `snow-fall ${cssSeconds(8 + stableRandom(index, 6) * 10)} -${cssSeconds(stableRandom(index, 7) * 10)} linear infinite`,
+  filter: "blur(0.5px)",
+}));
+
+const cardSnowSpecks: readonly ParticleStyle[] = Array.from({ length: 15 }, (_, index) => ({
+  left: cssPercent(stableRandom(index, 11) * 100),
+  top: cssPercent(stableRandom(index, 12) * 100),
+  width: cssPx(1 + stableRandom(index, 13) * 2),
+  height: cssPx(1 + stableRandom(index, 14) * 2),
+  opacity: cssNumber(0.3 + stableRandom(index, 15) * 0.5),
+}));
+
 const pkg = {
   id: "snow-village",
   title: "雪乡连环杀人事件",
@@ -42,19 +80,11 @@ export default function LibraryPage() {
           <div className="absolute inset-0 bg-gradient-to-b from-[#0f0f23] via-[#1a1a3e] to-[#0a0a0b]" />
           {/* 雪花粒子 */}
           <div className="absolute inset-0 overflow-hidden">
-            {Array.from({ length: 30 }, (_, i) => (
+            {heroSnowflakes.map((snowflake, i) => (
               <div
                 key={i}
                 className="absolute rounded-full bg-white"
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  top: `-${2 + Math.random() * 4}px`,
-                  width: 1.5 + Math.random() * 2.5,
-                  height: 1.5 + Math.random() * 2.5,
-                  opacity: 0.2 + Math.random() * 0.3,
-                  animation: `snow-fall ${8 + Math.random() * 10}s -${Math.random() * 10}s linear infinite`,
-                  filter: "blur(0.5px)",
-                }}
+                style={snowflake}
               />
             ))}
           </div>
@@ -175,15 +205,9 @@ export default function LibraryPage() {
               {/* 卡片顶部氛围图 */}
               <div className="h-48 bg-gradient-to-br from-[#1a1a3e] via-[#2a1a3e] to-[#0a0a0b] relative overflow-hidden">
                 <div className="absolute inset-0 opacity-20">
-                  {Array.from({ length: 15 }, (_, i) => (
+                  {cardSnowSpecks.map((snowflake, i) => (
                     <div key={i} className="absolute rounded-full bg-white"
-                      style={{
-                        left: `${Math.random() * 100}%`,
-                        top: `${Math.random() * 100}%`,
-                        width: 1 + Math.random() * 2,
-                        height: 1 + Math.random() * 2,
-                        opacity: 0.3 + Math.random() * 0.5,
-                      }} />
+                      style={snowflake} />
                   ))}
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />

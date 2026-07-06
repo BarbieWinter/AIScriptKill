@@ -25,6 +25,8 @@ const USE_MOCK =
     ? process.env.NEXT_PUBLIC_USE_MOCK !== "false"
     : false;
 
+export const isMockMode = () => USE_MOCK;
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -479,4 +481,3 @@ export const api = {
     return request("GET", `/packages/${packageId}`);
   },
 };
-

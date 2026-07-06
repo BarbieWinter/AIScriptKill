@@ -1,97 +1,100 @@
-# Data And Operations
+# 数据与运维
 
-## Environment And Configuration
+## 环境和配置
 
-Backend configuration lives in `engine/api/config.py`. It expects these environment variables:
+后端配置位于 `engine/api/config.py`。它预期这些环境变量：
 
-- `SUPABASE_PROJECT_REF` optional.
-- `SUPABASE_URL`.
-- `SUPABASE_PUBLISHABLE_KEY`.
-- `SUPABASE_SECRET_KEY`.
-- `DATABASE_URL`.
-- `DATABASE_POOLER_URL` optional, preferred at runtime when present.
-- `CORS_ORIGINS`, defaulting to local frontend origins.
-- `RATE_LIMIT_PER_MINUTE`, defaulting to 120.
+- `SUPABASE_PROJECT_REF`，可选。
+- `SUPABASE_URL`。
+- `SUPABASE_PUBLISHABLE_KEY`。
+- `SUPABASE_SECRET_KEY`。
+- `DATABASE_URL`。
+- `DATABASE_POOLER_URL`，可选，存在时运行期优先使用。
+- `CORS_ORIGINS`，默认本地前端 origins。
+- `RATE_LIMIT_PER_MINUTE`，默认 120。
 
-Current caveat: this checkout intentionally reads `.env.example` for backend runtime configuration, and the file currently contains project-specific Supabase/database configuration. Treat it as sensitive local configuration; frontend Supabase variables are not declared there, and browser code must use the FastAPI `/api/v1` surface instead of direct database access.
+当前注意点：后端运行期读取项目根目录 `.env` 和系统环境变量；`.env.example` 只作为模板，不应提交真实 Supabase/database 密钥。浏览器代码必须使用 FastAPI `/api/v1` 表面，而不是直接访问数据库。
 
-The backend database engine is async SQLAlchemy with asyncpg. `engine/db/session.py` converts `postgresql://` to `postgresql+asyncpg://`, uses pool pre-ping, small pool sizing, and `ssl=require`.
+后端数据库 engine 是使用 asyncpg 的异步 SQLAlchemy。`engine/db/session.py` 会把 `postgresql://` 转成 `postgresql+asyncpg://`，启用 pool pre-ping，使用较小连接池；本地数据库不强制 SSL，远程连接会设置 `ssl=require`。
 
 ## Supabase/Postgres Schema
 
-Migrations under `supabase/migrations/` define the database shape:
+`supabase/migrations/` 下的迁移定义数据库形态：
 
-- `001_script_tables.sql`: script package structure tables: packages, stages, characters, clues, evidences, scenes, media.
-- `002_runtime_tables.sql`: runtime tables: sessions, checkpoints, chat messages, discoveries, final submissions, reviews.
-- `003_vector_tables.sql`: `script_knowledge` pgvector table for future RAG with a 1536-dimensional embedding column and IVFFlat index.
-- `004_rls_policies.sql`: RLS enablement and policies for service-role access, authenticated player-owned session data, and stage/character-filtered script content.
-- `005_runtime_persistence_indexes.sql`: supplemental indexes for session/package/status/review/checkpoint/card queries.
-- `006_api_role_privileges.sql`: grants for anon/authenticated/service_role and a public policy for published packages.
+- `001_script_tables.sql`：剧本包结构表：packages、stages、characters、clues、evidences、scenes、media。
+- `002_runtime_tables.sql`：运行期表：sessions、checkpoints、chat messages、discoveries、final submissions、reviews。
+- `003_vector_tables.sql`：未来 RAG 使用的 `script_knowledge` pgvector 表，带 1536 维 embedding 列和 IVFFlat 索引。
+- `004_rls_policies.sql`：启用 RLS，并为 service-role 访问、认证玩家自有会话数据、阶段/角色过滤的剧本内容定义策略。
+- `005_runtime_persistence_indexes.sql`：会话/剧本包/状态/复盘/检查点/卡牌查询的补充索引。
+- `006_api_role_privileges.sql`：anon/authenticated/service_role 授权，以及已发布剧本包的公开策略。
+- `007_schema_comments.sql`：为 Phase 1 表、字段和 RLS policy 补充注释。
 
-`engine/db/tables.py` mirrors most public tables for SQLAlchemy Core queries. Keep migrations and table metadata aligned when changing schema.
+`supabase/seed/dev_seed.sql` 提供最小雪乡验收数据，包括已发布剧本包、阶段、角色、场景、线索、证物、媒体和一条 pgvector 知识分块。
 
-## RLS And Permissions
+`engine/db/tables.py` 为 SQLAlchemy Core 查询镜像了大多数 public 表。修改 schema 时，保持迁移和表元数据一致。
 
-RLS is central to spoiler control. The current policy design includes:
+## RLS 和权限
 
-- Full access for `service_role` across script and runtime tables.
-- Published package visibility for anon/authenticated users via `006_api_role_privileges.sql`.
-- Authenticated players can access their own sessions and related runtime data.
-- Clue/evidence/scene visibility can depend on current stage and player character settings.
-- `script_knowledge` is explicitly not intended for direct player queries; RAG should query server-side and enforce stage/role context.
+RLS 是防剧透控制的核心。当前策略设计包括：
 
-Application-level behavior must still be reviewed carefully. Anonymous backend sessions currently use `player_id = NULL` and are allowed by service-layer access checks if the UUID is known.
+- `service_role` 对剧本和运行期表有完整访问权。
+- 通过 `006_api_role_privileges.sql` 让 anon/authenticated 用户可见已发布剧本包。
+- 认证玩家可以访问自己的会话和相关运行期数据。
+- 线索/证据/场景可见性可以依赖当前阶段和玩家角色 setting。
+- `script_knowledge` 明确不打算让玩家直接查询；RAG 应在服务端查询，并强制应用阶段/角色上下文。
 
-Backend package import and package status changes are additionally protected by an admin-only FastAPI dependency. The dependency trusts Supabase `app_metadata`, not user-editable metadata.
+应用层行为仍需仔细审查。后端匿名会话目前使用 `player_id = NULL`，只要 UUID 已知，服务层访问检查就会允许访问。
 
-## Local Development
+后端剧本包导入和剧本包状态变更还额外受仅管理员可用的 FastAPI 依赖保护。该依赖信任 Supabase `app_metadata`，不信任用户可编辑 metadata。
 
-README documents `make install`, `make dev`, `make dev-web`, and `make test`, but the root `Makefile` is currently empty. Use direct commands until the Makefile is restored.
+## 本地开发
 
-Backend:
+README 和根目录 `Makefile` 提供常用命令入口。
+
+后端：
 
 ```bash
-uvicorn engine.api.main:app --reload
-pytest
+make dev-api
+make test
 ```
 
-Frontend:
+前端：
 
 ```bash
 npm --prefix apps/web install
-npm --prefix apps/web run dev
+make dev-web
 npm --prefix apps/web run build
 npm --prefix apps/web run start
 npm --prefix apps/web run lint
 ```
 
-Docker Compose exists in `docker-compose.yml` with services for `engine`, `web`, and a local Supabase image. It references `engine/Dockerfile` and `apps/web/Dockerfile`; verify those Dockerfiles exist before relying on compose. Compose also expects `.env`, which should contain local secrets and must not be documented.
+`make dev` 会同时启动后端和前端，并让前端连接本地后端 WebSocket。`make db-start` 启动本地 Supabase，`make db-reset` 应用迁移和 `supabase/seed/dev_seed.sql`。
 
-## Testing Status
+`docker-compose.yml` 中存在 Docker Compose，包含 `engine`、`web` 和本地 Supabase 镜像服务。它引用 `engine/Dockerfile` 和 `apps/web/Dockerfile`。Compose 预期 `.env`，其中应包含本地密钥，不能写入文档。
 
-Configured backend test settings are in `pyproject.toml`:
+## 测试状态
 
-- Test path: `engine/tests`.
-- `pytest-asyncio` mode: auto.
-- Ruff target: Python 3.12, line length 100, selected lint families `E`, `F`, `I`, `N`, `W`.
+后端测试配置位于 `pyproject.toml`：
 
-Current `engine/tests` includes admin authorization tests for package import/status management in `engine/tests/test_admin_auth.py`. There is still no broad backend coverage for package loading, persistence, gameplay actions, or RLS-sensitive queries.
+- 测试路径：`engine/tests`。
+- `pytest-asyncio` 模式：auto。
+- Ruff 目标：Python 3.12，行宽 100，启用 lint families `E`、`F`、`I`、`N`、`W`。
 
-Frontend scripts include build and lint commands, but no explicit test runner is configured in `apps/web/package.json`.
+当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试。目前仍没有对剧本包加载、持久化、玩法动作或 RLS 敏感查询的广泛后端覆盖。
 
-When adding tests, prioritize:
+前端 scripts 包含 build 和 lint 命令，但 `apps/web/package.json` 中没有配置明确的测试 runner。
 
-- Package archive validation and import replacement behavior.
-- Session creation from imported package fixtures.
-- Action side effects and checkpoint persistence.
-- RLS-sensitive query behavior if tests can run against Supabase/Postgres.
-- Frontend route behavior around mock/live boundaries and session creation.
+添加测试时，优先覆盖：
 
-## Operational Caveats
+- 剧本包归档校验和导入替换行为。
+- 基于已导入剧本包 fixtures 创建会话。
+- 动作副作用和检查点持久化。
+- 如果测试可连接 Supabase/Postgres，则覆盖 RLS 敏感查询行为。
+- Mock/真实边界和会话创建相关的前端路由行为。
 
-- `.env.example` is used by the backend config in this checkout and currently contains project-specific Supabase/database configuration; treat it as sensitive local configuration and do not expose those values to browser code or public docs.
-- `Makefile` is empty while README references make commands.
-- Docker Compose references Dockerfiles that were not confirmed during this pass.
-- Existing root git status includes unrelated `.DS_Store` changes and deleted old `apps/web/openwiki` files; do not revert user changes unless explicitly asked.
-- The backend health check requires `script_knowledge`; make sure vector migrations are applied before using `/health/db`.
-- Direct table access and backend API access have different security models. Keep RLS, service-role usage, and app-level checks in sync.
+## 运维注意事项
+
+- `.env.example` 是安全模板；真实凭据只放 `.env` 或部署环境。
+- Docker Compose 引用的 Dockerfile 已存在。
+- 后端健康检查要求存在 `script_knowledge`；使用 `/health/db` 前确保已应用向量迁移。
+- 直接表访问和后端 API 访问使用不同安全模型。保持 RLS、service-role 使用和应用层检查同步。

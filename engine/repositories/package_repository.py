@@ -60,6 +60,22 @@ class PackageRepository:
         result = await self._db.execute(stmt)
         return [stored_package_from_row(row) for row in result.mappings().all()]
 
+    async def get_published_package(self, package_id: str) -> StoredPackage | None:
+        stmt = select(
+            script_packages.c.id,
+            script_packages.c.name,
+            script_packages.c.status,
+            script_packages.c.config,
+        ).where(
+            script_packages.c.id == package_id,
+            script_packages.c.status == "published",
+        )
+        result = await self._db.execute(stmt)
+        row = result.mappings().one_or_none()
+        if row is None:
+            return None
+        return stored_package_from_row(row)
+
     async def update_package_status(
         self,
         package_id: str,

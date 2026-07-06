@@ -1,61 +1,60 @@
-# OpenWiki Quickstart
+# OpenWiki 快速开始
 
-## What This Repository Is
+## 这个仓库是什么
 
-AIScriptKill is an AI-assisted immersive murder-mystery game system. The product direction is a fixed, high-quality script package plus AI performance, stage control, clue/evidence discovery, media atmosphere, final deduction, and review. The clearest product statement is in `/doc/剧本系统设计.md`: AI should perform inside a fixed script boundary, not rewrite the mystery, change the culprit, or invent key evidence.
+AIScriptKill 是一个 AI 辅助的沉浸式剧本杀游戏系统。产品方向是固定、高质量的剧本包，加上 AI 演绎、控场、线索/证据发现、媒体氛围、最终推理和复盘。最清晰的产品表述在 `/doc/剧本系统设计.md`：AI 应该在固定剧本边界内表演，而不是改写谜题、更换凶手或发明关键证据。
 
-The repository currently contains four major areas:
+仓库目前包含四个主要区域：
 
-- `engine/`: Python 3.12 FastAPI backend, package import/runtime persistence services, Supabase/Postgres access, and skeleton AI/RAG/media modules.
-- `apps/web/`: Next.js 15 React 19 frontend for library browsing, character selection, gameplay, and review.
-- `supabase/migrations/`: Postgres schema, pgvector knowledge table, RLS policies, indexes, and API role grants.
-- `docs/` and `doc/`: existing architecture, API, package schema, frontend design, execution plan, and Chinese product/domain design docs.
+- `engine/`：Python 3.12 FastAPI 后端，包含剧本包导入、运行期持久化服务、Supabase/Postgres 访问，以及 AI/RAG/媒体模块骨架。
+- `apps/web/`：Next.js 15 React 19 前端，用于剧本库浏览、角色选择、游玩和复盘。
+- `supabase/migrations/`：Postgres schema、pgvector 知识表、RLS 策略、索引和 API 角色授权。
+- `docs/` 和 `doc/`：已有架构、API、剧本包 schema、前端设计、执行计划，以及中文产品/领域设计文档。
 
-Recent git history shows the repo was built in layers: initial product/assets import, system scaffold, frontend architecture, and backend architecture. The current worktree also contains substantial uncommitted backend persistence work and deleted older `apps/web/openwiki` docs. This OpenWiki is intentionally rooted at `/openwiki`.
+近期 git 历史显示仓库是分层构建的：先导入产品和资产，再搭系统脚手架、前端架构和后端架构。本 OpenWiki 有意放在根目录 `/openwiki`。
 
-## Current Implementation Reality
+## 当前实现现状
 
-Treat the existing design docs as important intent, but verify behavior in source before changing code.
+现有设计文档是重要意图来源，但改代码前必须以源码验证实际行为。
 
-Implemented now:
+已经实现的部分：
 
-- FastAPI app assembly, CORS, rate limiting, error handling, session/package/action routes, and WebSocket heartbeat in `engine/api/`.
-- Async SQLAlchemy access to Supabase/Postgres in `engine/db/session.py` and table metadata in `engine/db/tables.py`.
-- Script package zip import and YAML validation in `engine/core/package_loader.py`, `engine/core/package_schema.py`, and `engine/services/import_service.py`.
-- Runtime session creation, checkpoint restore, deterministic action effects, final submission persistence, and review lookup through `engine/services/` and `engine/repositories/`.
-- Next.js pages for `/library`, `/library/[id]`, `/play/[sessionId]/select`, `/play/[sessionId]`, and `/play/[sessionId]/review`.
-- Frontend mock gameplay data and mock WebSocket in `apps/web/lib/mock-data.ts` and `apps/web/lib/mock-ws.ts`.
+- `engine/api/` 中的 FastAPI 应用组装、CORS、限流、错误处理、会话/剧本包/动作路由、剧本包详情查询和 WebSocket 心跳。
+- `engine/db/session.py` 中基于异步 SQLAlchemy 的 Supabase/Postgres 访问，以及 `engine/db/tables.py` 中的表元数据。
+- `engine/core/package_loader.py`、`engine/core/package_schema.py` 和 `engine/services/import_service.py` 中的剧本包 zip 导入和 YAML 校验。
+- 通过 `engine/services/` 和 `engine/repositories/` 实现的运行期会话创建、检查点恢复、确定性动作效果、最终提交持久化和复盘查询。
+- Next.js 页面：`/library`、`/library/[id]`、`/play/[sessionId]/select`、`/play/[sessionId]` 和 `/play/[sessionId]/review`。
+- `apps/web/lib/mock-data.ts` 和 `apps/web/lib/mock-ws.ts` 中的前端 Mock 玩法数据和 Mock WebSocket。
 
-Mostly aspirational or placeholder today:
+目前主要仍是愿景或占位的部分：
 
-- LangGraph state machine, condition evaluator, event bus, checkpoint abstraction, AI agents, RAG retriever/chunker/reranker, media orchestrator, and scoring service are skeletons or comment-only modules.
-- Main frontend gameplay directly imports mock engine/mock WebSocket instead of live backend REST/WS.
-- `script-packages/snow-village` has the expected directory skeleton but no `package.yml` or YAML content.
-- Root `Makefile` is empty even though README implies setup commands.
-- `.env.example` contains project-specific Supabase/database configuration in this worktree; treat it as sensitive local configuration, not a template for frontend or public docs.
+- LangGraph 状态机、条件求值器、事件总线、检查点抽象、AI Agent、RAG 检索/切分/重排、媒体编排器和评分服务还是骨架或仅有注释的模块。
+- 主前端玩法在 `NEXT_PUBLIC_USE_MOCK=false` 时会读取真实后端 session 并接入真实 WebSocket 心跳；具体玩法事件、热点和部分组件仍主要依赖 Mock 引擎。
+- `script-packages/snow-village` 有预期目录骨架，但没有 `package.yml` 或 YAML 内容。
+- LangGraph/RAG/媒体/评分等高级能力仍是后续阶段工作。
 
-## Where To Start
+## 从哪里开始
 
-- Architecture overview: [System Architecture](architecture/system.md)
-- Frontend route/UI behavior: [Frontend Architecture](architecture/frontend.md)
-- Backend API/service/runtime behavior: [Backend Architecture](architecture/backend.md)
-- Product and script package model: [Script And Gameplay Domain](domain/script-gameplay.md)
-- Player and package workflows: [Gameplay And Package Workflows](workflows/gameplay-and-packages.md)
-- Supabase, config, deployment, testing: [Data And Operations](operations/data-and-deployment.md)
+- 架构总览：[系统架构](architecture/system.md)
+- 前端路由/UI 行为：[前端架构](architecture/frontend.md)
+- 后端 API/服务/运行期行为：[后端架构](architecture/backend.md)
+- 产品和剧本包模型：[剧本与玩法领域](domain/script-gameplay.md)
+- 玩家和剧本包工作流：[玩法与剧本包工作流](workflows/gameplay-and-packages.md)
+- Supabase、配置、部署、测试：[数据与运维](operations/data-and-deployment.md)
 
-Existing primary docs remain useful:
+已有的一手文档仍然有用：
 
-- `/docs/ARCHITECTURE_OVERVIEW.md`: target architecture and philosophy.
-- `/docs/API_REFERENCE.md`: REST and WebSocket contract, though live source is the authority.
-- `/docs/SCRIPT_PACKAGE_SCHEMA.md`: intended package authoring schema.
-- `/docs/CONDITION_DSL_REFERENCE.md`: intended stage/event condition language.
-- `/docs/FRONTEND_EXPERIENCE_DESIGN.md`: route flow and immersive UX design.
-- `/docs/EXECUTION_PLAN.md`: task roadmap and intended acceptance criteria.
-- `/doc/剧本系统设计.md`: product/domain positioning and content boundary rules.
+- `/docs/ARCHITECTURE_OVERVIEW.md`：目标架构和理念。
+- `/docs/API_REFERENCE.md`：REST 和 WebSocket 契约，但真实源码才是权威。
+- `/docs/SCRIPT_PACKAGE_SCHEMA.md`：预期的剧本包创作 schema。
+- `/docs/CONDITION_DSL_REFERENCE.md`：预期的阶段/事件条件语言。
+- `/docs/FRONTEND_EXPERIENCE_DESIGN.md`：路由流和沉浸式 UX 设计。
+- `/docs/EXECUTION_PLAN.md`：任务路线图和预期验收标准。
+- `/doc/剧本系统设计.md`：产品/领域定位和内容边界规则。
 
-## Local Commands
+## 本地命令
 
-Documented commands in `README.md` are:
+`README.md` 中记录的命令是：
 
 ```bash
 make install
@@ -64,21 +63,26 @@ make dev-web
 make test
 ```
 
-However, the root `Makefile` is currently empty. Until it is restored, use the underlying tools directly:
+根目录 `Makefile` 已提供常用入口：
 
 ```bash
-# Backend, after installing Python dependencies from pyproject.toml
-uvicorn engine.api.main:app --reload
+# 同时启动后端和前端
+make dev
 
-# Frontend
-npm --prefix apps/web install
-npm --prefix apps/web run dev
+# 只启动后端或前端
+make dev-api
+make dev-web
 
-# Backend tests, if tests are added
-pytest
+# 测试和检查
+make test
+make lint
+
+# 本地 Supabase
+make db-start
+make db-reset
 ```
 
-The frontend package also provides:
+前端包还提供：
 
 ```bash
 npm --prefix apps/web run build
@@ -86,14 +90,14 @@ npm --prefix apps/web run start
 npm --prefix apps/web run lint
 ```
 
-Be aware that `next lint` is configured in `apps/web/package.json`, but modern Next.js versions may require updating lint commands depending on installed tooling.
+注意：`make dev` 会给前端传入 `NEXT_PUBLIC_USE_MOCK=false` 和本地 WebSocket 地址，用于验收真实后端心跳链路。
 
-## Change Guidance For Future Agents
+## 给后续 Agent 的变更指引
 
-Before backend changes, read [Backend Architecture](architecture/backend.md), [Data And Operations](operations/data-and-deployment.md), and the relevant route/service/repository files. Most runtime behavior now lives in services and repositories, not in the LangGraph skeleton.
+改后端前，先读[后端架构](architecture/backend.md)、[数据与运维](operations/data-and-deployment.md)，以及相关 route/service/repository 文件。大部分运行期行为现在位于服务层和仓储层，而不是 LangGraph 骨架里。
 
-Before frontend changes, read [Frontend Architecture](architecture/frontend.md). Decide explicitly whether the change belongs to mock gameplay, the live `api` wrapper, or the eventual integration between them.
+改前端前，先读[前端架构](architecture/frontend.md)。明确判断变更应该落在 Mock 玩法、真实 `api` wrapper，还是两者最终集成处。
 
-Before package/content changes, read [Script And Gameplay Domain](domain/script-gameplay.md), `/docs/SCRIPT_PACKAGE_SCHEMA.md`, and `engine/core/package_loader.py`. The loader currently imports zip archives, not loose package directories.
+改剧本包或内容前，先读[剧本与玩法领域](domain/script-gameplay.md)、`/docs/SCRIPT_PACKAGE_SCHEMA.md` 和 `engine/core/package_loader.py`。当前 loader 导入的是 zip 归档，不是松散的剧本包目录。
 
-Before relying on README commands or environment setup, inspect the current `Makefile`, `.env.example`, and `engine/api/config.py`; the current config reads Supabase/database variables from the environment or `.env.example`, and this worktree's `.env.example` should be treated as sensitive local configuration.
+依赖环境配置前，检查当前 `Makefile`、`.env.example` 和 `engine/api/config.py`；真实密钥应放在 `.env` 或部署环境中，`.env.example` 只保留占位符。

@@ -15,8 +15,10 @@ export class WsClient {
 
   constructor(sessionId: string) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    this.url = `${protocol}//${host}/api/v1/ws/${sessionId}`;
+    const baseUrl = process.env.NEXT_PUBLIC_WS_URL;
+    this.url = baseUrl
+      ? `${baseUrl.replace(/\/$/, "")}/api/v1/ws/${sessionId}`
+      : `${protocol}//${window.location.host}/api/v1/ws/${sessionId}`;
   }
 
   connect() {

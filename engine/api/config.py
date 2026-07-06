@@ -8,7 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ── 配置来源 ──
 
 DEFAULT_CORS_ORIGINS: Final[str] = "http://localhost:3000,http://127.0.0.1:3000"
-ENV_EXAMPLE_PATH: Final[Path] = Path(__file__).resolve().parents[2] / ".env.example"
+ENV_PATH: Final[Path] = Path(__file__).resolve().parents[2] / ".env"
+LOCAL_SUPABASE_URL: Final[str] = "http://127.0.0.1:54321"
+LOCAL_DATABASE_URL: Final[str] = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 
 
 # ── 后端运行配置 ──
@@ -16,30 +18,33 @@ ENV_EXAMPLE_PATH: Final[Path] = Path(__file__).resolve().parents[2] / ".env.exam
 
 class Settings(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
-        env_file=ENV_EXAMPLE_PATH,
+        env_file=ENV_PATH,
         extra="ignore",
         populate_by_name=True,
     )
 
-    # Supabase 项目信息：直接来自项目根目录 `.env.example`
     supabase_project_ref: str | None = Field(
-        default=None,
+        default="local",
         alias="SUPABASE_PROJECT_REF",
         description="Supabase project ref for CLI linking and diagnostics.",
     )
     supabase_url: str = Field(
+        default=LOCAL_SUPABASE_URL,
         alias="SUPABASE_URL",
         description="Supabase project REST URL.",
     )
     supabase_publishable_key: str = Field(
+        default="local-publishable-key",
         alias="SUPABASE_PUBLISHABLE_KEY",
         description="Public Supabase key used for anon/client-side access.",
     )
     supabase_secret_key: str = Field(
+        default="local-secret-key",
         alias="SUPABASE_SECRET_KEY",
         description="Server-side Supabase secret key.",
     )
     database_url: str = Field(
+        default=LOCAL_DATABASE_URL,
         alias="DATABASE_URL",
         description="Postgres connection string for server-side migrations/services.",
     )

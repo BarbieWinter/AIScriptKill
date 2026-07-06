@@ -9,12 +9,16 @@ from engine.api.schemas import (
     PackageUpdateRequest,
     PackageUpdateResponse,
 )
+from engine.api.schemas.packages import PackageSummary
 from engine.db.session import SessionDep
 from engine.services.import_service import (
     PackageUpload,
 )
 from engine.services.import_service import (
     import_package as import_package_service,
+)
+from engine.services.package_service import (
+    get_package as get_package_service,
 )
 from engine.services.package_service import (
     list_packages as list_package_service,
@@ -71,3 +75,13 @@ async def list_packages(
 ) -> PackageListResponse:
     """List published script packages for the frontend library."""
     return await list_package_service(db)
+
+
+@router.get("/{package_id}", response_model=PackageSummary)
+async def get_package(
+    package_id: str,
+    _current_user: CurrentUserDep,
+    db: SessionDep,
+) -> PackageSummary:
+    """Fetch one published script package for the frontend detail page."""
+    return await get_package_service(package_id, db)

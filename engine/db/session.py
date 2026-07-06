@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 from typing import Annotated, Final
+from urllib.parse import urlparse
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -18,6 +19,7 @@ from engine.api.errors import DatabaseSchemaError
 
 ASYNC_POSTGRES_SCHEME: Final[str] = "postgresql+asyncpg://"
 SYNC_POSTGRES_SCHEME: Final[str] = "postgresql://"
+LOCAL_DATABASE_HOSTS: Final[frozenset[str]] = frozenset({"127.0.0.1", "localhost"})
 
 
 def build_async_database_url(database_url: str) -> str:
@@ -28,17 +30,25 @@ def build_async_database_url(database_url: str) -> str:
     return database_url
 
 
+def build_connect_args(database_url: str) -> dict[str, int | str]:
+    connect_args: dict[str, int | str] = {"statement_cache_size": 0}
+    if urlparse(database_url).hostname not in LOCAL_DATABASE_HOSTS:
+        connect_args["ssl"] = "require"
+    return connect_args
+
+
 # ── SQLAlchemy Async Engine ──
 
 
 def create_engine() -> AsyncEngine:
     settings = get_settings()
+    database_url = settings.effective_database_url
     return create_async_engine(
-        build_async_database_url(settings.effective_database_url),
+        build_async_database_url(database_url),
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=5,
-        connect_args={"statement_cache_size": 0, "ssl": "require"},
+        connect_args=build_connect_args(database_url),
     )
 
 

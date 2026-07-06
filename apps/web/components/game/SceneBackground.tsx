@@ -72,18 +72,32 @@ const sceneAtmospheres: Record<string, SceneAtmosphere> = {
   },
 };
 
+const stableRandom = (index: number, salt: number) => {
+  const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+};
+
+const cssNumber = (value: number) => value.toFixed(4);
+const cssPercent = (value: number) => `${cssNumber(value)}%`;
+const cssPx = (value: number) => `${cssNumber(value)}px`;
+const cssSeconds = (value: number) => `${cssNumber(value)}s`;
+
 /* ── 雪花粒子 ── */
 function SnowParticles({ count }: { count: number }) {
   const particles = useMemo(() =>
-    Array.from({ length: count }, (_, i) => ({
-      id: i,
-      left: Math.random() * 100,
-      size: 1.5 + Math.random() * 3,
-      opacity: 0.3 + Math.random() * 0.5,
-      duration: 6 + Math.random() * 8,
-      delay: Math.random() * 10,
-      drift: Math.random() * 40 - 20,
-    })),
+    Array.from({ length: count }, (_, i) => {
+      const size = 1.5 + stableRandom(i, 2) * 3;
+      return {
+        id: i,
+        left: cssPercent(stableRandom(i, 1) * 100),
+        top: cssPx(-(size * 2)),
+        size: cssPx(size),
+        opacity: cssNumber(0.3 + stableRandom(i, 3) * 0.5),
+        duration: cssSeconds(6 + stableRandom(i, 4) * 8),
+        delay: cssSeconds(stableRandom(i, 5) * 10),
+        drift: cssPx(stableRandom(i, 6) * 40 - 20),
+      };
+    }),
     [count]
   );
 
@@ -94,13 +108,13 @@ function SnowParticles({ count }: { count: number }) {
           key={p.id}
           className="absolute rounded-full bg-white"
           style={{
-            left: `${p.left}%`,
-            top: `-${p.size * 2}px`,
+            left: p.left,
+            top: p.top,
             width: p.size,
             height: p.size,
             opacity: p.opacity,
-            animation: `snow-fall ${p.duration}s -${p.delay}s linear infinite`,
-            transform: `translateX(${p.drift}px)`,
+            animation: `snow-fall ${p.duration} -${p.delay} linear infinite`,
+            transform: `translateX(${p.drift})`,
             filter: "blur(0.5px)",
           }}
         />
@@ -114,11 +128,11 @@ function EmberParticles({ count }: { count: number }) {
   const particles = useMemo(() =>
     Array.from({ length: count }, (_, i) => ({
       id: i,
-      left: 35 + Math.random() * 30,
-      size: 1.5 + Math.random() * 2,
-      opacity: 0.4 + Math.random() * 0.4,
-      duration: 2 + Math.random() * 3,
-      delay: Math.random() * 3,
+      left: cssPercent(35 + stableRandom(i, 11) * 30),
+      size: cssPx(1.5 + stableRandom(i, 12) * 2),
+      opacity: cssNumber(0.4 + stableRandom(i, 13) * 0.4),
+      duration: cssSeconds(2 + stableRandom(i, 14) * 3),
+      delay: cssSeconds(stableRandom(i, 15) * 3),
     })),
     [count]
   );
@@ -130,12 +144,12 @@ function EmberParticles({ count }: { count: number }) {
           key={p.id}
           className="absolute bottom-[15%] rounded-full"
           style={{
-            left: `${p.left}%`,
+            left: p.left,
             width: p.size,
             height: p.size,
             opacity: p.opacity,
             background: `radial-gradient(circle, #ff8844, #ff4422)`,
-            animation: `ember-rise ${p.duration}s -${p.delay}s ease-out infinite`,
+            animation: `ember-rise ${p.duration} -${p.delay} ease-out infinite`,
             filter: "blur(0.5px)",
             boxShadow: "0 0 6px #ff442244",
           }}

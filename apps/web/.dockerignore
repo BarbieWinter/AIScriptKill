@@ -1,0 +1,14 @@
+# Next.js / Node 构建缓存
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# 本地配置和日志
+.env*
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db

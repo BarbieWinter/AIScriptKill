@@ -27,14 +27,23 @@ AIScriptKill/
 # 安装依赖
 make install
 
-# 启动后端
+# 同时启动后端和前端
 make dev
 
-# 启动前端
+# 只启动后端
+make dev-api
+
+# 只启动前端
 make dev-web
 
 # 测试
 make test
+
+# 启动本地 Supabase（Colima 环境默认跳过日志采集服务）
+make db-start
+
+# 重置本地 Supabase（需要先启动本地 Supabase）
+make db-reset
 ```
 
 ## 设计文档

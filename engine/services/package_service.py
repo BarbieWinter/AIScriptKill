@@ -25,6 +25,14 @@ async def list_packages(db: AsyncSession) -> PackageListResponse:
     )
 
 
+async def get_package(package_id: str, db: AsyncSession) -> PackageSummary:
+    repository = PackageRepository(db)
+    package = await repository.get_published_package(package_id)
+    if package is None:
+        raise not_found("PACKAGE_NOT_FOUND", "未找到指定剧本包")
+    return package_summary_from_package(package)
+
+
 # ── 剧本包状态服务 ──
 
 
