@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Annotated, ClassVar, Literal, cast
+from typing import Annotated, ClassVar, Final, Literal, cast
 
 import jwt
 from fastapi import Depends
@@ -10,14 +10,22 @@ from jwt.exceptions import PyJWKClientError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from engine.api.config import get_settings
-from engine.api.errors import unauthorized
+from engine.api.errors import forbidden, unauthorized
 
 # ── Bearer Token 入口 ──
 
 bearer_scheme = HTTPBearer(auto_error=False)
+ADMIN_APP_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner"})
 
 
 # ── Supabase JWT Claims ──
+
+
+class SupabaseAppMetadata(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", frozen=True)
+
+    role: str | None = Field(default=None, description="Server-managed app role.")
+    roles: tuple[str, ...] = Field(default=(), description="Server-managed app roles.")
 
 
 class SupabaseClaims(BaseModel):
@@ -25,12 +33,24 @@ class SupabaseClaims(BaseModel):
 
     sub: str = Field(description="Supabase Auth user ID.")
     role: str | None = Field(default=None, description="Supabase Postgres role.")
+    app_metadata: SupabaseAppMetadata = Field(
+        default_factory=SupabaseAppMetadata,
+        description="Supabase server-managed authorization metadata.",
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class CurrentUser:
     subject: str
     role: Literal["anonymous", "authenticated"]
+    app_role: str | None = None
+    app_roles: tuple[str, ...] = ()
+
+    @property
+    def is_admin(self) -> bool:
+        return self.app_role in ADMIN_APP_ROLES or bool(
+            ADMIN_APP_ROLES.intersection(self.app_roles)
+        )
 
 
 # ── Supabase JWKS 校验器 ──
@@ -78,9 +98,25 @@ async def get_current_user(
 
     verifier = get_jwt_verifier()
     claims = verifier.verify(credentials.credentials)
-    return CurrentUser(subject=claims.sub, role="authenticated")
+    return CurrentUser(
+        subject=claims.sub,
+        role="authenticated",
+        app_role=claims.app_metadata.role,
+        app_roles=claims.app_metadata.roles,
+    )
 
 
 # ── 路由依赖别名 ──
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+async def require_admin_user(current_user: CurrentUserDep) -> CurrentUser:
+    if current_user.role == "anonymous":
+        raise unauthorized("AUTH_REQUIRED", "管理操作需要登录")
+    if not current_user.is_admin:
+        raise forbidden("ADMIN_REQUIRED", "管理操作需要管理员权限")
+    return current_user
+
+
+AdminUserDep = Annotated[CurrentUser, Depends(require_admin_user)]

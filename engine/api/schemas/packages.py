@@ -1,6 +1,13 @@
+from typing import Literal, TypeAlias
+
 from pydantic import Field
 
 from engine.api.schemas.common import ApiModel
+
+# ── 剧本包状态类型 ──
+
+PackageStatus: TypeAlias = Literal["draft", "importing", "published", "archived"]
+
 
 # ── 剧本包校验与导入 ──
 
@@ -14,7 +21,7 @@ class ValidationReport(ApiModel):
 class PackageImportResponse(ApiModel):
     package_id: str = Field(description="Script package ID.")
     title: str = Field(description="Script package title.")
-    status: str = Field(description="Import status.")
+    status: PackageStatus = Field(description="Import status.")
     validation: ValidationReport = Field(description="Validation result.")
 
 
@@ -22,13 +29,13 @@ class PackageImportResponse(ApiModel):
 
 
 class PackageUpdateRequest(ApiModel):
-    status: str = Field(description="New package publication status.")
+    status: PackageStatus = Field(description="New package publication status.")
 
 
 class PackageUpdateResponse(ApiModel):
     package_id: str = Field(description="Script package ID.")
-    status: str = Field(description="Updated package status.")
-    published_at: str = Field(description="Publication timestamp.")
+    status: PackageStatus = Field(description="Updated package status.")
+    published_at: str = Field(description="Status update timestamp.")
 
 
 # ── 前端剧本库列表 ──
@@ -42,7 +49,7 @@ class PackageSummary(ApiModel):
     difficulty: int = Field(description="Difficulty from 1 to 5.")
     duration_minutes: int = Field(description="Expected duration.")
     genre: list[str] = Field(description="Genre tags.")
-    status: str = Field(description="Package status.")
+    status: PackageStatus = Field(description="Package status.")
     player_count: int = Field(description="Supported player count.")
 
 

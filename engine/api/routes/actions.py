@@ -7,9 +7,12 @@ from engine.api.schemas import (
     FinalSubmissionRequest,
     SubmissionResult,
 )
+from engine.db.session import SessionDep
 from engine.services.session_service import (
-    perform_action_stub,
-    submit_final_stub,
+    perform_action as perform_session_action,
+)
+from engine.services.session_service import (
+    submit_final as submit_final_submission,
 )
 
 # ── 游戏操作路由 ──
@@ -24,10 +27,11 @@ router = APIRouter(prefix="/sessions/{session_id}", tags=["actions"])
 async def perform_action(
     session_id: str,
     payload: ActionRequest,
-    _current_user: CurrentUserDep,
+    current_user: CurrentUserDep,
+    db: SessionDep,
 ) -> ActionResponse:
     """Route a player action into the game engine action pipeline."""
-    return perform_action_stub(session_id, payload)
+    return await perform_session_action(session_id, payload, current_user, db)
 
 
 # ── 最终推理提交 ──
@@ -37,7 +41,8 @@ async def perform_action(
 async def submit_final(
     session_id: str,
     payload: FinalSubmissionRequest,
-    _current_user: CurrentUserDep,
+    current_user: CurrentUserDep,
+    db: SessionDep,
 ) -> SubmissionResult:
     """Score a final deduction submission and trigger an ending."""
-    return submit_final_stub(session_id, payload)
+    return await submit_final_submission(session_id, payload, current_user, db)

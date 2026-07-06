@@ -6,7 +6,6 @@ LangGraph StateGraph 的核心数据类型。
 
 from __future__ import annotations
 
-from dataclasses import field
 from typing import Any
 
 from typing_extensions import TypedDict
@@ -14,6 +13,7 @@ from typing_extensions import TypedDict
 
 class Message(TypedDict):
     """单条聊天消息"""
+
     id: str
     role: str  # "player" | "npc" | "dm"
     character_id: str | None
@@ -24,6 +24,7 @@ class Message(TypedDict):
 
 class GameEvent(TypedDict):
     """游戏事件：由条件触发或脚本配置触发"""
+
     event_id: str
     actions: list[dict[str, Any]]
     source: str  # "stage_entry" | "condition" | "player_action"
@@ -31,24 +32,25 @@ class GameEvent(TypedDict):
 
 class GameState(TypedDict):
     """全局游戏状态（所有剧本共享 LangGraph 状态模型）"""
+
     # ── 会话信息 ──
     session_id: str
     script_id: str
     player_id: str
 
     # ── 流程控制 ──
-    current_stage: str          # 如 "prologue" / "act1_investigation"
+    current_stage: str  # 如 "prologue" / "act1_investigation"
     previous_stage: str | None
-    stage_entered_at: str       # ISO 8601 时间戳
+    stage_entered_at: str  # ISO 8601 时间戳
 
     # ── 角色信息 ──
-    player_character_id: str    # 玩家选择的角色 ID
+    player_character_id: str  # 玩家选择的角色 ID
     npc_states: dict[str, Any]  # {char_id: {trust_level, nervous, fear, ...}}
 
     # ── 解谜进度 ──
-    unlocked_clues: list[str]       # 已解锁线索 ID 列表
+    unlocked_clues: list[str]  # 已解锁线索 ID 列表
     discovered_evidences: list[str]  # 已发现证物 ID 列表
-    completed_events: list[str]      # 已完成事件 ID 列表
+    completed_events: list[str]  # 已完成事件 ID 列表
 
     # ── 对话上下文 ──
     chat_history: list[Message]

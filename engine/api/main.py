@@ -5,17 +5,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from engine.api.config import get_settings
-from engine.api.errors import ApiError, api_exception_handler
+from engine.api.errors import (
+    DATABASE_EXCEPTION_TYPES,
+    ApiError,
+    api_exception_handler,
+    database_exception_handler,
+)
 from engine.api.middleware.rate_limit import RateLimitMiddleware
 from engine.api.routes import actions, packages, sessions
 from engine.api.websocket.handler import router as websocket_router
+from engine.db.session import check_database_connection, dispose_engine
 
 # ── 应用生命周期 ──
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-    yield
+    try:
+        yield
+    finally:
+        await dispose_engine()
 
 
 # ── FastAPI 应用装配 ──
@@ -30,6 +39,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     api.add_exception_handler(ApiError, api_exception_handler)
+    for exception_type in DATABASE_EXCEPTION_TYPES:
+        api.add_exception_handler(exception_type, database_exception_handler)
     api.add_middleware(
         RateLimitMiddleware,
         limit_per_minute=settings.rate_limit_per_minute,
@@ -46,6 +57,7 @@ def create_app() -> FastAPI:
     api.include_router(packages.router, prefix="/api/v1")
     api.include_router(websocket_router, prefix="/api/v1")
     api.add_api_route("/health", health, methods=["GET"])
+    api.add_api_route("/health/db", database_health, methods=["GET"])
 
     return api
 
@@ -55,6 +67,11 @@ def create_app() -> FastAPI:
 
 async def health() -> dict[str, str]:
     return {"status": "ok", "engine": "aiscriptkill", "version": "0.1.0"}
+
+
+async def database_health() -> dict[str, str]:
+    await check_database_connection()
+    return {"status": "ok", "database": "reachable"}
 
 
 app = create_app()

@@ -1,7 +1,6 @@
-from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, Final, cast
+from typing import ClassVar, Final
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,6 +43,11 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
         description="Postgres connection string for server-side migrations/services.",
     )
+    database_pooler_url: str | None = Field(
+        default=None,
+        alias="DATABASE_POOLER_URL",
+        description="Optional Supabase pooler connection string for runtime services.",
+    )
     cors_origins_raw: str = Field(
         default=DEFAULT_CORS_ORIGINS,
         alias="CORS_ORIGINS",
@@ -61,11 +65,15 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
 
+    # 数据库连接优先级：服务运行优先走 Supabase Pooler，缺失时回退 Direct URI
+    @property
+    def effective_database_url(self) -> str:
+        return self.database_pooler_url or self.database_url
+
 
 # ── 单例配置入口 ──
 
 
 @lru_cache
 def get_settings() -> Settings:
-    settings_factory = cast(Callable[[], Settings], Settings)
-    return settings_factory()
+    return Settings(**{})
