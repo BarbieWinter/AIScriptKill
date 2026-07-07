@@ -130,12 +130,10 @@ def load_dm_guide(
 def package_config(
     package_yaml: JsonMapping,
     stage_index: JsonMapping,
-    dm_guide: JsonMapping,
+    _dm_guide: JsonMapping,
 ) -> JsonMapping:
     config = dict(package_yaml)
     config["stage_index"] = stage_index
-    if len(dm_guide) > 0:
-        config["dm_guide"] = dm_guide
     return config
 
 

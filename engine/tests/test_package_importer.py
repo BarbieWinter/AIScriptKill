@@ -1,4 +1,12 @@
-from engine.core.package_importer import prepare_package_for_import
+from typing import cast
+
+from sqlalchemy import Table
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Executable
+from sqlalchemy.sql.dml import Delete, Insert
+
+from engine.core.package_importer import import_to_db, prepare_package_for_import
 from engine.core.package_loader import load_package_archive
 from engine.core.package_schema import PackageAssetRecord
 from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
@@ -11,6 +19,18 @@ class FakePackageAssetStorage:
     async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
         self.uploaded_assets.append(asset)
         return f"https://storage.test/{package_id}/{asset.path}"
+
+
+class RecordingAsyncSession:
+    def __init__(self) -> None:
+        self.statements: list[Executable] = []
+        self.commit_count = 0
+
+    async def execute(self, statement: Executable) -> None:
+        self.statements.append(statement)
+
+    async def commit(self) -> None:
+        self.commit_count += 1
 
 
 async def test_prepare_package_for_import_uploads_assets_and_rewrites_local_paths() -> None:
@@ -64,7 +84,61 @@ async def test_prepare_package_for_import_uploads_assets_and_rewrites_local_path
         prepared_package.dm_guide["truth"]["truth"]["alternative_endings"][0]["news_broadcast"]
         == "https://storage.test/minimal-case/assets/audio/ending.mp3"
     )
-    assert prepared_package.package.config["dm_guide"] == prepared_package.dm_guide
+    assert "dm_guide" not in prepared_package.package.config
+
+
+async def test_import_to_db_persists_endings_and_privileged_dm_guide() -> None:
+    package = load_package_archive(package_archive(_package_files_with_assets()))
+    session = RecordingAsyncSession()
+
+    prepared_package = await import_to_db(package, cast(AsyncSession, session))
+
+    package_params = _insert_params(session, "script_packages")[0]
+    package_config = package_params["config"]
+    assert isinstance(package_config, dict)
+    assert "dm_guide" not in package_config
+
+    ending_params = _insert_params(session, "script_endings")
+    assert ending_params == [
+        {
+            "script_id": "minimal-case",
+            "ending_id": "truth",
+            "name": "真相复盘",
+            "condition": {"type": "submission_correct", "field": "suspect", "value": "npc"},
+            "on_trigger": [{"action": "transition_to", "stage_id": "review"}],
+            "metadata": prepared_package.endings[0].metadata,
+        },
+    ]
+
+    guide_params = _insert_params(session, "script_dm_guides")
+    assert guide_params == [
+        {
+            "script_id": "minimal-case",
+            "guide_key": "truth",
+            "content": prepared_package.dm_guide["truth"],
+        },
+    ]
+    assert session.commit_count == 1
+
+
+async def test_import_to_db_replaces_endings_and_dm_guide_on_repeated_import() -> None:
+    package = load_package_archive(package_archive(_package_files_with_assets()))
+    session = RecordingAsyncSession()
+
+    await import_to_db(package, cast(AsyncSession, session))
+    await import_to_db(package, cast(AsyncSession, session))
+
+    deleted_tables = [
+        table_name
+        for statement in session.statements
+        if isinstance(statement, Delete)
+        if (table_name := _table_name(statement)) is not None
+    ]
+    assert deleted_tables.count("script_endings") == 2
+    assert deleted_tables.count("script_dm_guides") == 2
+    assert len(_insert_params(session, "script_endings")) == 2
+    assert len(_insert_params(session, "script_dm_guides")) == 2
+    assert session.commit_count == 2
 
 
 async def test_prepare_package_for_import_without_storage_keeps_package_unchanged() -> None:
@@ -88,6 +162,21 @@ def test_load_package_archive_collects_assets_from_package_assets_directory() ->
     assert assets["assets/posters/main.jpg"].content_type == "image/jpeg"
     assert assets["assets/audio/intro.mp3"].content == b"intro"
     assert assets["assets/audio/intro.mp3"].content_type == "audio/mpeg"
+
+
+def _insert_params(session: RecordingAsyncSession, table_name: str) -> list[dict[str, object]]:
+    return [
+        dict(statement.compile(dialect=postgresql.dialect()).params)
+        for statement in session.statements
+        if isinstance(statement, Insert) and _table_name(statement) == table_name
+    ]
+
+
+def _table_name(statement: Executable) -> str | None:
+    table = getattr(statement, "table", None)
+    if isinstance(table, Table):
+        return table.name
+    return None
 
 
 def _package_files_with_assets() -> dict[str, str | bytes]:

@@ -6,6 +6,8 @@ from engine.core.package_schema import ScriptPackageImport
 from engine.db.tables import (
     script_characters,
     script_clues,
+    script_dm_guides,
+    script_endings,
     script_evidences,
     script_media,
     script_packages,
@@ -131,9 +133,34 @@ class PackageImportRepository:
                     metadata=media.metadata,
                 ),
             )
+        await self._insert_resolution_structure(package)
+
+    async def _insert_resolution_structure(self, package: ScriptPackageImport) -> None:
+        script_id = package.package.id
+        for ending in package.endings:
+            await self._db.execute(
+                insert(script_endings).values(
+                    script_id=script_id,
+                    ending_id=ending.id,
+                    name=ending.name,
+                    condition=ending.condition,
+                    on_trigger=list(ending.on_trigger),
+                    metadata=ending.metadata,
+                ),
+            )
+        for guide_key, content in package.dm_guide.items():
+            await self._db.execute(
+                insert(script_dm_guides).values(
+                    script_id=script_id,
+                    guide_key=guide_key,
+                    content=content,
+                ),
+            )
 
     async def _delete_structure(self, script_id: str) -> None:
         for table in (
+            script_dm_guides,
+            script_endings,
             script_media,
             script_scenes,
             script_evidences,

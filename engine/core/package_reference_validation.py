@@ -196,6 +196,10 @@ def _validate_condition_references(
             _validate_conditions(owner, json_mapping_list(condition.get("conditions")), context)
         case "not":
             validate_condition(owner, required_mapping(owner, condition, "condition"), context)
+        case "count":
+            _validate_conditions(owner, json_mapping_list(condition.get("conditions")), context)
+        case "always" | "never":
+            return
         case "stage_completed" | "stage_reached":
             ensure_reference(owner, required_text(owner, condition, "stage_id"), context.stage_ids)
         case "clues_discovered":
@@ -217,7 +221,7 @@ def _validate_condition_references(
                 context.character_ids,
             )
         case "player_action_performed":
-            ensure_reference(owner, required_text(owner, condition, "action"), ACTION_TYPES)
+            ensure_reference(owner, required_text(owner, condition, "action_id"), ACTION_TYPES)
         case _:
             return
 

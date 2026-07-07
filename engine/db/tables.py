@@ -108,6 +108,27 @@ script_media = Table(
     Column("metadata", JSONB, nullable=False),
 )
 
+script_endings = Table(
+    "script_endings",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("script_id", Text, ForeignKey("script_packages.id"), nullable=False),
+    Column("ending_id", Text, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("condition", JSONB, nullable=False),
+    Column("on_trigger", JSONB, nullable=False),
+    Column("metadata", JSONB, nullable=False),
+)
+
+script_dm_guides = Table(
+    "script_dm_guides",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("script_id", Text, ForeignKey("script_packages.id"), nullable=False),
+    Column("guide_key", Text, nullable=False),
+    Column("content", JSONB, nullable=False),
+)
+
 
 # ── 游戏运行时表 ──
 

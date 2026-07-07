@@ -97,7 +97,7 @@ Supabase/Postgres schema 位于 `supabase/migrations/`：
 
 ### AI、RAG、媒体和 LangGraph
 
-仓库命名和文档指向 LangGraph、DM/NPC/Guard/Hint agent、RAG 检索和媒体编排。当前源码尚未把这些接入玩法。代表性的骨架文件包括 `engine/agents/*.py`、`engine/rag/*.py`、`engine/media/orchestrator.py`、`engine/core/script_engine.py`、`engine/core/condition_evaluator.py` 和 `engine/services/scoring_service.py`。
+仓库命名和文档指向 LangGraph、DM/NPC/Guard/Hint agent、RAG 检索和媒体编排。当前源码尚未把这些接入玩法；条件 DSL 核心评估器已实现，但还未接入阶段推进。代表性的骨架文件包括 `engine/agents/*.py`、`engine/rag/*.py`、`engine/media/orchestrator.py`、`engine/core/script_engine.py` 和 `engine/services/scoring_service.py`。
 
 添加这些功能时，不要假设文档化架构已经生效。应从真实 route/service/repository 流程出发，谨慎引入集成点。
 

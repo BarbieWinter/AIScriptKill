@@ -28,6 +28,8 @@
 - `005_runtime_persistence_indexes.sql`：会话/剧本包/状态/复盘/检查点/卡牌查询的补充索引。
 - `006_api_role_privileges.sql`：anon/authenticated/service_role 授权，以及已发布剧本包的公开策略。
 - `007_schema_comments.sql`：为 Phase 1 表、字段和 RLS policy 补充注释。
+- `008_package_import_resolution_tables.sql`：`script_endings` 和仅 service-role 可访问的 `script_dm_guides`。
+- `009_restrict_package_private_tables.sql`：显式撤销 anon/authenticated 对结局和 DM 私密表的全部直接权限。
 
 `supabase/seed/dev_seed.sql` 提供最小雪乡验收数据，包括已发布剧本包、阶段、角色、场景、线索、证物、媒体和一条 pgvector 知识分块。
 
@@ -41,6 +43,7 @@ RLS 是防剧透控制的核心。当前策略设计包括：
 - 通过 `006_api_role_privileges.sql` 让 anon/authenticated 用户可见已发布剧本包。
 - 认证玩家可以访问自己的会话和相关运行期数据。
 - 线索/证据/场景可见性可以依赖当前阶段和玩家角色 setting。
+- `script_endings` 和 `script_dm_guides` 只授权 service-role 访问，避免结局条件和 DM 真相资料绕过后端泄露。
 - `script_knowledge` 明确不打算让玩家直接查询；RAG 应在服务端查询，并强制应用阶段/角色上下文。
 
 应用层行为仍需仔细审查。后端匿名会话目前使用 `player_id = NULL`，只要 UUID 已知，服务层访问检查就会允许访问。
@@ -80,7 +83,7 @@ npm --prefix apps/web run lint
 - `pytest-asyncio` 模式：auto。
 - Ruff 目标：Python 3.12，行宽 100，启用 lint families `E`、`F`、`I`、`N`、`W`。
 
-当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，以及 `engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。目前仍没有对会话持久化、玩法动作或 RLS 敏感查询的广泛后端覆盖。
+当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，`engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试，`engine/tests/test_package_importer.py` 中的剧本包入库语句流测试，以及 `engine/tests/test_condition_evaluator.py` 和 `engine/tests/condition_evaluator_fixtures.py` 中的条件 DSL evaluator 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。importer 覆盖素材 URL 重写、`endings` 写入、`dm_guide` 私密写入、公开 package config 不含 DM 资料和重复导入删除重建。condition evaluator 覆盖所有已实现叶子条件、`all/any/not/count/always/never`、短路 trace、五层嵌套、缓存键、debug force 和 100 条件性能约束。目前仍没有对会话持久化、玩法动作、条件 DSL 接入阶段推进或真实 RLS 数据库查询的广泛后端覆盖。
 
 前端 scripts 包含 build 和 lint 命令，但 `apps/web/package.json` 中没有配置明确的测试 runner。
 
@@ -88,7 +91,7 @@ npm --prefix apps/web run lint
 
 - 剧本包导入到数据库的替换行为和 warnings 持久化/暴露策略。
 - 基于已导入剧本包 fixtures 创建会话。
-- 动作副作用和检查点持久化。
+- 动作副作用、条件 DSL 阶段推进接入和检查点持久化。
 - 如果测试可连接 Supabase/Postgres，则覆盖 RLS 敏感查询行为。
 - Mock/真实边界和会话创建相关的前端路由行为。
 

@@ -9,14 +9,14 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",  # ASGI 服务器
     "pydantic>=2.10.0",           # 数据验证
     "pydantic-settings>=2.6.0",   # 配置管理
-    "PyJWT[crypto]>=2.10.0",
+    "PyJWT[crypto]>=2.10.0",      # 加密扩展依赖
     "python-multipart>=0.0.20",
 
     # AI & LangGraph
-    "langgraph>=0.3.0",           # 状态图引擎（核心状态机）
-    "langchain>=0.3.0",           # LLM 调用框架
-    "langchain-anthropic>=0.3.0", # Anthropic 模型适配器
-    "langchain-openai>=0.3.0",    # OpenAI 模型适配器（备选回退）
+    "langgraph>=1.2.8",           # 状态图引擎（核心状态机，1.x API）
+    "langchain>=1.3.11",          # LLM 调用框架（1.x API）
+    "langchain-anthropic>=1.4.8", # Anthropic 模型适配器（1.x API）
+    "langchain-openai>=1.3.3",    # OpenAI 模型适配器（备选回退，1.x API）
 
     # RAG & 向量
     "sentence-transformers>=3.0",  # 文本嵌入生成

@@ -5,16 +5,16 @@ from engine.core.package_loader import load_package_archive
 from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
 
 
-def test_load_package_archive_loads_dm_guide_into_privileged_config() -> None:
+def test_load_package_archive_keeps_dm_guide_out_of_public_config() -> None:
     # Given: dm_guide contains stage notes and a truth-only ending asset.
     files = _package_files_with_dm_guide()
 
     # When: the package is loaded.
     package = load_package_archive(package_archive(files))
 
-    # Then: dm_guide remains available in the import object and package config.
+    # Then: dm_guide remains available for privileged import without entering public config.
     assert package.dm_guide["stage_notes"]["stage_notes"][0]["stage_id"] == "prologue"
-    assert package.package.config["dm_guide"] == package.dm_guide
+    assert "dm_guide" not in package.package.config
 
 
 def test_load_package_archive_rejects_dm_guide_unknown_stage_note() -> None:

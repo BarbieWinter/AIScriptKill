@@ -42,6 +42,7 @@ AI 不应：
 - `scenes/*.yml`。
 - `media/*.yml`，带音频/图片资产列表。
 - `endings.yml`，用于导入结局、触发条件和 on_trigger 事件。
+- `dm_guide/*.yml`，用于导入 DM 私密资料，内容不进入公开 `script_packages.config`。
 
 ### 阶段
 
@@ -72,7 +73,7 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 ### DM 指引、真相和复盘
 
-设计文档把 DM 材料和真相数据视为特权内容。当前后端剧本包 loader 已导入 `endings.yml` 为 `EndingRecord`，并会校验 ending condition 和 on_trigger 中的引用；但还没有导入 `dm_guide/`。评分/复盘逻辑在 `engine/services/action_mappers.py` 和 `engine/repositories/session_mutations.py` 中仍是占位级别。
+设计文档把 DM 材料和真相数据视为特权内容。当前后端剧本包 loader 会导入 `endings.yml` 为 `EndingRecord`，校验 ending condition 和 on_trigger 中的引用，并通过 `PackageImportRepository` 写入 `script_endings`。`dm_guide/` 会保留在 `ScriptPackageImport.dm_guide`，导入时写入仅 service-role 可访问的 `script_dm_guides`，不会进入公开可读的 `script_packages.config`。评分/复盘逻辑在 `engine/services/action_mappers.py` 和 `engine/repositories/session_mutations.py` 中仍是占位级别。
 
 ## 雪村状态
 
@@ -86,7 +87,9 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 ## 条件 DSL 和导入期校验
 
-`/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 是占位模块，因此该 DSL 还不是活跃运行期行为。
+`/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 已实现核心 DSL 评估、组合递归、短路、缓存和 trace 输出；它还需要在后续 `script_engine` 阶段推进流程中接入，才会成为完整玩法运行期行为。
+
+当前 evaluator 支持组合条件 `all`、`any`、`not`、`count`，常量条件 `always`、`never`，以及这些叶子类别：阶段/幕进度、线索发现计数、单线索/证据发现、证据出示给 NPC、角色对话次数、已触发对话、玩家关键词、NPC 状态阈值、玩家动作/请求/卡牌、阶段内时间和真实时间、最终提交正确/错误、关键证据使用、推理链完成、事件已触发/未触发、session counter、首次游玩和提示次数。`evaluate_condition()` 使用 `GameState` 相关片段生成缓存键；`evaluate_condition_with_trace()` 和 `format_condition_trace()` 用于调试；`ConditionEvaluationOptions.force_conditions` 可在测试/沙盒中覆盖某类条件结果。
 
 不过 loader 已经会做导入期校验：`package_validation_context.py` 列出支持的 condition type、event action 和 gameplay action；`package_reference_validation.py` 校验阶段、角色、场景、线索轮次、线索、证据、媒体和结局引用；`package_event_validation.py` 校验 `play_audio`、`unlock_scenes`、`unlock_clue_round`、`npc_enter_scene`、`npc_emotion`、`clue_discover`、`transition_to` 等事件；`package_asset_validation.py` 校验本地素材路径存在，并把角色缺少阶段知识作为 warning 返回。
 

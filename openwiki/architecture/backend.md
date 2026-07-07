@@ -97,6 +97,8 @@
 
 `engine/services/package_service.py` 通过剧本包仓储列出和更新剧本包状态。
 
+条件 DSL evaluator 现在位于 `engine/core/condition_evaluator.py` 及其拆分模块：`condition_models.py` 解析条件树，`condition_state.py` 调度叶子求值并生成缓存快照，`condition_leaf_evaluators.py`/`condition_leaf_helpers.py` 读取 `GameState` 中的阶段、线索、证据、对话、玩家行为、时间、提交答案、事件和全局计数状态，`condition_trace.py` 输出调试 trace。`evaluate_condition()` 会按条件树和相关 `GameState` 片段生成缓存键；`evaluate_condition_with_trace()` 绕过布尔缓存返回完整遍历树；`ConditionEvaluationOptions.force_conditions` 可在测试/调试中强制某类条件恒真或恒假。
+
 ## 当前玩法行为
 
 当前 `action_mappers.py` 行为有意保持简单：
@@ -112,13 +114,12 @@
 
 ## 骨架区域
 
-文档和依赖提到了 LangGraph、agents、RAG、媒体编排、条件 DSL 和评分。当前实现主要在这些位置仍是骨架：
+文档和依赖提到了 LangGraph、agents、RAG、媒体编排、条件 DSL 和评分。条件 DSL 核心评估器已经实现，但尚未接入 `script_engine` 的阶段推进。当前实现主要在这些位置仍是骨架：
 
 - `engine/agents/`
 - `engine/rag/`
 - `engine/media/orchestrator.py`
 - `engine/core/script_engine.py`
-- `engine/core/condition_evaluator.py`
 - `engine/core/event_bus.py`
 - `engine/core/checkpoint.py`
 - `engine/services/scoring_service.py`

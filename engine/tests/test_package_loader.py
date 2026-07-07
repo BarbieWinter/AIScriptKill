@@ -147,6 +147,48 @@ def test_load_package_archive_rejects_unknown_stage_event_action() -> None:
     assert "rewrite_murderer" in exc_info.value.message
 
 
+def test_load_package_archive_accepts_documented_logic_conditions() -> None:
+    files = minimal_package_files()
+    files["stages/prologue.yml"] = (
+        f"{files['stages/prologue.yml']}\n"
+        "exit_conditions:\n"
+        "  - type: count\n"
+        "    min: 1\n"
+        "    conditions:\n"
+        "      - type: always\n"
+        "      - type: never\n"
+    )
+
+    package = load_package_archive(package_archive(files))
+
+    prologue = next(stage for stage in package.stages if stage.id == "prologue")
+    assert prologue.definition["exit_conditions"] == [
+        {
+            "type": "count",
+            "min": 1,
+            "conditions": [{"type": "always"}, {"type": "never"}],
+        },
+    ]
+
+
+def test_load_package_archive_accepts_documented_player_action_condition() -> None:
+    files = minimal_package_files()
+    files["stages/prologue.yml"] = (
+        f"{files['stages/prologue.yml']}\n"
+        "exit_conditions:\n"
+        "  - type: player_action_performed\n"
+        "    action_id: use_card\n"
+        "    target: door\n"
+    )
+
+    package = load_package_archive(package_archive(files))
+
+    prologue = next(stage for stage in package.stages if stage.id == "prologue")
+    assert prologue.definition["exit_conditions"] == [
+        {"type": "player_action_performed", "action_id": "use_card", "target": "door"},
+    ]
+
+
 def test_load_package_archive_rejects_evidence_reaction_with_unknown_character() -> None:
     # Given: an evidence NPC reaction points at a missing character.
     files = minimal_package_files()
