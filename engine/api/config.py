@@ -43,6 +43,11 @@ class Settings(BaseSettings):
         alias="SUPABASE_SECRET_KEY",
         description="Server-side Supabase secret key.",
     )
+    supabase_storage_bucket: str = Field(
+        default="script-assets",
+        alias="SUPABASE_STORAGE_BUCKET",
+        description="Supabase Storage bucket for imported package assets.",
+    )
     database_url: str = Field(
         default=LOCAL_DATABASE_URL,
         alias="DATABASE_URL",

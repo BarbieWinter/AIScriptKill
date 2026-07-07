@@ -26,7 +26,7 @@ AI 不应：
 
 剧本包是内容单元。`/docs/SCRIPT_PACKAGE_SCHEMA.md` 描述了预期目录形态，包括 `package.yml`、`stages/`、`characters/`、`clues/`、`evidences/`、`scenes/`、`media/`、`dm_guide/`、`endings.yml` 和 `assets/`。
 
-当前后端导入基于 zip。`engine/core/package_loader.py` 预期上传归档中恰好有一个 `package.yml`，通过 `engine/core/package_schema.py` 校验，并把结构行加载到数据库表。
+当前后端导入以 zip 为主，也有 `load_package_directory()` 目录入口。`engine/core/package_loader.py` 预期归档中恰好有一个 `package.yml`，通过 `engine/core/package_yaml.py`、`package_records.py` 和 `package_validation*.py` 解析/校验，并把结构行加载到数据库表。
 
 当前 loader 要求：
 
@@ -41,12 +41,13 @@ AI 不应：
 - `evidences/*.yml`。
 - `scenes/*.yml`。
 - `media/*.yml`，带音频/图片资产列表。
+- `endings.yml`，用于导入结局、触发条件和 on_trigger 事件。
 
 ### 阶段
 
 阶段是游戏推进单元。设计文档把阶段描述为带进入和退出条件的受控轮次/幕。当前后端把完整阶段定义存入 `script_stages.definition`，并在创建会话时使用其中一个小子集：来自 `engine/repositories/session_seed.py` 的 `available_actions`、`available_characters` 和 `available_scenes`。
 
-如果阶段省略可用动作，当前后端默认使用 `talk_to_npc`、`examine_scene` 和 `open_clue_board`。如果省略场景，当前场景默认是 `start`。
+如果阶段省略可用动作，当前后端默认使用 `talk_to_npc`、`examine_scene` 和 `open_clue_board`。如果省略场景，当前场景默认是 `start`。Loader 还支持 `/docs/SCRIPT_PACKAGE_SCHEMA.md` 中的 action object 写法，会把 `available_actions[].id` 归一化为运行期字符串列表，并把 label/description 保存在 `action_definitions`。
 
 ### 角色
 
@@ -71,7 +72,7 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 ### DM 指引、真相和复盘
 
-设计文档把 DM 材料和真相数据视为特权内容。当前后端剧本包 loader 尚未导入 `dm_guide/` 或 `endings.yml`，评分/复盘逻辑在 `engine/services/action_mappers.py` 和 `engine/repositories/session_mutations.py` 中仍是占位级别。
+设计文档把 DM 材料和真相数据视为特权内容。当前后端剧本包 loader 已导入 `endings.yml` 为 `EndingRecord`，并会校验 ending condition 和 on_trigger 中的引用；但还没有导入 `dm_guide/`。评分/复盘逻辑在 `engine/services/action_mappers.py` 和 `engine/repositories/session_mutations.py` 中仍是占位级别。
 
 ## 雪村状态
 
@@ -83,9 +84,11 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 不要假设雪村已经转换成可导入的后端剧本包。如果要转换，应以 `/docs/SCRIPT_PACKAGE_SCHEMA.md` 和 `engine/core/package_loader.py` 作为绑定契约，并在把 Mock 数据视为规范前先调和其中的不一致。
 
-## 条件 DSL
+## 条件 DSL 和导入期校验
 
 `/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 是占位模块，因此该 DSL 还不是活跃运行期行为。
+
+不过 loader 已经会做导入期校验：`package_validation_context.py` 列出支持的 condition type、event action 和 gameplay action；`package_reference_validation.py` 校验阶段、角色、场景、线索轮次、线索、证据、媒体和结局引用；`package_event_validation.py` 校验 `play_audio`、`unlock_scenes`、`unlock_clue_round`、`npc_enter_scene`、`npc_emotion`、`clue_discover`、`transition_to` 等事件；`package_asset_validation.py` 校验本地素材路径存在，并把角色缺少阶段知识作为 warning 返回。
 
 ## 变更指引
 

@@ -21,7 +21,7 @@ AIScriptKill 是一个 AI 辅助的沉浸式剧本杀游戏系统。产品方向
 
 - `engine/api/` 中的 FastAPI 应用组装、CORS、限流、错误处理、会话/剧本包/动作路由、剧本包详情查询和 WebSocket 心跳。
 - `engine/db/session.py` 中基于异步 SQLAlchemy 的 Supabase/Postgres 访问，以及 `engine/db/tables.py` 中的表元数据。
-- `engine/core/package_loader.py`、`engine/core/package_schema.py` 和 `engine/services/import_service.py` 中的剧本包 zip 导入和 YAML 校验。
+- `engine/core/package_loader.py` 及其 `package_archive.py`、`package_directory.py`、`package_yaml.py`、`package_records.py`、`package_validation*.py` 等拆分模块中的剧本包 zip/目录导入、YAML 解析、记录归一化和引用/资产校验。
 - 通过 `engine/services/` 和 `engine/repositories/` 实现的运行期会话创建、检查点恢复、确定性动作效果、最终提交持久化和复盘查询。
 - Next.js 页面：`/library`、`/library/[id]`、`/play/[sessionId]/select`、`/play/[sessionId]` 和 `/play/[sessionId]/review`。
 - `apps/web/lib/mock-data.ts` 和 `apps/web/lib/mock-ws.ts` 中的前端 Mock 玩法数据和 Mock WebSocket。
@@ -98,6 +98,6 @@ npm --prefix apps/web run lint
 
 改前端前，先读[前端架构](architecture/frontend.md)。明确判断变更应该落在 Mock 玩法、真实 `api` wrapper，还是两者最终集成处。
 
-改剧本包或内容前，先读[剧本与玩法领域](domain/script-gameplay.md)、`/docs/SCRIPT_PACKAGE_SCHEMA.md` 和 `engine/core/package_loader.py`。当前 loader 导入的是 zip 归档，不是松散的剧本包目录。
+改剧本包或内容前，先读[剧本与玩法领域](domain/script-gameplay.md)、`/docs/SCRIPT_PACKAGE_SCHEMA.md`、`engine/core/package_loader.py` 和相关 `engine/core/package_*` 模块。当前 loader 支持上传 zip，也支持通过 `load_package_directory()` 把松散剧本包目录打包后走同一套校验流程。
 
 依赖环境配置前，检查当前 `Makefile`、`.env.example` 和 `engine/api/config.py`；真实密钥应放在 `.env` 或部署环境中，`.env.example` 只保留占位符。

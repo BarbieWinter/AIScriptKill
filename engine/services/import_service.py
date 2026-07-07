@@ -5,8 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from engine.api.errors import bad_request
 from engine.api.schemas import PackageImportResponse
 from engine.api.schemas.packages import ValidationReport
+from engine.core.package_importer import import_to_db
 from engine.core.package_loader import PackageArchiveError, load_package_archive
-from engine.repositories.package_import_repository import PackageImportRepository
+from engine.core.package_storage import create_package_asset_storage
 
 # ── 剧本包导入输入 ──
 
@@ -32,7 +33,7 @@ async def import_package(
     except PackageArchiveError as exc:
         raise bad_request(exc.code, exc.message) from exc
 
-    await PackageImportRepository(db).import_package(package)
+    package = await import_to_db(package, db, create_package_asset_storage())
     return PackageImportResponse(
         package_id=package.package.id,
         title=package.package.title,

@@ -10,7 +10,7 @@ from engine.core.package_schema import JsonMapping
 # ── ZIP 包错误 ──
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class PackageArchiveError(Exception):
     code: str
     message: str

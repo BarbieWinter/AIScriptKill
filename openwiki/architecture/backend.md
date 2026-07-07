@@ -85,7 +85,15 @@
 - `session_context.py`：在可见性敏感查询前设置 `app.current_stage` 和 `app.player_character` 等 Postgres setting。
 - `session_models.py` 和 `session_rows.py`：运行期状态和行映射。
 
-`engine/services/import_service.py` 通过 `engine/core/package_loader.py` 校验上传的剧本包 zip，并通过 `engine/repositories/package_import_repository.py` 写入。
+`engine/services/import_service.py` 通过 `engine/core/package_loader.py` 校验上传的剧本包 zip，并通过 `engine/repositories/package_import_repository.py` 写入。剧本包加载器近期已拆分为几个职责明确的模块：
+
+- `package_archive.py`：zip 可见文件过滤、`package.yml` 定位、YAML 读取和 JSONB 值归一化。
+- `package_directory.py`：把松散剧本包目录打包为内存 zip，供 `load_package_directory()` 复用同一套加载流程。
+- `package_yaml.py`：Pydantic YAML 输入模型，允许额外字段以保留剧本包原始定义。
+- `package_records.py`：把 YAML 定义转换为 `PackageRecord`、`StageRecord`、`CharacterRecord`、`ClueRecord`、`EvidenceRecord`、`SceneRecord`、`MediaRecord` 和 `EndingRecord`。
+- `package_validation.py`、`package_reference_validation.py`、`package_event_validation.py`、`package_asset_validation.py` 和 `package_validation_context.py`：校验 package id、重复 id、跨文件引用、条件/事件引用、本地资产路径，并返回角色阶段知识缺失 warnings。
+
+`engine/core/package_schema.py` 现在主要保存导入记录 dataclass，而不是完整 YAML schema。`ScriptPackageImport` 包含导入记录集合和 `warnings`，仓储层仍负责把这些记录写入结构表。
 
 `engine/services/package_service.py` 通过剧本包仓储列出和更新剧本包状态。
 

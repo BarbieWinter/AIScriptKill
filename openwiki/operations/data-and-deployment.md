@@ -80,13 +80,13 @@ npm --prefix apps/web run lint
 - `pytest-asyncio` 模式：auto。
 - Ruff 目标：Python 3.12，行宽 100，启用 lint families `E`、`F`、`I`、`N`、`W`。
 
-当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试。目前仍没有对剧本包加载、持久化、玩法动作或 RLS 敏感查询的广泛后端覆盖。
+当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，以及 `engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。目前仍没有对会话持久化、玩法动作或 RLS 敏感查询的广泛后端覆盖。
 
 前端 scripts 包含 build 和 lint 命令，但 `apps/web/package.json` 中没有配置明确的测试 runner。
 
 添加测试时，优先覆盖：
 
-- 剧本包归档校验和导入替换行为。
+- 剧本包导入到数据库的替换行为和 warnings 持久化/暴露策略。
 - 基于已导入剧本包 fixtures 创建会话。
 - 动作副作用和检查点持久化。
 - 如果测试可连接 Supabase/Postgres，则覆盖 RLS 敏感查询行为。

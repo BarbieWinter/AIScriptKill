@@ -52,10 +52,16 @@ zip upload
   -> packages route
   -> import_service.PackageUpload
   -> load_package_archive(bytes, publish)
+  -> package_yaml/package_records/package_validation modules
   -> PackageImportRepository.import_package()
   -> upsert script_packages
   -> delete existing structure rows
-  -> insert stages, characters, clues, evidences, scenes, media
+  -> insert stages, characters, clues, evidences, scenes, media, endings
+
+loose package directory
+  -> load_package_directory(path, publish)
+  -> package_directory_archive()
+  -> same in-memory zip loading path
 ```
 
 重要行为：
@@ -64,6 +70,9 @@ zip upload
 - 隐藏文件由 `engine/core/package_archive.py` 过滤。
 - 必须恰好存在一个 `package.yml` 路径。
 - 阶段和角色是必需的。
+- `metadata.id` 必须使用小写字母、数字和连字符。
+- 重复 id、未知阶段/角色/场景/线索/证据/媒体/结局引用、不支持的事件动作和缺失本地素材会让导入失败。
+- 角色缺少某些阶段知识不会阻止导入，但会通过 `ScriptPackageImport.warnings` 返回 warning。
 - 剧本包状态默认是 `draft`；当导入请求使用 `publish=true` 时为 `published`。
 - 重新导入已有 package id 会替换该剧本包的结构行。
 
