@@ -43,6 +43,7 @@ AI 不应：
 - `media/*.yml`，带音频/图片资产列表。
 - `endings.yml`，用于导入结局、触发条件和 on_trigger 事件。
 - `dm_guide/*.yml`，用于导入 DM 私密资料，内容不进入公开 `script_packages.config`。
+- `assets/` 下的素材文件；loader 会收集为 `PackageAssetRecord`，可选通过 storage 后端上传并把 YAML 中匹配的本地路径重写为 URL。
 
 ### 阶段
 
@@ -69,7 +70,7 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 按预期设计，场景是带背景/热点的互动地点。当前后端存储场景定义和背景 URL，但真实后端尚未从剧本包内容求值热点。前端 Mock 玩法中最完整的场景/热点实现位于 `apps/web/lib/mock-data.ts` 和 `components/game/SceneHotspots.tsx`。
 
-媒体资产存储在 `script_media`，类型包括 `bgm`、`story`、`sfx`、`voice`、`image` 和 `video`。`engine/media/orchestrator.py` 仍是占位模块。
+媒体资产定义存储在 `script_media`，类型包括 `bgm`、`story`、`sfx`、`voice`、`image` 和 `video`。剧本包中的二进制素材来自 `assets/`，导入准备阶段可通过 `package_storage.py` 上传到 Supabase Storage，并把 package config、线索图片、证据图片、场景背景、媒体文件、结局和 DM guide 中的本地路径改写为 URL。`engine/media/orchestrator.py` 仍是占位模块。
 
 ### DM 指引、真相和复盘
 
@@ -87,7 +88,7 @@ RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧�
 
 ## 条件 DSL 和导入期校验
 
-`/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 已实现核心 DSL 评估、组合递归、短路、缓存和 trace 输出；它还需要在后续 `script_engine` 阶段推进流程中接入，才会成为完整玩法运行期行为。
+`/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 已实现核心 DSL 评估、组合递归、短路、缓存和 trace 输出；`engine/core/script_engine.py` 已在 core StateGraph 中用它评估阶段退出和结局分支。REST action endpoint 仍走 `engine/services/action_mappers.py` 的确定性占位流程，后续还需要把 API 层切到 core 引擎。
 
 当前 evaluator 支持组合条件 `all`、`any`、`not`、`count`，常量条件 `always`、`never`，以及这些叶子类别：阶段/幕进度、线索发现计数、单线索/证据发现、证据出示给 NPC、角色对话次数、已触发对话、玩家关键词、NPC 状态阈值、玩家动作/请求/卡牌、阶段内时间和真实时间、最终提交正确/错误、关键证据使用、推理链完成、事件已触发/未触发、session counter、首次游玩和提示次数。`evaluate_condition()` 使用 `GameState` 相关片段生成缓存键；`evaluate_condition_with_trace()` 和 `format_condition_trace()` 用于调试；`ConditionEvaluationOptions.force_conditions` 可在测试/沙盒中覆盖某类条件结果。
 

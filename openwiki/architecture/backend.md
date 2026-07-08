@@ -91,13 +91,17 @@
 - `package_directory.py`：把松散剧本包目录打包为内存 zip，供 `load_package_directory()` 复用同一套加载流程。
 - `package_yaml.py`：Pydantic YAML 输入模型，允许额外字段以保留剧本包原始定义。
 - `package_records.py`：把 YAML 定义转换为 `PackageRecord`、`StageRecord`、`CharacterRecord`、`ClueRecord`、`EvidenceRecord`、`SceneRecord`、`MediaRecord` 和 `EndingRecord`。
+- `package_content_loader.py`：读取角色、线索、证据、场景、媒体、`endings.yml`、`dm_guide/*.yml` 和 `assets/`，并把 `dm_guide` 排除在公开 `script_packages.config` 之外。
+- `package_importer.py` 和 `package_storage.py`：可选上传 `assets/` 到 Supabase Storage，并把剧本包 YAML 中匹配的本地素材路径重写为运行时 URL。
 - `package_validation.py`、`package_reference_validation.py`、`package_event_validation.py`、`package_asset_validation.py` 和 `package_validation_context.py`：校验 package id、重复 id、跨文件引用、条件/事件引用、本地资产路径，并返回角色阶段知识缺失 warnings。
 
-`engine/core/package_schema.py` 现在主要保存导入记录 dataclass，而不是完整 YAML schema。`ScriptPackageImport` 包含导入记录集合和 `warnings`，仓储层仍负责把这些记录写入结构表。
+`engine/core/package_schema.py` 现在主要保存导入记录 dataclass，而不是完整 YAML schema。`ScriptPackageImport` 包含导入记录集合、`stage_index`、`dm_guide`、`assets` 和 `warnings`。仓储层会写入公开结构表、`script_endings` 和仅 service-role 可访问的 `script_dm_guides`；重复导入会先删除旧结构再重建。
 
 `engine/services/package_service.py` 通过剧本包仓储列出和更新剧本包状态。
 
 条件 DSL evaluator 现在位于 `engine/core/condition_evaluator.py` 及其拆分模块：`condition_models.py` 解析条件树，`condition_state.py` 调度叶子求值并生成缓存快照，`condition_leaf_evaluators.py`/`condition_leaf_helpers.py` 读取 `GameState` 中的阶段、线索、证据、对话、玩家行为、时间、提交答案、事件和全局计数状态，`condition_trace.py` 输出调试 trace。`evaluate_condition()` 会按条件树和相关 `GameState` 片段生成缓存键；`evaluate_condition_with_trace()` 绕过布尔缓存返回完整遍历树；`ConditionEvaluationOptions.force_conditions` 可在测试/调试中强制某类条件恒真或恒假。
+
+通用玩法引擎现在位于 `engine/core/script_engine.py`：它用 LangGraph `StateGraph` 组装 `stage_entry`、`player_action`、`npc_response`、`check_conditions`、`process_events`、`stage_exit` 和 `ending` 节点，并通过 `_route_action`、`_should_transition` 条件边控制分支。`engine/core/event_bus.py` 执行 `dm_narrate`、`play_audio`、`unlock_*`、`npc_*`、`transition_to` 等剧本事件；`script_runtime.py` 维护阶段顺序和不可跳跃/不可回退约束；`checkpoint.py` 提供写入 `session_checkpoints` 的 LangGraph async checkpointer。当前这套 core 引擎已有测试覆盖，但 REST `/actions` 路由还没有切换过来。
 
 ## 当前玩法行为
 
@@ -114,14 +118,11 @@
 
 ## 骨架区域
 
-文档和依赖提到了 LangGraph、agents、RAG、媒体编排、条件 DSL 和评分。条件 DSL 核心评估器已经实现，但尚未接入 `script_engine` 的阶段推进。当前实现主要在这些位置仍是骨架：
+文档和依赖提到了 LangGraph、agents、RAG、媒体编排、条件 DSL 和评分。LangGraph core 引擎和条件 DSL 阶段推进已经实现；当前实现主要在这些位置仍是骨架：
 
 - `engine/agents/`
 - `engine/rag/`
 - `engine/media/orchestrator.py`
-- `engine/core/script_engine.py`
-- `engine/core/event_bus.py`
-- `engine/core/checkpoint.py`
 - `engine/services/scoring_service.py`
 
 未来工作应通过现有 service/repository 边界集成这些功能，而不是绕过持久化和授权。

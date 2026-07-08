@@ -23,16 +23,17 @@ AIScriptKill 是一个 AI 辅助的沉浸式剧本杀游戏系统。产品方向
 - `engine/db/session.py` 中基于异步 SQLAlchemy 的 Supabase/Postgres 访问，以及 `engine/db/tables.py` 中的表元数据。
 - `engine/core/package_loader.py` 及其 `package_archive.py`、`package_directory.py`、`package_yaml.py`、`package_records.py`、`package_validation*.py` 等拆分模块中的剧本包 zip/目录导入、YAML 解析、记录归一化、结局/DM 私密资料导入准备和引用/资产校验。
 - `engine/core/condition_evaluator.py` 及其拆分模块中的条件 DSL 评估、递归组合、短路、缓存和 trace 输出。
+- `engine/core/script_engine.py`、`event_bus.py`、`checkpoint.py` 和 `script_runtime.py` 中的通用 LangGraph StateGraph 游戏引擎、剧本事件执行、阶段跳转约束和 session checkpoint saver。
 - 通过 `engine/services/` 和 `engine/repositories/` 实现的运行期会话创建、检查点恢复、确定性动作效果、最终提交持久化和复盘查询。
 - Next.js 页面：`/library`、`/library/[id]`、`/play/[sessionId]/select`、`/play/[sessionId]` 和 `/play/[sessionId]/review`。
 - `apps/web/lib/mock-data.ts` 和 `apps/web/lib/mock-ws.ts` 中的前端 Mock 玩法数据和 Mock WebSocket。
 
 目前主要仍是愿景或占位的部分：
 
-- LangGraph 状态机、事件总线、检查点抽象、AI Agent、RAG 检索/切分/重排、媒体编排器和评分服务还是骨架或仅有注释的模块。
+- AI Agent、RAG 检索/切分/重排、媒体编排器和评分服务还是骨架或仅有注释的模块。
 - 主前端玩法在 `NEXT_PUBLIC_USE_MOCK=false` 时会读取真实后端 session 并接入真实 WebSocket 心跳；具体玩法事件、热点和部分组件仍主要依赖 Mock 引擎。
 - `script-packages/snow-village` 有预期目录骨架，但没有 `package.yml` 或 YAML 内容。
-- LangGraph/RAG/媒体/评分等高级能力仍是后续阶段工作。
+- REST action_mappers 尚未切换到 core StateGraph 引擎；RAG/媒体/评分等高级能力仍是后续阶段工作。
 
 ## 从哪里开始
 
@@ -95,12 +96,12 @@ npm --prefix apps/web run lint
 
 ## 给后续 Agent 的变更指引
 
-改后端前，先读[后端架构](architecture/backend.md)、[数据与运维](operations/data-and-deployment.md)，以及相关 route/service/repository 文件。大部分运行期行为现在位于服务层和仓储层，而不是 LangGraph 骨架里。
+改后端前，先读[后端架构](architecture/backend.md)、[数据与运维](operations/data-and-deployment.md)，以及相关 route/service/repository 文件。REST 玩法接口当前仍主要位于服务层和仓储层；core StateGraph 引擎已可独立跑通，但还没有替换 `action_mappers.py` 的确定性占位流程。
 
 改前端前，先读[前端架构](architecture/frontend.md)。明确判断变更应该落在 Mock 玩法、真实 `api` wrapper，还是两者最终集成处。
 
 改剧本包或内容前，先读[剧本与玩法领域](domain/script-gameplay.md)、`/docs/SCRIPT_PACKAGE_SCHEMA.md`、`engine/core/package_loader.py` 和相关 `engine/core/package_*` 模块。当前 loader 支持上传 zip，也支持通过 `load_package_directory()` 把松散剧本包目录打包后走同一套校验流程。
 
-改条件 DSL 前，先读 `engine/core/condition_evaluator.py`、`condition_models.py`、`condition_state.py`、`condition_leaf_evaluators.py`、`condition_leaf_helpers.py`、`condition_trace.py` 和 `engine/tests/test_condition_evaluator.py`。当前 evaluator 可独立评估 `GameState`，但尚未接入 `script_engine` 的阶段推进。
+改条件 DSL 前，先读 `engine/core/condition_evaluator.py`、`condition_models.py`、`condition_state.py`、`condition_leaf_evaluators.py`、`condition_leaf_helpers.py`、`condition_trace.py`、`engine/core/script_engine.py` 和相关测试。当前 evaluator 已被 core StateGraph 用于阶段退出和结局分支，但 REST action endpoint 尚未接入该引擎。
 
 依赖环境配置前，检查当前 `Makefile`、`.env.example` 和 `engine/api/config.py`；真实密钥应放在 `.env` 或部署环境中，`.env.example` 只保留占位符。

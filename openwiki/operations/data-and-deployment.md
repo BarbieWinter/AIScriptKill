@@ -29,9 +29,11 @@
 - `006_api_role_privileges.sql`：anon/authenticated/service_role 授权，以及已发布剧本包的公开策略。
 - `007_schema_comments.sql`：为 Phase 1 表、字段和 RLS policy 补充注释。
 - `008_package_import_resolution_tables.sql`：`script_endings` 和仅 service-role 可访问的 `script_dm_guides`。
-- `009_restrict_package_private_tables.sql`：显式撤销 anon/authenticated 对结局和 DM 私密表的全部直接权限。
+- `009_restrict_package_private_tables.sql`：显式撤销 anon/authenticated 对 `script_endings` 和 `script_dm_guides` 的全部直接权限。
 
 `supabase/seed/dev_seed.sql` 提供最小雪乡验收数据，包括已发布剧本包、阶段、角色、场景、线索、证物、媒体和一条 pgvector 知识分块。
+
+剧本包素材上传使用 `engine/core/package_storage.py` 中的 Supabase Storage 客户端。它通过 `engine/api/config.py` 的 Supabase secret key 和 storage bucket 配置创建/使用 bucket，并返回 public URL；真实部署时要确认 bucket 公开策略、缓存策略和素材访问边界符合产品需求。
 
 `engine/db/tables.py` 为 SQLAlchemy Core 查询镜像了大多数 public 表。修改 schema 时，保持迁移和表元数据一致。
 
@@ -83,15 +85,15 @@ npm --prefix apps/web run lint
 - `pytest-asyncio` 模式：auto。
 - Ruff 目标：Python 3.12，行宽 100，启用 lint families `E`、`F`、`I`、`N`、`W`。
 
-当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，`engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试，`engine/tests/test_package_importer.py` 中的剧本包入库语句流测试，以及 `engine/tests/test_condition_evaluator.py` 和 `engine/tests/condition_evaluator_fixtures.py` 中的条件 DSL evaluator 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。importer 覆盖素材 URL 重写、`endings` 写入、`dm_guide` 私密写入、公开 package config 不含 DM 资料和重复导入删除重建。condition evaluator 覆盖所有已实现叶子条件、`all/any/not/count/always/never`、短路 trace、五层嵌套、缓存键、debug force 和 100 条件性能约束。目前仍没有对会话持久化、玩法动作、条件 DSL 接入阶段推进或真实 RLS 数据库查询的广泛后端覆盖。
+当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，`engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试，`engine/tests/test_package_importer.py` 中的剧本包入库语句流测试，`engine/tests/test_condition_evaluator.py` 和 `engine/tests/condition_evaluator_fixtures.py` 中的条件 DSL evaluator 测试，以及 `engine/tests/test_script_engine.py`、`engine/tests/test_checkpoint.py` 中的 core StateGraph/checkpoint 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。importer 覆盖素材 URL 重写、`endings` 写入、`dm_guide` 私密写入、公开 package config 不含 DM 资料和重复导入删除重建。condition evaluator 覆盖所有已实现叶子条件、`all/any/not/count/always/never`、短路 trace、五层嵌套、缓存键、debug force 和 100 条件性能约束。StateGraph 测试覆盖阶段推进、结局触发、事件调用序列、checkpoint 恢复和禁止跳跃。目前仍没有对 REST action endpoint 接入 core 引擎、真实会话持久化或真实 RLS 数据库查询的广泛后端覆盖。
 
 前端 scripts 包含 build 和 lint 命令，但 `apps/web/package.json` 中没有配置明确的测试 runner。
 
 添加测试时，优先覆盖：
 
 - 剧本包导入到数据库的替换行为和 warnings 持久化/暴露策略。
-- 基于已导入剧本包 fixtures 创建会话。
-- 动作副作用、条件 DSL 阶段推进接入和检查点持久化。
+- 基于已导入剧本包 fixtures 创建会话，并让 REST action endpoint 调用 core StateGraph。
+- 真实数据库上的 `session_checkpoints` 写入/恢复，以及进程重启后的继续游戏路径。
 - 如果测试可连接 Supabase/Postgres，则覆盖 RLS 敏感查询行为。
 - Mock/真实边界和会话创建相关的前端路由行为。
 

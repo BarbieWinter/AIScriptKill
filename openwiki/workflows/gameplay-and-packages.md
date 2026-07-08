@@ -41,7 +41,7 @@
 7. 最终提交经过 `POST /api/v1/sessions/{session_id}/final-submission`，持久化 `final_submissions` 和 `reviews`，并把会话标记为完成。
 8. `/review` 返回已持久化的复盘。
 
-真实后端尚未执行 AI DM/NPC 生成、条件 DSL 求值、剧本包定义的热点行为或实时 WebSocket 事件流。
+真实后端 API 尚未执行 AI DM/NPC 生成、剧本包定义的热点行为或实时 WebSocket 事件流。core 层的 `ScriptEngine` 已可用 LangGraph StateGraph 执行阶段 entry/action/condition/event/exit/ending 流程并持久化 LangGraph checkpoint，但当前 `/actions` 路由还没有切到该引擎。
 
 ## 剧本包导入流程
 
@@ -53,6 +53,8 @@ zip upload
   -> import_service.PackageUpload
   -> load_package_archive(bytes, publish)
   -> package_yaml/package_records/package_validation modules
+  -> optional prepare_package_for_import(asset_storage)
+  -> upload assets and rewrite matching local paths when storage is configured
   -> PackageImportRepository.import_package()
   -> upsert script_packages
   -> delete existing structure rows
@@ -73,9 +75,10 @@ loose package directory
 - `metadata.id` 必须使用小写字母、数字和连字符。
 - 重复 id、未知阶段/角色/场景/线索/证据/媒体/结局引用、不支持的事件动作和缺失本地素材会让导入失败。
 - 角色缺少某些阶段知识不会阻止导入，但会通过 `ScriptPackageImport.warnings` 返回 warning。
+- `assets/` 会被收集为可上传记录；配置了 storage 后端时，导入准备阶段会上传素材并重写匹配的本地路径。
 - `dm_guide/` 会写入 service-role 私密表，不会写入公开可读的 `script_packages.config`。
 - 剧本包状态默认是 `draft`；当导入请求使用 `publish=true` 时为 `published`。
-- 重新导入已有 package id 会替换该剧本包的结构行。
+- 重新导入已有 package id 会替换该剧本包的结构行，包括 endings 和 dm_guide。
 
 ## 查询流程和防剧透控制
 
@@ -92,7 +95,7 @@ RLS 策略保护认证用户的直接表访问，但引入 service-role 访问�
 - 已检查实现中，前端角色选择没有调用真实 `api.createSession`。
 - 主玩法 live 模式已使用真实 session 读取和 `WsClient` 心跳，但具体动作还没有走真实 `api.performAction`。
 - 后端 WebSocket 只支持心跳，而文档和前端 Mock 期望很多玩法事件。
-- 后端动作行为尚未由导入剧本包的阶段/热点/证据规则驱动。
+- 后端 `/actions` 行为尚未由 core StateGraph 引擎和导入剧本包的阶段/热点/证据规则驱动。
 - 后端最终评分是固定占位逻辑。
 - `script-packages/snow-village` 缺少 package YAML 文件，因此不能按现状导入。
 
@@ -104,6 +107,6 @@ RLS 策略保护认证用户的直接表访问，但引入 service-role 访问�
 2. 让角色选择调用 `api.createSession`，并使用返回的 session id 跳转。
 3. 让一个玩法动作调用 `api.performAction`，并根据响应更新 Zustand。
 4. 仅在 REST 状态转换可靠后再添加后端 WebSocket 事件。
-5. 在导入剧本包数据完整后，再添加剧本包驱动规则和条件 DSL 求值。
+5. 把 REST action endpoint 切到 core StateGraph 引擎，再补剧本包驱动热点规则和 WebSocket 事件。
 
 做内容工作流时，扩展 schema 前先创建剧本包 fixtures 和 loader 测试。当前剧本包 loader 是后端可摄取内容范围的最强事实来源。
