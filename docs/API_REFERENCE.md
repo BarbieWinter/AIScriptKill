@@ -9,7 +9,7 @@
 ```
 Base URL:    /api/v1
 Content-Type: application/json
-Auth:        Bearer <supabase_jwt> 或匿名token
+Auth:        前台玩法接口可匿名或 Bearer <supabase_jwt>；后台管理接口必须是管理员 JWT
 WebSocket:   /api/v1/ws/{session_id}
 ```
 
@@ -325,6 +325,8 @@ WebSocket:   /api/v1/ws/{session_id}
 
 ### 2.4 剧本包管理（后台）
 
+后台接口只允许 Supabase Auth JWT 中 `app_metadata.role` 为 `admin`/`owner`，或 `app_metadata.roles` 包含 `admin`/`owner` 的用户调用。前端不得直接连接 Supabase 数据库，也不得持有数据库或 secret key。
+
 #### `POST /packages` — 导入剧本包
 ```json
 // Request (multipart/form-data)
@@ -336,7 +338,7 @@ WebSocket:   /api/v1/ws/{session_id}
 {
   "package_id": "snow-village",
   "title": "雪乡连环杀人事件",
-  "status": "imported",
+  "status": "draft",
   "validation": {
     "valid": true,
     "warnings": ["角色'程俊'没有出现在任何stage的可用角色列表中"],
