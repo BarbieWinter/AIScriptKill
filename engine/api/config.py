@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, Final
+from typing import ClassVar, Final, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +68,28 @@ class Settings(BaseSettings):
         alias="RATE_LIMIT_PER_MINUTE",
         ge=1,
         description="Per-client request limit for the API gateway skeleton.",
+    )
+    rag_embedding_provider: Literal["deterministic", "openai"] = Field(
+        default="deterministic",
+        alias="RAG_EMBEDDING_PROVIDER",
+        description="Embedding backend for script_knowledge indexing.",
+    )
+    rag_embedding_dimensions: int = Field(
+        default=1536,
+        alias="RAG_EMBEDDING_DIMENSIONS",
+        ge=1,
+        description="Vector dimensions stored in script_knowledge.embedding.",
+    )
+    rag_openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="RAG_OPENAI_EMBEDDING_MODEL",
+        description="OpenAI embedding model used when RAG_EMBEDDING_PROVIDER=openai.",
+    )
+    openai_api_key: str | None = Field(
+        default=None,
+        alias="OPENAI_API_KEY",
+        description="Optional OpenAI API key for LangChain OpenAI embeddings.",
+        repr=False,
     )
 
     # 前端跨域配置：支持 `.env.example` 中用逗号分隔多个 Origin

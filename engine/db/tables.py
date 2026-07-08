@@ -1,3 +1,4 @@
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -127,6 +129,27 @@ script_dm_guides = Table(
     Column("script_id", Text, ForeignKey("script_packages.id"), nullable=False),
     Column("guide_key", Text, nullable=False),
     Column("content", JSONB, nullable=False),
+)
+
+script_knowledge = Table(
+    "script_knowledge",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("script_id", Text, ForeignKey("script_packages.id"), nullable=False),
+    Column("source_type", Text, nullable=False),
+    Column("source_id", Text, nullable=False),
+    Column("chunk_index", Integer, nullable=False),
+    Column("chunk_text", Text, nullable=False),
+    Column("embedding", Vector(1536)),
+    Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint(
+        "script_id",
+        "source_type",
+        "source_id",
+        "chunk_index",
+        name="uq_script_knowledge_chunk",
+    ),
 )
 
 

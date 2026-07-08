@@ -15,7 +15,7 @@ dev-api:
 
 dev-web:
 	@echo "Starting frontend (Next.js)..."
-	NEXT_PUBLIC_USE_MOCK=false NEXT_PUBLIC_WS_URL=ws://localhost:8000 npm --prefix apps/web run dev
+	npm --prefix apps/web run dev
 
 # ── 测试 ──
 

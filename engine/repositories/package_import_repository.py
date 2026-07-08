@@ -1,8 +1,8 @@
 from sqlalchemy import delete, func, insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from engine.core.package_schema import ScriptPackageImport
+from engine.db.protocols import WriteSession
 from engine.db.tables import (
     script_characters,
     script_clues,
@@ -19,7 +19,7 @@ from engine.db.tables import (
 
 
 class PackageImportRepository:
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: WriteSession) -> None:
         self._db = db
 
     async def import_package(self, package: ScriptPackageImport) -> None:

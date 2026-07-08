@@ -18,7 +18,9 @@ CREATE TABLE script_knowledge (
     --  metadata->>'stage_visible'    这段文本在哪个stage后可见
     --  metadata->>'character_id'     这段文本属于哪个角色（'public'=公开）
     --  metadata->>'visibility'       'public' | 'character_only' | 'dm_only'
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_script_knowledge_chunk
+        UNIQUE (script_id, source_type, source_id, chunk_index)
 );
 
 -- 向量索引 (IVFFlat)
@@ -28,3 +30,10 @@ CREATE INDEX idx_knowledge_embedding ON script_knowledge
 
 -- 按剧本+可见性检索的索引
 CREATE INDEX idx_knowledge_permissions ON script_knowledge(script_id, source_type);
+
+CREATE INDEX idx_knowledge_visibility ON script_knowledge(
+    script_id,
+    (COALESCE((metadata->>'stage_order')::int, 0)),
+    (metadata->>'visibility'),
+    (metadata->>'character_id')
+);

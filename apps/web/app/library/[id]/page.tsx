@@ -37,15 +37,42 @@ export default function ScriptDetailPage() {
 
   const [pkg, setPkg] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedChar, setSelectedChar] = useState<any>(null);
 
   const playableCharacters = mockCharacters.filter((c) => c.playable);
 
   useEffect(() => {
-    api.getPackage(scriptId).then((data) => {
-      setPkg(data);
-      setLoading(false);
-    });
+    let isCurrent = true;
+
+    setLoading(true);
+    setLoadError(null);
+    setPkg(null);
+
+    api
+      .getPackage(scriptId)
+      .then((data) => {
+        if (!isCurrent) {
+          return;
+        }
+        setPkg(data);
+      })
+      .catch(() => {
+        if (!isCurrent) {
+          return;
+        }
+        setLoadError("剧本加载失败，请确认后端服务已启动，或使用 Mock 模式浏览。");
+      })
+      .finally(() => {
+        if (!isCurrent) {
+          return;
+        }
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
   }, [scriptId]);
 
   if (loading) {
@@ -54,6 +81,25 @@ export default function ScriptDetailPage() {
         <div className="text-center">
           <div className="mx-auto h-8 w-8 rounded-full border-2 border-[var(--theme-primary)] border-t-transparent animate-spin mb-4" />
           <p className="text-sm text-[var(--muted-foreground)]">加载中…</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center px-4">
+        <div className="max-w-sm text-center">
+          <p className="text-lg font-bold mb-2">剧本加载失败</p>
+          <p className="text-sm leading-relaxed text-[var(--muted-foreground)] mb-5">
+            {loadError}
+          </p>
+          <button
+            onClick={() => router.push("/library")}
+            className="text-sm text-[var(--theme-primary)] hover:underline"
+          >
+            返回剧本库
+          </button>
         </div>
       </main>
     );

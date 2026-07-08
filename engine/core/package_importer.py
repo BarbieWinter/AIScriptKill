@@ -1,8 +1,6 @@
 from dataclasses import replace
 from typing import Protocol
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from engine.api.schemas.common import JsonValue
 from engine.core.package_schema import (
     CharacterRecord,
@@ -16,12 +14,14 @@ from engine.core.package_schema import (
     ScriptPackageImport,
     StageRecord,
 )
+from engine.db.protocols import WriteSession
+from engine.rag.indexer import ScriptKnowledgeIndexRepository, index_package
+from engine.rag.models import EmbeddingProvider
 from engine.repositories.package_import_repository import PackageImportRepository
 
 
 class PackageAssetStorage(Protocol):
-    async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
-        pass
+    async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str: ...
 
 
 async def prepare_package_for_import(
@@ -39,11 +39,18 @@ async def prepare_package_for_import(
 
 async def import_to_db(
     package: ScriptPackageImport,
-    db: AsyncSession,
+    db: WriteSession,
     asset_storage: PackageAssetStorage | None = None,
+    rag_embedding_provider: EmbeddingProvider | None = None,
 ) -> ScriptPackageImport:
     prepared_package = await prepare_package_for_import(package, asset_storage)
     await PackageImportRepository(db).import_package(prepared_package)
+    if rag_embedding_provider is not None:
+        await index_package(
+            prepared_package,
+            ScriptKnowledgeIndexRepository(db),
+            rag_embedding_provider,
+        )
     return prepared_package
 
 

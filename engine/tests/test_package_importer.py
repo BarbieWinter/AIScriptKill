@@ -1,15 +1,15 @@
-from typing import cast
-
 from sqlalchemy import Table
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 from sqlalchemy.sql.dml import Delete, Insert
 
 from engine.core.package_importer import import_to_db, prepare_package_for_import
 from engine.core.package_loader import load_package_archive
-from engine.core.package_schema import PackageAssetRecord
+from engine.core.package_schema import JsonMapping, PackageAssetRecord
+from engine.rag.embeddings import DeterministicEmbeddingProvider
+from engine.rag.metadata import json_mapping, json_mapping_list
 from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
+from engine.tests.rag_fixtures import rag_package
 
 
 class FakePackageAssetStorage:
@@ -81,7 +81,7 @@ async def test_prepare_package_for_import_uploads_assets_and_rewrites_local_path
         "https://storage.test/minimal-case/assets/images/overview.png"
     )
     assert (
-        prepared_package.dm_guide["truth"]["truth"]["alternative_endings"][0]["news_broadcast"]
+        _dm_guide_news_broadcast(prepared_package.dm_guide)
         == "https://storage.test/minimal-case/assets/audio/ending.mp3"
     )
     assert "dm_guide" not in prepared_package.package.config
@@ -91,7 +91,7 @@ async def test_import_to_db_persists_endings_and_privileged_dm_guide() -> None:
     package = load_package_archive(package_archive(_package_files_with_assets()))
     session = RecordingAsyncSession()
 
-    prepared_package = await import_to_db(package, cast(AsyncSession, session))
+    prepared_package = await import_to_db(package, session)
 
     package_params = _insert_params(session, "script_packages")[0]
     package_config = package_params["config"]
@@ -125,8 +125,8 @@ async def test_import_to_db_replaces_endings_and_dm_guide_on_repeated_import() -
     package = load_package_archive(package_archive(_package_files_with_assets()))
     session = RecordingAsyncSession()
 
-    await import_to_db(package, cast(AsyncSession, session))
-    await import_to_db(package, cast(AsyncSession, session))
+    await import_to_db(package, session)
+    await import_to_db(package, session)
 
     deleted_tables = [
         table_name
@@ -138,6 +138,30 @@ async def test_import_to_db_replaces_endings_and_dm_guide_on_repeated_import() -
     assert deleted_tables.count("script_dm_guides") == 2
     assert len(_insert_params(session, "script_endings")) == 2
     assert len(_insert_params(session, "script_dm_guides")) == 2
+    assert session.commit_count == 2
+
+
+async def test_import_to_db_indexes_rag_knowledge_when_embedding_provider_is_supplied() -> None:
+    # Given: a loaded package contains DM-only truth material for RAG.
+    package = rag_package()
+    session = RecordingAsyncSession()
+
+    # When: the importer receives an embedding provider.
+    await import_to_db(
+        package,
+        session,
+        rag_embedding_provider=DeterministicEmbeddingProvider(),
+    )
+
+    # Then: script_knowledge receives embedded chunks without leaking truth metadata.
+    knowledge_params = _insert_params(session, "script_knowledge")
+    truth_params = [
+        params for params in knowledge_params if "NPC角色是凶手" in str(params["chunk_text"])
+    ]
+    assert len(knowledge_params) > 0
+    assert len(truth_params) > 0
+    assert all(_metadata_visibility(params) == "dm_only" for params in truth_params)
+    assert all(_embedding_length(params) == 1536 for params in knowledge_params)
     assert session.commit_count == 2
 
 
@@ -179,17 +203,49 @@ def _table_name(statement: Executable) -> str | None:
     return None
 
 
+def _metadata_visibility(params: dict[str, object]) -> str:
+    metadata = params["metadata"]
+    assert isinstance(metadata, dict)
+    visibility = metadata["visibility"]
+    assert isinstance(visibility, str)
+    return visibility
+
+
+def _embedding_length(params: dict[str, object]) -> int:
+    embedding = params["embedding"]
+    assert isinstance(embedding, list)
+    return len(embedding)
+
+
+def _dm_guide_news_broadcast(dm_guide: JsonMapping) -> str:
+    truth = json_mapping(dm_guide.get("truth"))
+    truth_body = json_mapping(truth.get("truth"))
+    alternative_endings = json_mapping_list(truth_body.get("alternative_endings"))
+    news_broadcast = alternative_endings[0]["news_broadcast"]
+    assert isinstance(news_broadcast, str)
+    return news_broadcast
+
+
+def _text_file(files: dict[str, str | bytes], path: str) -> str:
+    content = files[path]
+    assert isinstance(content, str)
+    return content
+
+
 def _package_files_with_assets() -> dict[str, str | bytes]:
-    files: dict[str, str | bytes] = minimal_package_files()
-    files["package.yml"] = files["package.yml"].replace(
+    files: dict[str, str | bytes] = dict(minimal_package_files())
+    files["package.yml"] = _text_file(files, "package.yml").replace(
         'engine:\n  entry_stage: "prologue"',
         'visual:\n  poster: "assets/posters/main.jpg"\nengine:\n  entry_stage: "prologue"',
     )
-    files["clues/rounds/act1_round1.yml"] = files["clues/rounds/act1_round1.yml"].replace(
+    files["clues/rounds/act1_round1.yml"] = _text_file(
+        files,
+        "clues/rounds/act1_round1.yml",
+    ).replace(
         'name: "线索一"',
         'name: "线索一"\n    image: "assets/clues/clue_1.jpg"',
     )
-    files["scenes/main_hall.yml"] = files["scenes/main_hall.yml"].replace(
+    files["scenes/main_hall.yml"] = _text_file(files, "scenes/main_hall.yml").replace(
         'name: "大厅"',
         'name: "大厅"\nvisual:\n  background: "assets/scenes/main_hall.jpg"',
     )

@@ -8,6 +8,7 @@ from engine.api.schemas.packages import ValidationReport
 from engine.core.package_importer import import_to_db
 from engine.core.package_loader import PackageArchiveError, load_package_archive
 from engine.core.package_storage import create_package_asset_storage
+from engine.rag.provider_factory import create_embedding_provider
 
 # ── 剧本包导入输入 ──
 
@@ -33,7 +34,12 @@ async def import_package(
     except PackageArchiveError as exc:
         raise bad_request(exc.code, exc.message) from exc
 
-    package = await import_to_db(package, db, create_package_asset_storage())
+    package = await import_to_db(
+        package,
+        db,
+        create_package_asset_storage(),
+        create_embedding_provider(),
+    )
     return PackageImportResponse(
         package_id=package.package.id,
         title=package.package.title,
