@@ -10,9 +10,6 @@ def rag_package() -> ScriptPackageImport:
         'outcome_text: "真相已经揭开，NPC角色是凶手。"',
     )
     files["dm_guide/truth.yml"] = (
-        "truth:\n"
-        '  murderer: "npc"\n'
-        '  answer: "NPC角色是凶手"\n'
-        '  case_summary: "凶手是谁的最终答案只允许 DM 检索。"\n'
+        'truth:\n  murderer: "npc"\n  case_summary: "NPC角色是凶手，最终答案只允许 DM 检索。"\n'
     )
     return load_package_archive(package_archive(files))

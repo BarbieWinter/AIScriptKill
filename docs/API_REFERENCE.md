@@ -13,6 +13,10 @@ Auth:        前台玩法接口可匿名或 Bearer <supabase_jwt>；后台管理
 WebSocket:   /api/v1/ws/{session_id}
 ```
 
+普通 HTTP 请求体上限为 1 MiB；`POST /packages` 的 multipart 信封上限为 65 MiB，
+其中 ZIP 文件本身最多 64 MiB。限制在 ASGI 接收层按累计字节执行，因此没有
+`Content-Length` 的 chunked 请求也不能绕过。
+
 错误响应格式：
 ```json
 {
@@ -40,7 +44,7 @@ WebSocket:   /api/v1/ws/{session_id}
 }
 // Response 200
 {
-  "session_id": "abc-123",
+  "session_id": "12345678-1234-5678-1234-567812345678",
   "script_id": "snow-village",
   "status": "in_progress",
   "current_stage": "prologue",
@@ -54,7 +58,7 @@ WebSocket:   /api/v1/ws/{session_id}
 ```json
 // Response 200
 {
-  "session_id": "abc-123",
+  "session_id": "12345678-1234-5678-1234-567812345678",
   "script_id": "snow-village",
   "status": "in_progress",
   "current_stage": "act1_investigation",
@@ -81,7 +85,7 @@ WebSocket:   /api/v1/ws/{session_id}
 }
 // Response 200
 {
-  "session_id": "abc-123",
+  "session_id": "12345678-1234-5678-1234-567812345678",
   "status": "restored",
   "current_stage": "act1_investigation",
   "restored_from": "ckpt-456"
@@ -327,6 +331,10 @@ WebSocket:   /api/v1/ws/{session_id}
 
 后台接口只允许 Supabase Auth JWT 中 `app_metadata.role` 为 `admin`/`owner`，或 `app_metadata.roles` 包含 `admin`/`owner` 的用户调用。前端不得直接连接 Supabase 数据库，也不得持有数据库或 secret key。
 
+导入端点会在解析 multipart 和读取 ZIP 前完成管理员鉴权。导入素材写入私有
+Supabase Storage bucket，数据库只保存 `storage://<bucket>/<object>` 定位符，不保存
+公开 URL。面向玩家的短期签名 URL/代理下载属于 T-2.6 API-引擎接线范围。
+
 #### `POST /packages` — 导入剧本包
 ```json
 // Request (multipart/form-data)
@@ -389,7 +397,7 @@ WebSocket:   /api/v1/ws/{session_id}
 ```json
 // Response 200
 {
-  "session_id": "abc-123",
+  "session_id": "12345678-1234-5678-1234-567812345678",
   "script_id": "snow-village",
   "score": 85,
   "max_score": 100,
@@ -418,13 +426,15 @@ WebSocket:   /api/v1/ws/{session_id}
 
 ## 3. WebSocket 协议
 
+> 当前实现边界：后端只实现 `session.ping` / `session.pong` 心跳。下面其余玩法事件是 T-2.6 的目标契约，当前不会发送或处理。WebSocket JWT 传输方式尚未定义；客户端不得自行假设 query、cookie 或 subprotocol 方案，完整认证绑定与事件流在 T-2.6 一并设计和接线。Uvicorn 在 ASGI 前把单帧限制为 64 KiB、接收队列限制为 4；心跳只接受 JSON 文本帧，binary 会以 1003 关闭。
+
 ### 3.1 连接
 
 ```
 ws://host/api/v1/ws/{session_id}
 ```
 
-连接时在URL中携带session_id，服务端通过JWT验证身份。
+连接时在 URL 中携带 UUID 格式的 `session_id`。非法 UUID 会在应用接受连接前关闭；当前心跳端点不验证 JWT。
 
 ### 3.2 服务端 → 客户端事件
 
@@ -634,22 +644,40 @@ ws://host/api/v1/ws/{session_id}
 }
 ```
 
+### 当前服务端响应：
+
+```json
+{
+  "type": "session.pong",
+  "data": {
+    "session_id": "12345678-1234-5678-1234-567812345678"
+  }
+}
+```
+
 ---
 
 ## 4. 错误码
 
+下表只列当前后端实际发出的通用错误；T-2.5/T-2.6 尚未接线的 Agent、玩法引擎和
+并发冲突错误不在本表中预占。
+
 | HTTP状态码 | 错误码 | 说明 |
 |-----------|--------|------|
-| 400 | INVALID_ACTION | 不支持的操作类型 |
-| 400 | STAGE_NOT_ACCESSIBLE | 当前阶段不允许此操作 |
-| 400 | CHARACTER_NOT_AVAILABLE | 该角色当前不在场景中 |
-| 400 | EVIDENCE_NOT_DISCOVERED | 证物尚未发现 |
-| 400 | CARD_NOT_AVAILABLE | 卡牌不可用或使用次数耗尽 |
-| 400 | SUBMISSION_ALREADY_EXISTS | 已提交过最终推理 |
-| 404 | SESSION_NOT_FOUND | 会话不存在 |
-| 404 | SCRIPT_NOT_FOUND | 剧本包不存在 |
-| 409 | SESSION_STATE_CONFLICT | 状态冲突（并发修改） |
-| 429 | RATE_LIMITED | 请求过于频繁 |
-| 500 | ENGINE_ERROR | 引擎内部错误 |
-| 502 | LLM_ERROR | LLM调用失败（临时，可重试） |
-| 504 | LLM_TIMEOUT | LLM响应超时（临时，可重试） |
+| 400 | `INVALID_SESSION_ID` | 路径中的 session id 不是 UUID |
+| 400 | `INVALID_USER_ID` | 已验证 JWT 的用户 id 不是 UUID |
+| 400 | `EMPTY_PACKAGE_UPLOAD` | 上传文件为空 |
+| 400 | `PACKAGE_UPLOAD_INVALID` | multipart 格式或 file part 不合法 |
+| 400 | `PACKAGE_UPLOAD_TOO_LARGE` | ZIP 文件超过 64 MiB |
+| 400 | `PACKAGE_*` / `INVALID_PACKAGE_*` | ZIP、YAML、schema、引用或资源预算校验失败 |
+| 401 | `INVALID_TOKEN` | JWT 签名、issuer、audience、有效期或必需 claims 无效 |
+| 401 | `AUTH_REQUIRED` | 管理接口未提供登录凭据 |
+| 403 | `ADMIN_REQUIRED` | 登录用户没有服务端 app metadata 管理员角色 |
+| 404 | `SESSION_NOT_FOUND` | 会话不存在或调用者无权访问 |
+| 404 | `SCRIPT_PACKAGE_NOT_FOUND` | 没有可用于开局的已发布剧本包 |
+| 404 | `CHECKPOINT_NOT_FOUND` | 指定会话检查点不存在 |
+| 404 | `PACKAGE_NOT_FOUND` | 剧本包不存在或未发布 |
+| 413 | `REQUEST_BODY_TOO_LARGE` | ASGI 累计请求体超过路由预算 |
+| 429 | `RATE_LIMITED` | 请求过于频繁 |
+| 503 | `DATABASE_SCHEMA_INCOMPLETE` | 必需迁移表缺失 |
+| 503 | `DATABASE_UNAVAILABLE` | 数据库连接或 SQL 执行不可用 |

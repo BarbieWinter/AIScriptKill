@@ -1,3 +1,5 @@
+"""构建按权限筛选的 RAG 检索 SQL 并解码其结果行。"""
+
 from collections.abc import Sequence
 
 from sqlalchemy import Text, bindparam, text
@@ -11,6 +13,7 @@ from engine.rag.models import RagChunk, RagSourceType, RetrievedChunk
 
 
 def build_retrieval_sql() -> TextClause:
+    """使用强制剧本和可见性筛选构建混合检索查询。"""
     return text(
         """
         WITH scored AS (
@@ -68,6 +71,7 @@ def build_retrieval_sql() -> TextClause:
 
 
 def row_to_result(row: RowMapping) -> RetrievedChunk:
+    """将一条已校验 SQL 行解码为类型化检索结果。"""
     metadata = _row_metadata(row.get("metadata"))
     chunk = RagChunk(
         script_id=_required_text(row.get("script_id")),
@@ -87,6 +91,7 @@ def row_to_result(row: RowMapping) -> RetrievedChunk:
 
 
 def vector_literal(values: Sequence[float]) -> str:
+    """按照 pgvector 的方括号文本输入格式编码向量。"""
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
@@ -107,7 +112,8 @@ def _source_type(value: JsonValue | None) -> RagSourceType:
             return "script_context"
         case "evidence":
             return "evidence"
-    raise ValueError(f"unexpected RAG source_type: {text_value}")
+        case _:
+            raise ValueError(f"unexpected RAG source_type: {text_value}")
 
 
 def _required_text(value: JsonValue | None) -> str:

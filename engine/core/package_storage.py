@@ -1,3 +1,5 @@
+"""私有存储剧本包归档并返回不透明的存储定位符。"""
+
 import asyncio
 from dataclasses import dataclass, field
 
@@ -8,12 +10,15 @@ from supabase import Client, create_client
 
 @dataclass(slots=True)
 class SupabasePackageAssetStorage:
+    """将剧本包资源上传到使用前已强制设为私有的存储桶。"""
+
     client: Client
     bucket: str
-    public_bucket: bool = True
     _bucket_checked: bool = field(default=False, init=False)
 
     async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
+        """在事件循环外上传资源并返回其私有定位符。"""
+
         return await asyncio.to_thread(self._upload_asset, package_id, asset)
 
     def _upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
@@ -28,15 +33,20 @@ class SupabasePackageAssetStorage:
                 "upsert": "true",
             },
         )
-        return self.client.storage.from_(self.bucket).get_public_url(object_path)
+        return f"storage://{self.bucket}/{object_path}"
 
     def _ensure_bucket(self) -> None:
         if self._bucket_checked:
             return
-        if not self._bucket_exists():
+        if self._bucket_exists():
+            self.client.storage.update_bucket(
+                self.bucket,
+                options={"public": False},
+            )
+        else:
             self.client.storage.create_bucket(
                 self.bucket,
-                options={"public": self.public_bucket},
+                options={"public": False},
             )
         self._bucket_checked = True
 
@@ -50,6 +60,8 @@ class SupabasePackageAssetStorage:
 
 
 def create_package_asset_storage() -> SupabasePackageAssetStorage:
+    """根据已校验的 Supabase 配置构建私有剧本包存储。"""
+
     settings = get_settings()
     return SupabasePackageAssetStorage(
         client=create_client(settings.supabase_url, settings.supabase_secret_key),

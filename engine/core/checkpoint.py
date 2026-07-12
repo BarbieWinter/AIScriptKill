@@ -1,30 +1,72 @@
+"""在 PostgreSQL 中持久化 LangGraph 检查点和待处理写入。"""
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+import asyncio
+from collections.abc import AsyncIterator, Iterator, Sequence
+from dataclasses import dataclass, field
+from typing import Any, cast
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
+    WRITES_IDX_MAP,
     BaseCheckpointSaver,
     ChannelVersions,
     Checkpoint,
     CheckpointMetadata,
     CheckpointTuple,
+    PendingWrite,
 )
-from sqlalchemy import delete, insert, select
-from sqlalchemy.sql import ClauseElement
+from langgraph.checkpoint.serde.base import SerializerProtocol
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from engine.core.checkpoint_codec import decode_stored_checkpoint, encode_stored_checkpoint
-from engine.db.tables import session_checkpoints
+from engine.api.schemas.common import JsonValue
+from engine.core.checkpoint_codec import (
+    ENCODING_VERSION,
+    MAX_CHECKPOINT_PENDING_WRITES,
+    STRICT_CHECKPOINT_SERDE,
+    CheckpointStorageError,
+    decode_stored_checkpoint,
+    decode_typed,
+    encode_stored_checkpoint,
+    encode_typed,
+)
+from engine.core.checkpoint_models import (
+    AsyncCheckpointOnlyError,
+    CheckpointConfigError,
+    CheckpointDbSession,
+    checkpoint_config,
+    checkpoint_locator,
+)
+from engine.db.tables import session_checkpoint_writes, session_checkpoints
+
+type IndexedPendingWrite = tuple[int, PendingWrite]
 
 
 @dataclass(frozen=True, slots=True)
 class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
-    db: CheckpointDbSession
+    """通过一个专用数据库会话串行化 LangGraph 持久化。
+
+    提供的会话不得与请求事务共享：LangGraph 会并发调度检查点和待处理写入调用，
+    因此本保存器需要保护不可并发使用的 ``AsyncSession``。待处理写入使用独立数据库行，
+    以持久保留先写入后检查点的顺序，并支持不同保存器进程。数据库变更各自建立提交边界。
+    列表查询必须提供线程配置，因为跨会话历史不在支持范围内。
+    """
+
+    db: AsyncSession | CheckpointDbSession
+    serde: SerializerProtocol = field(
+        default=STRICT_CHECKPOINT_SERDE,
+        init=False,
+        repr=False,
+    )
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        """拒绝同步读取，因为本保存器持有异步数据库会话。"""
+
         raise AsyncCheckpointOnlyError("get_tuple")
 
     def list(
@@ -35,6 +77,8 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> Iterator[CheckpointTuple]:
+        """拒绝同步列表查询，因为本保存器持有异步数据库会话。"""
+
         raise AsyncCheckpointOnlyError("list")
         yield
 
@@ -45,6 +89,8 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
+        """拒绝在纯异步保存器上同步写入检查点。"""
+
         raise AsyncCheckpointOnlyError("put")
 
     def put_writes(
@@ -54,12 +100,25 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         task_id: str,
         task_path: str = "",
     ) -> None:
+        """拒绝在纯异步保存器上同步写入待处理数据。"""
+
         raise AsyncCheckpointOnlyError("put_writes")
 
     def delete_thread(self, thread_id: str) -> None:
+        """拒绝在纯异步保存器上同步删除。"""
+
         raise AsyncCheckpointOnlyError("delete_thread")
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        """加载一个检查点及其持久待处理写入，然后关闭读取事务。"""
+
+        async with self._lock:
+            try:
+                return await self._aget_tuple(config)
+            finally:
+                await self.db.rollback()
+
+    async def _aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         locator = checkpoint_locator(config)
         stmt = (
             select(
@@ -68,7 +127,13 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
                 session_checkpoints.c.state,
             )
             .where(session_checkpoints.c.session_id == UUID(locator.thread_id))
-            .order_by(session_checkpoints.c.created_at.desc())
+            .where(session_checkpoints.c.state.contains({"version": ENCODING_VERSION}))
+            .order_by(
+                # LangGraph 将最大 checkpoint_id 定义为最新检查点；并发提交的完成顺序可能不同，
+                # 因此不能使用数据库插入时间决定这里的排序。
+                session_checkpoints.c.thread_ts.desc(),
+                session_checkpoints.c.created_at.desc(),
+            )
             .limit(1)
         )
         if locator.checkpoint_id is not None:
@@ -78,14 +143,22 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         if row is None:
             return None
         stored = decode_stored_checkpoint(row["state"])
+        checkpoint_id = str(row["thread_ts"])
+        normalized_writes = await self._aload_pending_writes(
+            locator.thread_id,
+            (checkpoint_id,),
+        )
         return CheckpointTuple(
-            config=checkpoint_config(locator.thread_id, str(row["thread_ts"])),
+            config=checkpoint_config(locator.thread_id, checkpoint_id),
             checkpoint=stored.checkpoint,
             metadata=stored.metadata,
             parent_config=checkpoint_config(locator.thread_id, str(row["parent_ts"]))
             if row["parent_ts"] is not None
             else None,
-            pending_writes=stored.pending_writes,
+            pending_writes=_merge_pending_write_records(
+                stored.pending_writes,
+                normalized_writes.get(checkpoint_id, ()),
+            ),
         )
 
     async def alist(
@@ -96,30 +169,88 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> AsyncIterator[CheckpointTuple]:
-        locator = checkpoint_locator(config or {"configurable": {}})
-        stmt = (
-            select(
-                session_checkpoints.c.thread_ts,
-                session_checkpoints.c.parent_ts,
-                session_checkpoints.c.state,
-            )
-            .where(session_checkpoints.c.session_id == UUID(locator.thread_id))
-            .order_by(session_checkpoints.c.created_at.desc())
-        )
-        if limit is not None:
-            stmt = stmt.limit(limit)
-        result = await self.db.execute(stmt)
-        for row in result.mappings().all():
-            stored = decode_stored_checkpoint(row["state"])
-            yield CheckpointTuple(
-                config=checkpoint_config(locator.thread_id, str(row["thread_ts"])),
-                checkpoint=stored.checkpoint,
-                metadata=stored.metadata,
-                parent_config=checkpoint_config(locator.thread_id, str(row["parent_ts"]))
-                if row["parent_ts"] is not None
+        """按从新到旧列出筛选后的线程历史，并规范化待处理写入。"""
+
+        if config is None:
+            raise CheckpointConfigError("thread_id")
+        locator = checkpoint_locator(config)
+        before_locator = checkpoint_locator(before) if before is not None else None
+        if before_locator is not None and before_locator.thread_id != locator.thread_id:
+            raise CheckpointConfigError("before.thread_id")
+        selected: list[
+            tuple[
+                str,
+                str | None,
+                Checkpoint,
+                CheckpointMetadata,
+                list[PendingWrite],
+            ]
+        ] = []
+        async with self._lock:
+            try:
+                stmt = (
+                    select(
+                        session_checkpoints.c.thread_ts,
+                        session_checkpoints.c.parent_ts,
+                        session_checkpoints.c.state,
+                    )
+                    .where(session_checkpoints.c.session_id == UUID(locator.thread_id))
+                    .where(session_checkpoints.c.state.contains({"version": ENCODING_VERSION}))
+                    .order_by(
+                        session_checkpoints.c.thread_ts.desc(),
+                        session_checkpoints.c.created_at.desc(),
+                    )
+                )
+                result = await self.db.execute(stmt)
+                for row in result.mappings().all():
+                    checkpoint_id = str(row["thread_ts"])
+                    if locator.checkpoint_id is not None and checkpoint_id != locator.checkpoint_id:
+                        continue
+                    if (
+                        before_locator is not None
+                        and before_locator.checkpoint_id is not None
+                        and checkpoint_id >= before_locator.checkpoint_id
+                    ):
+                        continue
+                    stored = decode_stored_checkpoint(row["state"])
+                    if filter is not None and not all(
+                        stored.metadata.get(key) == value for key, value in filter.items()
+                    ):
+                        continue
+                    if limit is not None and len(selected) >= max(limit, 0):
+                        break
+                    selected.append(
+                        (
+                            checkpoint_id,
+                            str(row["parent_ts"]) if row["parent_ts"] is not None else None,
+                            stored.checkpoint,
+                            stored.metadata,
+                            stored.pending_writes,
+                        )
+                    )
+                normalized_writes = await self._aload_pending_writes(
+                    locator.thread_id,
+                    tuple(item[0] for item in selected),
+                )
+            finally:
+                await self.db.rollback()
+        items = [
+            CheckpointTuple(
+                config=checkpoint_config(locator.thread_id, checkpoint_id),
+                checkpoint=checkpoint,
+                metadata=metadata,
+                parent_config=checkpoint_config(locator.thread_id, parent_id)
+                if parent_id is not None
                 else None,
-                pending_writes=stored.pending_writes,
+                pending_writes=_merge_pending_write_records(
+                    legacy_writes,
+                    normalized_writes.get(checkpoint_id, ()),
+                ),
             )
+            for checkpoint_id, parent_id, checkpoint, metadata, legacy_writes in selected
+        ]
+        for item in items:
+            yield item
 
     async def aput(
         self,
@@ -128,20 +259,44 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
+        """更新插入并提交一个已编码检查点，同时保留更早写入。"""
+
+        _ = new_versions
         locator = checkpoint_locator(config)
         checkpoint_id = str(checkpoint["id"])
-        await self.db.execute(
-            insert(session_checkpoints).values(
-                session_id=UUID(locator.thread_id),
-                thread_ts=checkpoint_id,
-                parent_ts=locator.checkpoint_id,
-                state=encode_stored_checkpoint(
+        async with self._lock:
+            try:
+                legacy_writes = await self._aload_legacy_pending_writes(
+                    locator.thread_id,
+                    checkpoint_id,
+                )
+                stored_state = encode_stored_checkpoint(
                     checkpoint=checkpoint,
                     metadata=metadata,
-                    pending_writes=[],
-                ),
-            ),
-        )
+                    pending_writes=legacy_writes,
+                )
+                statement = insert(session_checkpoints).values(
+                    session_id=UUID(locator.thread_id),
+                    thread_ts=checkpoint_id,
+                    parent_ts=locator.checkpoint_id,
+                    state=stored_state,
+                )
+                await self.db.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=(
+                            session_checkpoints.c.session_id,
+                            session_checkpoints.c.thread_ts,
+                        ),
+                        set_={
+                            "parent_ts": locator.checkpoint_id,
+                            "state": stored_state,
+                        },
+                    ),
+                )
+                await self.db.commit()
+            except BaseException:
+                await self.db.rollback()
+                raise
         return checkpoint_config(locator.thread_id, checkpoint_id)
 
     async def aput_writes(
@@ -151,64 +306,154 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        return None
+        """持久化并提交幂等任务写入，即使检查点尚未插入。"""
+
+        _ = task_path
+        locator = checkpoint_locator(config)
+        if locator.checkpoint_id is None:
+            raise CheckpointConfigError("checkpoint_id")
+        if len(writes) == 0:
+            return
+        records = [
+            {
+                "session_id": UUID(locator.thread_id),
+                "checkpoint_id": locator.checkpoint_id,
+                "task_id": task_id,
+                "write_idx": WRITES_IDX_MAP.get(channel, index),
+                "channel": channel,
+                "value": encode_typed(value),
+            }
+            for index, (channel, value) in enumerate(writes)
+        ]
+        async with self._lock:
+            try:
+                statement = insert(session_checkpoint_writes).values(records)
+                await self.db.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=(
+                            session_checkpoint_writes.c.session_id,
+                            session_checkpoint_writes.c.checkpoint_id,
+                            session_checkpoint_writes.c.task_id,
+                            session_checkpoint_writes.c.write_idx,
+                        ),
+                        set_={
+                            "channel": statement.excluded.channel,
+                            "value": statement.excluded.value,
+                        },
+                        where=statement.excluded.write_idx < 0,
+                    ),
+                )
+                await self.db.commit()
+            except BaseException:
+                await self.db.rollback()
+                raise
+
+    async def _aload_pending_writes(
+        self,
+        thread_id: str,
+        checkpoint_ids: Sequence[str],
+    ) -> dict[str, list[IndexedPendingWrite]]:
+        if len(checkpoint_ids) == 0:
+            return {}
+        result = await self.db.execute(
+            select(
+                session_checkpoint_writes.c.checkpoint_id,
+                session_checkpoint_writes.c.task_id,
+                session_checkpoint_writes.c.write_idx,
+                session_checkpoint_writes.c.channel,
+                session_checkpoint_writes.c.value,
+            )
+            .where(session_checkpoint_writes.c.session_id == UUID(thread_id))
+            .where(session_checkpoint_writes.c.checkpoint_id.in_(checkpoint_ids))
+            .order_by(
+                session_checkpoint_writes.c.checkpoint_id,
+                session_checkpoint_writes.c.task_id,
+                session_checkpoint_writes.c.write_idx,
+            ),
+        )
+        grouped: dict[str, list[IndexedPendingWrite]] = {}
+        for row in result.mappings().all():
+            checkpoint_id = row["checkpoint_id"]
+            task_id = row["task_id"]
+            write_idx = row["write_idx"]
+            channel = row["channel"]
+            value = row["value"]
+            if (
+                not isinstance(checkpoint_id, str)
+                or not isinstance(task_id, str)
+                or type(write_idx) is not int
+                or not isinstance(channel, str)
+            ):
+                raise CheckpointStorageError("pending_write_row")
+            if not isinstance(value, dict):
+                raise CheckpointStorageError("pending_write_row")
+            value_mapping = cast(dict[object, object], value)
+            type_name = value_mapping.get("type")
+            payload = value_mapping.get("payload")
+            if not isinstance(type_name, str) or not isinstance(payload, str):
+                raise CheckpointStorageError("pending_write_row")
+            typed_value: dict[str, JsonValue] = {"type": type_name, "payload": payload}
+            pending = grouped.setdefault(checkpoint_id, [])
+            if len(pending) >= MAX_CHECKPOINT_PENDING_WRITES:
+                raise CheckpointStorageError("pending_writes_limit")
+            pending.append((write_idx, (task_id, channel, decode_typed(typed_value))))
+        return grouped
+
+    async def _aload_legacy_pending_writes(
+        self,
+        thread_id: str,
+        checkpoint_id: str,
+    ) -> list[PendingWrite]:
+        result = await self.db.execute(
+            select(session_checkpoints.c.state)
+            .where(session_checkpoints.c.session_id == UUID(thread_id))
+            .where(session_checkpoints.c.thread_ts == checkpoint_id)
+            .limit(1),
+        )
+        row = result.mappings().one_or_none()
+        if row is None:
+            return []
+        return decode_stored_checkpoint(row["state"]).pending_writes
 
     async def adelete_thread(self, thread_id: str) -> None:
-        await self.db.execute(
-            delete(session_checkpoints).where(session_checkpoints.c.session_id == UUID(thread_id)),
-        )
+        """原子删除一个线程的规范化写入和检查点。"""
+
+        async with self._lock:
+            try:
+                await self.db.execute(
+                    delete(session_checkpoint_writes).where(
+                        session_checkpoint_writes.c.session_id == UUID(thread_id)
+                    ),
+                )
+                await self.db.execute(
+                    delete(session_checkpoints).where(
+                        session_checkpoints.c.session_id == UUID(thread_id)
+                    ),
+                )
+                await self.db.commit()
+            except BaseException:
+                await self.db.rollback()
+                raise
 
 
-@dataclass(frozen=True, slots=True)
-class CheckpointLocator:
-    thread_id: str
-    checkpoint_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class AsyncCheckpointOnlyError(Exception):
-    method: str
-
-    def __str__(self) -> str:
-        return f"SupabaseSessionCheckpointSaver.{self.method} requires async LangGraph execution"
-
-
-def checkpoint_locator(config: RunnableConfig) -> CheckpointLocator:
-    configurable = config.get("configurable", {})
-    thread_id = configurable.get("thread_id")
-    checkpoint_id = configurable.get("checkpoint_id")
-    if not isinstance(thread_id, str) or thread_id == "":
-        raise CheckpointConfigError("thread_id")
-    return CheckpointLocator(
-        thread_id=thread_id,
-        checkpoint_id=checkpoint_id if isinstance(checkpoint_id, str) else None,
-    )
-
-
-def checkpoint_config(thread_id: str, checkpoint_id: str | None = None) -> RunnableConfig:
-    configurable: dict[str, str] = {"thread_id": thread_id}
-    if checkpoint_id is not None and checkpoint_id != "":
-        configurable["checkpoint_id"] = checkpoint_id
-    return {"configurable": configurable}
-
-
-class CheckpointDbSession(Protocol):
-    async def execute(self, statement: ClauseElement) -> CheckpointExecuteResult: ...
-
-
-class CheckpointExecuteResult(Protocol):
-    def mappings(self) -> CheckpointRows: ...
-
-
-class CheckpointRows(Protocol):
-    def one_or_none(self) -> Mapping[str, Any] | None: ...
-
-    def all(self) -> Sequence[Mapping[str, Any]]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointConfigError(Exception):
-    field: str
-
-    def __str__(self) -> str:
-        return f"LangGraph checkpoint config missing {self.field}"
+def _merge_pending_write_records(
+    existing: Sequence[PendingWrite],
+    additions: Sequence[IndexedPendingWrite],
+) -> list[PendingWrite]:
+    indexed: dict[tuple[str, int], PendingWrite] = {}
+    task_offsets: dict[str, int] = {}
+    for write in existing:
+        existing_task_id, channel, _ = write
+        index = task_offsets.get(existing_task_id, 0)
+        task_offsets[existing_task_id] = index + 1
+        indexed[(existing_task_id, WRITES_IDX_MAP.get(channel, index))] = write
+    for write_idx, write in additions:
+        addition_task_id, channel, _ = write
+        expected_write_idx = WRITES_IDX_MAP.get(channel, write_idx)
+        if expected_write_idx != write_idx:
+            raise CheckpointStorageError("pending_write_index")
+        key = (addition_task_id, write_idx)
+        if key[1] >= 0 and key in indexed:
+            continue
+        indexed[key] = write
+    return list(indexed.values())

@@ -1,3 +1,5 @@
+from typing import cast
+
 from sqlalchemy import Table
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import Executable
@@ -6,10 +8,14 @@ from sqlalchemy.sql.dml import Delete, Insert
 from engine.core.package_importer import import_to_db, prepare_package_for_import
 from engine.core.package_loader import load_package_archive
 from engine.core.package_schema import JsonMapping, PackageAssetRecord
+from engine.core.package_storage import SupabasePackageAssetStorage
 from engine.rag.embeddings import DeterministicEmbeddingProvider
 from engine.rag.metadata import json_mapping, json_mapping_list
+from engine.repositories.package_repository import StoredPackage, StoredPackageConfig
+from engine.services.package_service import package_summary_from_package
 from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
 from engine.tests.rag_fixtures import rag_package
+from supabase import Client
 
 
 class FakePackageAssetStorage:
@@ -18,7 +24,44 @@ class FakePackageAssetStorage:
 
     async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
         self.uploaded_assets.append(asset)
-        return f"https://storage.test/{package_id}/{asset.path}"
+        return f"storage://private-assets/{package_id}/{asset.path}"
+
+
+class FakeStorageObjectApi:
+    def __init__(self) -> None:
+        self.uploaded: list[tuple[str, bytes, dict[str, str]]] = []
+        self.public_url_calls = 0
+
+    def upload(self, path: str, content: bytes, options: dict[str, str]) -> None:
+        self.uploaded.append((path, content, options))
+
+    def get_public_url(self, _path: str) -> str:
+        self.public_url_calls += 1
+        return "https://must-not-be-used.test"
+
+
+class FakeStorageApi:
+    def __init__(self) -> None:
+        self.objects = FakeStorageObjectApi()
+        self.updated: list[tuple[str, dict[str, bool]]] = []
+        self.created: list[tuple[str, dict[str, bool]]] = []
+
+    def from_(self, _bucket: str) -> FakeStorageObjectApi:
+        return self.objects
+
+    def list_buckets(self) -> list[object]:
+        return [type("Bucket", (), {"id": "private-assets"})()]
+
+    def update_bucket(self, bucket: str, options: dict[str, bool]) -> None:
+        self.updated.append((bucket, options))
+
+    def create_bucket(self, bucket: str, options: dict[str, bool]) -> None:
+        self.created.append((bucket, options))
+
+
+class FakeSupabaseClient:
+    def __init__(self) -> None:
+        self.storage = FakeStorageApi()
 
 
 class RecordingAsyncSession:
@@ -34,14 +77,14 @@ class RecordingAsyncSession:
 
 
 async def test_prepare_package_for_import_uploads_assets_and_rewrites_local_paths() -> None:
-    # Given: a loaded package references local files from multiple import records.
+    # 给定：已加载剧本包从多条导入记录引用本地文件。
     package = load_package_archive(package_archive(_package_files_with_assets()))
     storage = FakePackageAssetStorage()
 
-    # When: the package is prepared with an asset storage backend.
+    # 当：使用资源存储后端准备剧本包。
     prepared_package = await prepare_package_for_import(package, storage)
 
-    # Then: every package asset is uploaded once and matching YAML paths become runtime URLs.
+    # 则：每个剧本包资源上传一次，匹配的 YAML 路径转换为运行时 URL。
     assert [asset.path for asset in storage.uploaded_assets] == [
         "assets/audio/ending.mp3",
         "assets/audio/intro.mp3",
@@ -53,38 +96,84 @@ async def test_prepare_package_for_import_uploads_assets_and_rewrites_local_path
         "assets/scenes/main_hall.jpg",
     ]
     assert prepared_package.package.config["visual"] == {
-        "poster": "https://storage.test/minimal-case/assets/posters/main.jpg",
+        "poster": "storage://private-assets/minimal-case/assets/posters/main.jpg",
     }
 
     first_clue = next(clue for clue in prepared_package.clues if clue.id == "clue_1")
-    assert first_clue.image_url == "https://storage.test/minimal-case/assets/clues/clue_1.jpg"
+    assert first_clue.image_url == "storage://private-assets/minimal-case/assets/clues/clue_1.jpg"
 
     evidence = prepared_package.evidences[0]
-    assert evidence.image_url == "https://storage.test/minimal-case/assets/evidences/knife.jpg"
+    assert evidence.image_url == "storage://private-assets/minimal-case/assets/evidences/knife.jpg"
     assert evidence.metadata["visual"] == {
-        "image": "https://storage.test/minimal-case/assets/evidences/knife.jpg",
+        "image": "storage://private-assets/minimal-case/assets/evidences/knife.jpg",
     }
 
     scene = prepared_package.scenes[0]
-    assert scene.background_url == "https://storage.test/minimal-case/assets/scenes/main_hall.jpg"
+    assert (
+        scene.background_url == "storage://private-assets/minimal-case/assets/scenes/main_hall.jpg"
+    )
     assert scene.definition["visual"] == {
-        "background": "https://storage.test/minimal-case/assets/scenes/main_hall.jpg",
+        "background": "storage://private-assets/minimal-case/assets/scenes/main_hall.jpg",
     }
 
     media = {asset.id: asset for asset in prepared_package.media_assets}
-    assert media["intro"].file_url == "https://storage.test/minimal-case/assets/audio/intro.mp3"
-    assert media["intro"].subtitle_url == "https://storage.test/minimal-case/assets/audio/intro.vtt"
+    assert media["intro"].file_url == "storage://private-assets/minimal-case/assets/audio/intro.mp3"
+    assert media["intro"].subtitle_url == (
+        "storage://private-assets/minimal-case/assets/audio/intro.vtt"
+    )
     assert (
-        media["overview"].file_url == "https://storage.test/minimal-case/assets/images/overview.png"
+        media["overview"].file_url
+        == "storage://private-assets/minimal-case/assets/images/overview.png"
     )
     assert media["overview"].metadata["file"] == (
-        "https://storage.test/minimal-case/assets/images/overview.png"
+        "storage://private-assets/minimal-case/assets/images/overview.png"
     )
     assert (
         _dm_guide_news_broadcast(prepared_package.dm_guide)
-        == "https://storage.test/minimal-case/assets/audio/ending.mp3"
+        == "storage://private-assets/minimal-case/assets/audio/ending.mp3"
     )
     assert "dm_guide" not in prepared_package.package.config
+
+
+async def test_supabase_asset_storage_forces_private_bucket_and_returns_locator() -> None:
+    # 给定：已有 Supabase 存储桶，且不信任其原有可见性。
+    client = FakeSupabaseClient()
+    storage = SupabasePackageAssetStorage(cast(Client, cast(object, client)), "private-assets")
+    asset = PackageAssetRecord(
+        path="assets/audio/ending.mp3",
+        content=b"protected ending",
+        content_type="audio/mpeg",
+    )
+
+    # 当：上传受保护的剧本包资源。
+    locator = await storage.upload_asset("minimal-case", asset)
+
+    # 则：强制将存储桶设为私有，且不调用公共 URL API。
+    assert client.storage.updated == [("private-assets", {"public": False})]
+    assert locator == "storage://private-assets/minimal-case/assets/audio/ending.mp3"
+    assert client.storage.objects.public_url_calls == 0
+
+
+def test_loaded_manifest_fields_reach_catalogue_projection() -> None:
+    # 给定：剧本包清单使用文档约定的嵌套 info 和 visual 对象。
+    package = load_package_archive(package_archive(_package_files_with_assets()))
+    stored = StoredPackage(
+        id=package.package.id,
+        name=package.package.title,
+        status="published",
+        config=StoredPackageConfig.model_validate(package.package.config),
+    )
+
+    # 当：仓储记录映射到公共目录 schema。
+    summary = package_summary_from_package(stored)
+
+    # 则：保留导入值，而不是回退到 API 默认值。
+    assert summary.description == "用于 T-2.1 验收的最小剧本包"
+    assert summary.poster_url == "assets/posters/main.jpg"
+    assert summary.difficulty == 2
+    assert summary.duration_minutes == 60
+    assert summary.genre == ["test"]
+    assert summary.player_count == 1
 
 
 async def test_import_to_db_persists_endings_and_privileged_dm_guide() -> None:
@@ -142,18 +231,18 @@ async def test_import_to_db_replaces_endings_and_dm_guide_on_repeated_import() -
 
 
 async def test_import_to_db_indexes_rag_knowledge_when_embedding_provider_is_supplied() -> None:
-    # Given: a loaded package contains DM-only truth material for RAG.
+    # 给定：已加载剧本包包含仅供 DM 使用的 RAG 真相资料。
     package = rag_package()
     session = RecordingAsyncSession()
 
-    # When: the importer receives an embedding provider.
+    # 当：导入器收到嵌入提供器。
     await import_to_db(
         package,
         session,
         rag_embedding_provider=DeterministicEmbeddingProvider(),
     )
 
-    # Then: script_knowledge receives embedded chunks without leaking truth metadata.
+    # 则：script_knowledge 接收嵌入分块，同时不泄露真相元数据。
     knowledge_params = _insert_params(session, "script_knowledge")
     truth_params = [
         params for params in knowledge_params if "NPC角色是凶手" in str(params["chunk_text"])
@@ -166,21 +255,21 @@ async def test_import_to_db_indexes_rag_knowledge_when_embedding_provider_is_sup
 
 
 async def test_prepare_package_for_import_without_storage_keeps_package_unchanged() -> None:
-    # Given: a package contains local assets but no storage backend is configured.
+    # 给定：剧本包包含本地资源，但未配置存储后端。
     package = load_package_archive(package_archive(_package_files_with_assets()))
 
-    # When: the package is prepared without storage.
+    # 当：在没有存储后端的情况下准备剧本包。
     prepared_package = await prepare_package_for_import(package)
 
-    # Then: the caller can still use the existing local-path placeholder behavior.
+    # 则：调用方仍可使用现有的本地路径占位行为。
     assert prepared_package is package
 
 
 def test_load_package_archive_collects_assets_from_package_assets_directory() -> None:
-    # Given: a package includes binary files under assets/.
+    # 给定：剧本包在 assets/ 下包含二进制文件。
     package = load_package_archive(package_archive(_package_files_with_assets()))
 
-    # Then: loader exposes upload-ready asset records separately from YAML records.
+    # 则：加载器将可上传的资源记录与 YAML 记录分开提供。
     assets = {asset.path: asset for asset in package.assets}
     assert assets["assets/posters/main.jpg"].content == b"poster"
     assert assets["assets/posters/main.jpg"].content_type == "image/jpeg"
@@ -206,7 +295,7 @@ def _table_name(statement: Executable) -> str | None:
 def _metadata_visibility(params: dict[str, object]) -> str:
     metadata = params["metadata"]
     assert isinstance(metadata, dict)
-    visibility = metadata["visibility"]
+    visibility = cast(dict[object, object], metadata)["visibility"]
     assert isinstance(visibility, str)
     return visibility
 
@@ -214,7 +303,7 @@ def _metadata_visibility(params: dict[str, object]) -> str:
 def _embedding_length(params: dict[str, object]) -> int:
     embedding = params["embedding"]
     assert isinstance(embedding, list)
-    return len(embedding)
+    return len(cast(list[object], embedding))
 
 
 def _dm_guide_news_broadcast(dm_guide: JsonMapping) -> str:
@@ -244,10 +333,6 @@ def _package_files_with_assets() -> dict[str, str | bytes]:
     ).replace(
         'name: "线索一"',
         'name: "线索一"\n    image: "assets/clues/clue_1.jpg"',
-    )
-    files["scenes/main_hall.yml"] = _text_file(files, "scenes/main_hall.yml").replace(
-        'name: "大厅"',
-        'name: "大厅"\nvisual:\n  background: "assets/scenes/main_hall.jpg"',
     )
     files["evidences/knife.yml"] = """
 id: "knife"

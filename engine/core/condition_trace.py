@@ -1,8 +1,12 @@
+"""表示并渲染条件树的可观测遍历过程。"""
+
 from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
 class ConditionTraceNode:
+    """记录一个已求值条件及其已访问子节点。"""
+
     label: str
     value: bool
     detail: str | None = None
@@ -11,11 +15,15 @@ class ConditionTraceNode:
 
 @dataclass(frozen=True, slots=True)
 class ConditionEvaluation:
+    """将最终布尔结果与根跟踪节点配对。"""
+
     value: bool
     trace: ConditionTraceNode
 
 
 def format_condition_trace(label: str, evaluation: ConditionEvaluation) -> str:
+    """将求值结果渲染为 DSL 第 7 节约定的树形格式。"""
+
     lines = [f"[Condition Trace] {label}:"]
     lines.extend(_format_trace_node(evaluation.trace, "  ", is_last=False))
     lines.append(f"  └─ Result: {_bool_text(evaluation.value)}")

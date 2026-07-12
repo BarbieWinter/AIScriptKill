@@ -1,3 +1,5 @@
+"""加载并校验不可变的 API 运行时配置。"""
+
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Final, Literal
@@ -17,6 +19,8 @@ LOCAL_DATABASE_URL: Final[str] = "postgresql://postgres:postgres@127.0.0.1:54322
 
 
 class Settings(BaseSettings):
+    """校验 API、数据库、鉴权和 RAG 适配器使用的环境配置。"""
+
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=ENV_PATH,
         extra="ignore",
@@ -91,15 +95,26 @@ class Settings(BaseSettings):
         description="Optional OpenAI API key for LangChain OpenAI embeddings.",
         repr=False,
     )
+    supabase_jwt_audience: str = Field(
+        default="authenticated",
+        alias="SUPABASE_JWT_AUDIENCE",
+        min_length=1,
+        max_length=128,
+        description="Expected audience for Supabase access tokens.",
+    )
 
     # 前端跨域配置：支持 `.env.example` 中用逗号分隔多个 Origin
     @property
     def cors_origins(self) -> list[str]:
+        """从逗号分隔的配置中返回规范化的非空来源。"""
+
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
 
     # 数据库连接优先级：服务运行优先走 Supabase Pooler，缺失时回退 Direct URI
     @property
     def effective_database_url(self) -> str:
+        """优先返回运行时连接池 URL，缺失时回退到数据库直连 URL。"""
+
         return self.database_pooler_url or self.database_url
 
 
@@ -108,4 +123,6 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings(**{})
+    """返回进程级缓存且已通过校验的配置实例。"""
+
+    return Settings()

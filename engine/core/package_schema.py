@@ -1,3 +1,5 @@
+"""定义剧本包解析产生的规范化不可变记录。"""
+
 from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
@@ -15,6 +17,8 @@ MediaType: TypeAlias = Literal["bgm", "story", "sfx", "voice", "image", "video"]
 
 @dataclass(frozen=True, slots=True)
 class PackageRecord:
+    """携带剧本包标识和可安全持久化的配置。"""
+
     id: str
     title: str
     version: str
@@ -24,6 +28,8 @@ class PackageRecord:
 
 @dataclass(frozen=True, slots=True)
 class StageRecord:
+    """携带一个权威阶段及其可执行定义。"""
+
     id: str
     name: str
     sort_order: int
@@ -32,6 +38,8 @@ class StageRecord:
 
 @dataclass(frozen=True, slots=True)
 class CharacterRecord:
+    """携带一个角色及其规范化剧本包定义。"""
+
     id: str
     name: str
     definition: JsonMapping
@@ -42,6 +50,8 @@ class CharacterRecord:
 
 @dataclass(frozen=True, slots=True)
 class ClueRecord:
+    """携带从线索轮次文档展开的一条线索。"""
+
     id: str
     name: str
     round_id: str
@@ -54,6 +64,8 @@ class ClueRecord:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceRecord:
+    """携带一件类型化证物及其发现元数据。"""
+
     id: str
     name: str
     image_url: str | None
@@ -65,6 +77,8 @@ class EvidenceRecord:
 
 @dataclass(frozen=True, slots=True)
 class SceneRecord:
+    """携带一个可搜索场景及其规范化定义。"""
+
     id: str
     name: str
     background_url: str | None
@@ -73,6 +87,8 @@ class SceneRecord:
 
 @dataclass(frozen=True, slots=True)
 class MediaRecord:
+    """携带一个已声明媒体资源及展示元数据。"""
+
     id: str
     type: MediaType
     file_url: str
@@ -83,6 +99,8 @@ class MediaRecord:
 
 @dataclass(frozen=True, slots=True)
 class EndingRecord:
+    """携带一个结局条件及其有序触发动作。"""
+
     id: str
     name: str
     condition: JsonMapping
@@ -92,6 +110,8 @@ class EndingRecord:
 
 @dataclass(frozen=True, slots=True)
 class PackageAssetRecord:
+    """携带一个私有存储上传前已受限的归档资源。"""
+
     path: str
     content: bytes
     content_type: str
@@ -99,6 +119,8 @@ class PackageAssetRecord:
 
 @dataclass(frozen=True, slots=True)
 class ScriptPackageImport:
+    """汇总已完整校验且可原子持久化的剧本包。"""
+
     package: PackageRecord
     stages: tuple[StageRecord, ...]
     characters: tuple[CharacterRecord, ...]

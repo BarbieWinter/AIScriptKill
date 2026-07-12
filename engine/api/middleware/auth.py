@@ -1,3 +1,5 @@
+"""使用已配置的 JWT 策略认证 HTTP 和 WebSocket 请求。"""
+
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Annotated, ClassVar, Final, Literal, cast
@@ -18,10 +20,12 @@ bearer_scheme = HTTPBearer(auto_error=False)
 ADMIN_APP_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner"})
 
 
-# ── Supabase JWT Claims ──
+# ── Supabase JWT 声明 ──
 
 
 class SupabaseAppMetadata(BaseModel):
+    """从 Supabase JWT 元数据中解析服务端管理的应用角色。"""
+
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", frozen=True)
 
     role: str | None = Field(default=None, description="Server-managed app role.")
@@ -29,9 +33,12 @@ class SupabaseAppMetadata(BaseModel):
 
 
 class SupabaseClaims(BaseModel):
+    """校验已验证 Supabase 访问令牌中的必要声明。"""
+
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow", frozen=True)
 
     sub: str = Field(description="Supabase Auth user ID.")
+    exp: int = Field(description="JWT expiration timestamp.")
     role: str | None = Field(default=None, description="Supabase Postgres role.")
     app_metadata: SupabaseAppMetadata = Field(
         default_factory=SupabaseAppMetadata,
@@ -41,6 +48,8 @@ class SupabaseClaims(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class CurrentUser:
+    """表示匿名调用方或已验证的 Supabase 用户。"""
+
     subject: str
     role: Literal["anonymous", "authenticated"]
     app_role: str | None = None
@@ -48,6 +57,8 @@ class CurrentUser:
 
     @property
     def is_admin(self) -> bool:
+        """返回服务端管理的元数据是否授予管理员角色。"""
+
         return self.app_role in ADMIN_APP_ROLES or bool(
             ADMIN_APP_ROLES.intersection(self.app_roles)
         )
@@ -57,13 +68,21 @@ class CurrentUser:
 
 
 class SupabaseJwtVerifier:
-    _jwks_client: PyJWKClient
+    """校验 JWT 签名、签发方、受众、有效期和必要声明。"""
 
-    def __init__(self, supabase_url: str) -> None:
+    _jwks_client: PyJWKClient
+    _audience: str
+    _issuer: str
+
+    def __init__(self, supabase_url: str, audience: str) -> None:
         jwks_url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
         self._jwks_client = PyJWKClient(jwks_url)
+        self._audience = audience
+        self._issuer = f"{supabase_url.rstrip('/')}/auth/v1"
 
     def verify(self, token: str) -> SupabaseClaims:
+        """返回已验证的声明，失败时抛出稳定的 INVALID_TOKEN API 错误。"""
+
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             key = cast(str | bytes, signing_key.key)
@@ -71,7 +90,9 @@ class SupabaseJwtVerifier:
                 jwt=token,
                 key=key,
                 algorithms=["RS256", "ES256"],
-                options={"verify_aud": False},
+                audience=self._audience,
+                issuer=self._issuer,
+                options={"require": ["aud", "exp", "iss", "sub"]},
             )
             return SupabaseClaims.model_validate(decoded_claims)
         except (InvalidTokenError, PyJWKClientError, ValidationError) as exc:
@@ -83,8 +104,10 @@ class SupabaseJwtVerifier:
 
 @lru_cache
 def get_jwt_verifier() -> SupabaseJwtVerifier:
+    """返回与当前 Supabase 配置绑定的进程级缓存校验器。"""
+
     settings = get_settings()
-    return SupabaseJwtVerifier(settings.supabase_url)
+    return SupabaseJwtVerifier(settings.supabase_url, settings.supabase_jwt_audience)
 
 
 async def get_current_user(
@@ -93,6 +116,8 @@ async def get_current_user(
         Depends(bearer_scheme),
     ],
 ) -> CurrentUser:
+    """将可选的 Bearer 凭证解析为匿名用户或已认证用户。"""
+
     if credentials is None:
         return CurrentUser(subject="anonymous", role="anonymous")
 
@@ -112,6 +137,8 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
 async def require_admin_user(current_user: CurrentUserDep) -> CurrentUser:
+    """要求已认证的管理员元数据，否则抛出 401/403 API 错误。"""
+
     if current_user.role == "anonymous":
         raise unauthorized("AUTH_REQUIRED", "管理操作需要登录")
     if not current_user.is_admin:

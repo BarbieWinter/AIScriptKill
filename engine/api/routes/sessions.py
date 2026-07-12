@@ -1,3 +1,5 @@
+"""公开游戏会话创建与查询端点。"""
+
 from fastapi import APIRouter
 
 from engine.api.middleware.auth import CurrentUserDep
@@ -45,7 +47,20 @@ async def create_session(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> CreateSessionResponse:
-    """Create a game session from a script package and preferred character."""
+    """从已发布剧本包创建游戏会话。
+
+    Args:
+        payload: 剧本包、玩家名称和必需的偏好角色 ID。
+        current_user: 由鉴权依赖解析的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        已创建会话的标识符和初始运行时状态。
+
+    Raises:
+        ApiError: 认证或创建失败时抛出 `INVALID_TOKEN`、`INVALID_USER_ID` 或
+            `SCRIPT_PACKAGE_NOT_FOUND`。
+    """
     return await start_session(payload, current_user, db)
 
 
@@ -55,7 +70,20 @@ async def get_session(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> SessionStateResponse:
-    """Return the current session state summary used by the game shell."""
+    """返回可访问游戏会话的当前状态摘要。
+
+    Args:
+        session_id: 待加载会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        会话状态、阶段、场景、进度和可用动作。
+
+    Raises:
+        ApiError: 认证、解析或访问失败时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_session_state(session_id, current_user, db)
 
 
@@ -66,7 +94,21 @@ async def update_session(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> UpdateSessionResponse:
-    """Restore or maintain a session checkpoint."""
+    """从已存储检查点恢复可访问的游戏会话。
+
+    Args:
+        session_id: 待恢复会话的 UUID 字符串。
+        payload: 待恢复检查点的标识符。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        恢复后的会话状态和检查点标识符。
+
+    Raises:
+        ApiError: 恢复失败时抛出 `INVALID_TOKEN`、`INVALID_SESSION_ID`、
+            `INVALID_USER_ID`、`SESSION_NOT_FOUND` 或 `CHECKPOINT_NOT_FOUND`。
+    """
     return await restore_session(session_id, payload, current_user, db)
 
 
@@ -79,7 +121,20 @@ async def list_clues(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> ClueListResponse:
-    """Return clues unlocked for the current session."""
+    """列出可访问游戏会话中已解锁的线索。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        当前对会话玩家可见的线索。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_clues(session_id, current_user, db)
 
 
@@ -89,7 +144,20 @@ async def list_evidences(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> EvidenceListResponse:
-    """Return evidences discovered in the current session."""
+    """列出可访问游戏会话中已发现的证物。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        当前对会话玩家可见的证物记录。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_evidences(session_id, current_user, db)
 
 
@@ -99,7 +167,20 @@ async def list_characters(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> CharacterListResponse:
-    """Return characters currently available in the active scene."""
+    """列出可访问游戏会话中的剧本角色。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        剧本角色摘要；仅当剧本包没有已存储角色行时，回退到会话角色 ID。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_characters(session_id, current_user, db)
 
 
@@ -109,7 +190,20 @@ async def list_chat_history(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> ChatHistoryResponse:
-    """Return paginated chat history for a session."""
+    """返回可访问游戏会话中已存储的聊天记录。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        会话已持久化的聊天消息。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_chat_history(session_id, current_user, db)
 
 
@@ -119,7 +213,20 @@ async def list_cards(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> CardListResponse:
-    """Return usable skill and prop cards for a session."""
+    """列出可访问游戏会话中的道具和技能卡证物。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        当前响应映射器映射为剩余一次使用且 `available=True` 的道具和技能卡证物行。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_cards(session_id, current_user, db)
 
 
@@ -129,5 +236,18 @@ async def get_review(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> ReviewResponse:
-    """Return the review and scoring result for a completed session."""
+    """返回可访问游戏会话的复盘表示。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        最新持久化复盘；不存在持久化复盘时，返回合成的零分 `N/A` 响应。
+
+    Raises:
+        ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
     return await get_session_review(session_id, current_user, db)

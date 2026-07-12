@@ -28,6 +28,10 @@ conditions:                 # 子条件列表
 
 所有条件最终求值为 `true` 或 `false`。
 
+条件参数采用严格类型校验：只有未提供的可选字段会使用默认值；字段已提供但类型错误时，
+评估器返回 `CONDITION_FIELD_INVALID`，不会把字符串数字、字符串布尔值或畸形列表
+静默解释为 `0`、`false` 或空列表。逻辑条件的每个子项也必须是条件对象。
+
 ---
 
 ## 2. 条件类型完整列表
@@ -69,8 +73,8 @@ act_id: "book1"                 # 幕/本ID
 type: "clues_discovered"
 in_round: "act1_round1"         # 可选：指定线索轮次
 in_scene: "crime_scene"         # 可选：指定场景
-min_count: 3                    # 至少发现N个
-max_count: 10                   # 可选：至多N个
+min_count: 3                    # 可选：至少N个，默认0（支持只写exact_count）
+max_count: 10                   # 可选：至多N个，默认当前匹配数量
 exact_count: 5                  # 可选：恰好N个
 key_only: true                  # 可选：只计关键线索
 ```
@@ -110,7 +114,7 @@ character_id: "wangdada"
 ```yaml
 type: "character_talked_to"
 character_id: "wangdada"
-min_count: 3                    # 可选：至少对话N次
+min_count: 3                    # 可选：至少对话N次，默认1
 ```
 
 #### `dialog_triggered`
@@ -136,9 +140,9 @@ case_sensitive: false           # 可选：是否大小写敏感
 ```yaml
 type: "npc_state_reached"
 character_id: "wangdada"
-state: "nervous"                # 状态名
-threshold: 50                   # 可选：阈值（用于数值型状态）
-comparison: "gte"               # gte/gt/lte/lt/eq
+state: "fear"                   # 数值状态名；缺失或非数值时条件为false
+threshold: 50                   # 可选：数值阈值，默认0
+comparison: "gte"               # 可选：gte/gt/lte/lt/eq，默认gte
 ```
 
 ---
@@ -180,9 +184,14 @@ card_type: "skill"              # 可选：skill / prop
 
 ```yaml
 type: "time_elapsed"
-minutes: 20                     # 至少N分钟
+minutes: 20                     # 必填：至少N分钟
 since_stage_entry: true         # 可选：仅从本阶段开始计时
 ```
+
+当前 T-2.2 状态模型只记录 `stage_entered_at`，因此 `since_stage_entry` 缺失或为
+`true` 时按阶段经过时间计算；显式设置为 `false` 会返回
+`CONDITION_FIELD_INVALID`。在后续状态模型引入会话级起始时间前，不支持会话级计时，
+避免把未建模的时间起点静默解释成其他含义。
 
 #### `real_time_reached`
 是否到达了真实世界的特定时间点。
@@ -202,8 +211,12 @@ time: "2026-07-05T21:00:00+08:00"  # 特定时间
 ```yaml
 type: "submission_correct"
 field: "suspect"                # 提交的字段名
-value: "chengjun"               # 正确值
+value: "chengjun"               # 可选：正确值，缺失时读取answer_key对应字段
 ```
+
+显式 `value` 必须是非 `null` 的 JSON 标量，不能使用列表或对象。
+`value` 缺失时读取 `answer_key` 中的同名字段。尚无最终提交、提交未包含目标字段，
+或隐式模式下 `answer_key` 未包含目标字段时，条件均为 `false`。
 
 #### `submission_incorrect`
 玩家提交的答案是否错误。
@@ -214,12 +227,16 @@ field: "suspect"                # 提交的字段名
 value: "wangdada"               # 错误值（可选，不指定则只要不正确即可）
 ```
 
+提供 `value` 时，仅当提交值等于这个特定错误值时条件成立；不提供 `value` 时，
+提交值与 `answer_key` 中对应字段不相等即成立。尚无最终提交、提交未包含目标字段，
+或隐式模式下 `answer_key` 未包含目标字段时，条件均为 `false`。
+
 #### `key_evidence_used`
 关键证据是否被提交。
 
 ```yaml
 type: "key_evidence_used"
-min_count: 3                    # 至少使用N个关键证据
+min_count: 3                    # 可选：至少使用N个，默认1（支持只写evidence_ids）
 evidence_ids: []                # 可选：指定必须使用的证据
 ```
 
@@ -261,8 +278,8 @@ event_id: "true_final_reveal"
 ```yaml
 type: "session_count"
 counter: "wrong_submissions"    # 计数类型
-min: 2                          # 至少N次
-max: 5                          # 至多N次
+min: 2                          # 可选：至少N次，默认0
+max: 5                          # 可选：至多N次，默认当前计数
 ```
 
 #### `is_first_play`
@@ -277,8 +294,8 @@ type: "is_first_play"
 
 ```yaml
 type: "hint_count_used"
-min: 1                          # 至少使用了N次提示
-max: 3
+min: 1                          # 可选：至少N次，默认0
+max: 3                          # 可选：至多N次，默认当前计数
 ```
 
 ---
@@ -330,7 +347,7 @@ condition:
 
 ```yaml
 type: "count"
-min: 2
+min: 2                         # 必填：至少命中的子条件数
 conditions:
   - type: "character_talked_to"
     character_id: "zhuosiyuan"
@@ -457,7 +474,7 @@ evidence_reactions:
 │                                                          │
 │  2. 深度优先遍历                                          │
 │     ├─ 叶子节点：调用对应评估器                             │
-│     │   例: clues_discovered → 查state.unlocked_clues     │
+│     │   例: clues_discovered → 查state.discovered_clues   │
 │     ├─ 组合节点：递归评估子条件                             │
 │     │   例: all → 全部true = 整体true                      │
 │     └─ 短路优化                                           │
@@ -467,8 +484,8 @@ evidence_reactions:
 │  3. 返回 boolean                                          │
 │                                                          │
 │  4. 结果缓存到 state.condition_cache                      │
-│     ├─ 同一session中重复条件不重复评估                      │
-│     └─ 缓存key = hash(条件树 + 相关state片段)              │
+│     ├─ 同一state快照和options下重复条件不重复评估            │
+│     └─ state快照/options变化时先清理上一轮缓存               │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -497,15 +514,24 @@ DON'T:
 
 ## 7. 条件调试模式
 
-引擎支持条件调试输出：
+引擎通过 Python API 支持条件追踪和测试覆盖：
 
-```yaml
-# 后台测试沙盒开启条件追踪
-debug:
-  condition_tracing: true          # 输出每条条件的评估结果
-  force_conditions:                # 手动覆盖条件结果（测试用）
-    time_elapsed: always_true
+```python
+from engine.core.condition_evaluator import (
+    ConditionEvaluationOptions,
+    evaluate_condition_with_trace,
+    format_condition_trace,
+)
+
+options = ConditionEvaluationOptions(
+    force_conditions={"time_elapsed": "always_true"},
+)
+evaluation = evaluate_condition_with_trace(condition, state, options)
+print(format_condition_trace("stage_exit_check for act1_investigation", evaluation))
 ```
+
+`force_conditions` 仅用于测试和调试。当前尚未实现从剧本 YAML 读取 `debug`、
+`condition_tracing` 或 `force_conditions` 配置；在 YAML 中声明这些字段不会启用调试模式。
 
 输出示例：
 ```

@@ -132,7 +132,7 @@ def leaf_condition_cases() -> tuple[tuple[JsonMapping, bool], ...]:
         ({"type": "real_time_reached", "time": "2026-07-05T22:00:00+08:00"}, False),
         ({"type": "submission_correct", "field": "suspect", "value": "chengjun"}, True),
         ({"type": "submission_correct", "field": "suspect", "value": "wangdada"}, False),
-        ({"type": "submission_incorrect", "field": "suspect", "value": "wangdada"}, True),
+        ({"type": "submission_incorrect", "field": "suspect", "value": "wangdada"}, False),
         ({"type": "submission_incorrect", "field": "suspect"}, False),
         ({"type": "key_evidence_used", "min_count": 3}, True),
         ({"type": "key_evidence_used", "evidence_ids": ["missing_evidence"]}, False),

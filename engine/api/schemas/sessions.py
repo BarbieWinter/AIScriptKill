@@ -1,3 +1,7 @@
+"""定义游戏会话的严格请求与响应模型。"""
+
+from typing import Literal
+
 from pydantic import Field
 
 from engine.api.schemas.common import ActionType, ApiModel, PendingMedia
@@ -6,12 +10,20 @@ from engine.api.schemas.common import ActionType, ApiModel, PendingMedia
 
 
 class CreateSessionRequest(ApiModel):
-    script_id: str = Field(description="Script package ID.")
-    player_name: str = Field(description="Player display name.")
-    preferred_character_id: str = Field(description="Requested player character ID.")
+    """描述用于启动会话的剧本和角色。"""
+
+    script_id: str = Field(min_length=1, max_length=128, description="Script package ID.")
+    player_name: str = Field(min_length=1, max_length=80, description="Player display name.")
+    preferred_character_id: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Requested player character ID.",
+    )
 
 
 class CreateSessionResponse(ApiModel):
+    """返回已创建会话的标识和初始状态。"""
+
     session_id: str = Field(description="Created game session ID.")
     script_id: str = Field(description="Script package ID.")
     status: str = Field(description="Session status.")
@@ -25,6 +37,8 @@ class CreateSessionResponse(ApiModel):
 
 
 class SessionStateResponse(ApiModel):
+    """公开游戏会话当前的客户端可见状态。"""
+
     session_id: str = Field(description="Game session ID.")
     script_id: str = Field(description="Script package ID.")
     status: str = Field(description="Session status.")
@@ -44,11 +58,19 @@ class SessionStateResponse(ApiModel):
 
 
 class UpdateSessionRequest(ApiModel):
-    action: str = Field(description="Session maintenance action.")
-    checkpoint_id: str = Field(description="Checkpoint ID used by restore actions.")
+    """请求从持久化的 LangGraph 检查点恢复。"""
+
+    action: Literal["restore"] = Field(description="Session maintenance action.")
+    checkpoint_id: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Checkpoint ID used by restore actions.",
+    )
 
 
 class UpdateSessionResponse(ApiModel):
+    """返回会话成功恢复后选定的状态。"""
+
     session_id: str = Field(description="Game session ID.")
     status: str = Field(description="Updated session status.")
     current_stage: str = Field(description="Restored current stage.")

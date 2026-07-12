@@ -1,7 +1,8 @@
+"""使用确定性缓存和跟踪记录求值已校验的条件树。"""
+
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import assert_never
 
 from engine.core import condition_trace
 from engine.core.condition_models import (
@@ -18,6 +19,8 @@ from engine.core.package_schema import JsonMapping
 
 @dataclass(frozen=True, slots=True)
 class ConditionEvaluationOptions:
+    """为单次求值配置仅供测试使用的强制条件结果。"""
+
     force_conditions: dict[str, ForceConditionResult] = field(default_factory=dict)
 
 
@@ -26,15 +29,24 @@ def evaluate_condition(
     state: GameState,
     options: ConditionEvaluationOptions | None = None,
 ) -> bool:
+    """使用感知状态的布尔结果缓存求值原始 DSL 树。"""
+
     # DSL §5 运行入口：用当前 GameState 评估原始条件树，并缓存 boolean 结果。
     evaluation_options = options or ConditionEvaluationOptions()
-    cache_key = _condition_cache_key(raw_condition, state, evaluation_options)
-    cached_result = state["condition_cache"].get(cache_key)
+    condition = parse_condition(raw_condition)
+    context_fingerprint = _condition_cache_context_fingerprint(state, evaluation_options)
+    cache_prefix = f"{context_fingerprint}:"
+    cache = state["condition_cache"]
+    if any(not key.startswith(cache_prefix) for key in cache):
+        cache.clear()
+    # 缓存键由“求值器实际读取的状态 + 强制覆盖选项”和“原始条件树”两个 SHA-256
+    # 指纹组成；快照刻意排除 condition_cache 自身，避免写入结果后让同一键立即失效。
+    cache_key = f"{cache_prefix}{_condition_fingerprint(raw_condition)}"
+    cached_result = cache.get(cache_key)
     if cached_result is not None:
         return cached_result
-    condition = parse_condition(raw_condition)
     result = _evaluate(condition, state, evaluation_options).value
-    state["condition_cache"][cache_key] = result
+    cache[cache_key] = result
     return result
 
 
@@ -43,11 +55,15 @@ def evaluate_condition_with_trace(
     state: GameState,
     options: ConditionEvaluationOptions | None = None,
 ) -> ConditionEvaluation:
+    """求值原始 DSL 树并返回完整的未缓存跟踪记录。"""
+
     # DSL §7 调试入口：绕过 boolean 缓存，返回本次遍历生成的完整 trace 树。
     return _evaluate(parse_condition(raw_condition), state, options or ConditionEvaluationOptions())
 
 
 def format_condition_trace(label: str, evaluation: ConditionEvaluation) -> str:
+    """将条件求值渲染为文档约定的调试跟踪文本。"""
+
     return condition_trace.format_condition_trace(label, evaluation)
 
 
@@ -103,8 +119,6 @@ def _evaluate(
         ):
             leaf = evaluate_leaf(condition, state)
             return ConditionEvaluation(value=leaf.value, trace=leaf.to_trace())
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _evaluate_all(
@@ -157,7 +171,9 @@ def _evaluate_count(
     # DSL §3.4 count：累计命中数达到 min 后立即短路返回 true。
     children: list[ConditionTraceNode] = []
     matched_count = 0
-    minimum = condition.integer("min", 1)
+    minimum = condition.required_integer("min")
+    if minimum == 0:
+        return _logic_evaluation(condition.type, True, children, "0 matched")
     for child in condition.conditions:
         child_result = _evaluate(child, state, options)
         children.append(child_result.trace)
@@ -201,18 +217,25 @@ def _forced_result(
             return None
 
 
-def _condition_cache_key(
-    raw_condition: JsonMapping,
+def _condition_cache_context_fingerprint(
     state: GameState,
     options: ConditionEvaluationOptions,
 ) -> str:
-    # DSL §5 缓存键 = hash(条件树 + 相关 GameState 片段)。
-    # sort_keys/separators 生成稳定 JSON，避免同义 mapping 因插入顺序产生不同键。
-    # force_conditions 会改变结果，也必须进入缓存键，防止调试覆盖污染正常评估。
-    payload: JsonMapping = {
-        "condition": raw_condition,
-        "state": state_cache_snapshot(state),
-        "force_conditions": options.force_conditions,
+    force_conditions: JsonMapping = {
+        condition_type: forced_result
+        for condition_type, forced_result in options.force_conditions.items()
     }
+    payload: JsonMapping = {
+        "state": state_cache_snapshot(state),
+        "force_conditions": force_conditions,
+    }
+    return _stable_json_fingerprint(payload)
+
+
+def _condition_fingerprint(raw_condition: JsonMapping) -> str:
+    return _stable_json_fingerprint(raw_condition)
+
+
+def _stable_json_fingerprint(payload: JsonMapping) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

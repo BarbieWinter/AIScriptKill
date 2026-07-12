@@ -334,7 +334,9 @@ Phase 1: 地基         Phase 2: 引擎核心      Phase 3: 前端核心
       所有API_REFERENCE.md 2.2节的操作类型
   - websocket/handler.py:
       引擎事件 → WebSocket推送(3.2节所有事件类型)
-      per-session操作队列(串行化,防并发状态冲突)
+      per-session操作队列(跨API进程串行化,防并发状态冲突)
+      阻断项: REST接线前必须用共享队列、数据库锁或等价机制保证同一session只有一个动作写入者;
+              进程内asyncio.Lock和checkpoint saver锁均不满足该要求
   - services/session_service.py: 会话生命周期管理
   - services/scoring_service.py: 
       最终提交评分(读取endings.yml规则+关键证据命中率)
@@ -343,6 +345,7 @@ Phase 1: 地基         Phase 2: 引擎核心      Phase 3: 前端核心
   - Postman/httpx脚本全流程跑通(创建→行动→对话→提交→复盘)
   - WebSocket事件推送与REST响应数据一致
   - 并发发送10个操作,全部按序执行,状态无冲突
+  - 至少两个API进程同时提交同一session操作时仍严格串行,不存在分支覆盖或丢失更新
 
 注释要求:
   - 每个操作类型的处理管线注释数据流向

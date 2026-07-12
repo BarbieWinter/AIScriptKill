@@ -12,6 +12,8 @@
 - `DATABASE_POOLER_URL`，可选，存在时运行期优先使用。
 - `CORS_ORIGINS`，默认本地前端 origins。
 - `RATE_LIMIT_PER_MINUTE`，默认 120。
+- `SUPABASE_JWT_AUDIENCE`，默认 `authenticated`。
+- `SUPABASE_STORAGE_BUCKET`，默认 `script-assets`，后端会强制 bucket 为私有。
 
 当前注意点：后端运行期读取项目根目录 `.env` 和系统环境变量；`.env.example` 只作为模板，不应提交真实 Supabase/database 密钥。浏览器代码必须使用 FastAPI `/api/v1` 表面，而不是直接访问数据库。
 
@@ -30,23 +32,38 @@
 - `007_schema_comments.sql`：为 Phase 1 表、字段和 RLS policy 补充注释。
 - `008_package_import_resolution_tables.sql`：`script_endings` 和仅 service-role 可访问的 `script_dm_guides`。
 - `009_restrict_package_private_tables.sql`：显式撤销 anon/authenticated 对 `script_endings` 和 `script_dm_guides` 的全部直接权限。
+- `20260711073629_fastapi_data_access_boundary.sql`：撤销 anon/authenticated 对剧本内容、
+  RAG 知识和运行时表的直接权限，统一通过 FastAPI 字段投影访问。
+- `20260711105015_checkpoint_idempotency.sql`：清理历史重试产生的重复 checkpoint，并为 `(session_id, thread_ts)` 建立唯一索引。
+- `20260711143000_checkpoint_pending_writes.sql`：为 LangGraph pending writes 建立独立、
+  service-role-only 的幂等表。
 
 `supabase/seed/dev_seed.sql` 提供最小雪乡验收数据，包括已发布剧本包、阶段、角色、场景、线索、证物、媒体和一条 pgvector 知识分块。
 
-剧本包素材上传使用 `engine/core/package_storage.py` 中的 Supabase Storage 客户端。它通过 `engine/api/config.py` 的 Supabase secret key 和 storage bucket 配置创建/使用 bucket，并返回 public URL；真实部署时要确认 bucket 公开策略、缓存策略和素材访问边界符合产品需求。
+剧本包素材上传使用 `engine/core/package_storage.py` 中的 Supabase Storage 客户端。它通过
+Supabase secret key 创建或修正私有 bucket，并只返回 `storage://<bucket>/<object>` 定位符。
+不要把该定位符当作浏览器 URL；T-2.6 应在鉴权和会话可见性检查后生成短期签名 URL 或
+由 FastAPI 代理下载。
 
 `engine/db/tables.py` 为 SQLAlchemy Core 查询镜像了大多数 public 表。修改 schema 时，保持迁移和表元数据一致。
 
+`SupabaseSessionCheckpointSaver` 把 checkpoint/metadata 编码在 `session_checkpoints.state`，
+并把 pending writes 独立写入 `session_checkpoint_writes`。后者允许 write-before-checkpoint，
+用复合主键保证多 saver/多进程重试幂等。每个写操作自己 `commit()`；调用方必须提供专用
+`AsyncSession`，不得复用业务请求事务。恢复时会合并规范化 writes 与旧内嵌 writes。
+
 ## RLS 和权限
 
-RLS 是防剧透控制的核心。当前策略设计包括：
+当前防剧透边界是 FastAPI 授权和字段投影，RLS 作为纵深防御而不是浏览器查询接口：
 
-- `service_role` 对剧本和运行期表有完整访问权。
-- 通过 `006_api_role_privileges.sql` 让 anon/authenticated 用户可见已发布剧本包。
-- 认证玩家可以访问自己的会话和相关运行期数据。
-- 线索/证据/场景可见性可以依赖当前阶段和玩家角色 setting。
-- `script_endings` 和 `script_dm_guides` 只授权 service-role 访问，避免结局条件和 DM 真相资料绕过后端泄露。
-- `script_knowledge` 明确不打算让玩家直接查询；RAG 应在服务端查询，并强制应用阶段/角色上下文。
+- `service_role` 和后端数据库角色对剧本、RAG 和运行期表拥有服务端访问权。
+- `004_rls_policies.sql` 与 `006_api_role_privileges.sql` 保留了早期的直接访问设计历史；
+  `20260711073629_fastapi_data_access_boundary.sql` 已撤销 anon/authenticated 对所有剧本内容、
+  catalogue、RAG 和运行期表的权限，并删除对应 player/public policies。
+- 浏览器只能调用 FastAPI。已发布剧本目录由 API 返回受控字段，线索、证据、场景和会话
+  数据由服务层结合当前阶段、角色和发现状态过滤。
+- `script_endings`、`script_dm_guides` 和 `script_knowledge` 只能由服务端读取，避免结局、
+  DM 真相和未授权 RAG 内容绕过应用层泄露。
 
 应用层行为仍需仔细审查。后端匿名会话目前使用 `player_id = NULL`，只要 UUID 已知，服务层访问检查就会允许访问。
 
@@ -61,6 +78,8 @@ README 和根目录 `Makefile` 提供常用命令入口。
 ```bash
 make dev-api
 make test
+make test-checkpoint-recovery
+make verify-dev-tools
 ```
 
 前端：
@@ -85,7 +104,11 @@ npm --prefix apps/web run lint
 - `pytest-asyncio` 模式：auto。
 - Ruff 目标：Python 3.12，行宽 100，启用 lint families `E`、`F`、`I`、`N`、`W`。
 
-当前 `engine/tests` 包含 `engine/tests/test_admin_auth.py` 中针对剧本包导入/状态管理的管理员授权测试，`engine/tests/test_package_loader.py` 和 `engine/tests/package_loader_fixtures.py` 中的剧本包 loader 测试，`engine/tests/test_package_importer.py` 中的剧本包入库语句流测试，`engine/tests/test_condition_evaluator.py` 和 `engine/tests/condition_evaluator_fixtures.py` 中的条件 DSL evaluator 测试，以及 `engine/tests/test_script_engine.py`、`engine/tests/test_checkpoint.py` 中的 core StateGraph/checkpoint 测试。loader 覆盖最小包、目录入口、manifest-to-stage 引用、阶段角色/线索轮次引用、重复线索 id、action object 归一化、事件动作校验、证据 NPC 引用、本地素材缺失和角色阶段知识 warning。importer 覆盖素材 URL 重写、`endings` 写入、`dm_guide` 私密写入、公开 package config 不含 DM 资料和重复导入删除重建。condition evaluator 覆盖所有已实现叶子条件、`all/any/not/count/always/never`、短路 trace、五层嵌套、缓存键、debug force 和 100 条件性能约束。StateGraph 测试覆盖阶段推进、结局触发、事件调用序列、checkpoint 恢复和禁止跳跃。目前仍没有对 REST action endpoint 接入 core 引擎、真实会话持久化或真实 RLS 数据库查询的广泛后端覆盖。
+当前 `engine/tests` 包含 API 契约/请求体/JWT/WebSocket 边界、数据库权限迁移、严格剧本
+包解析与导入、完整条件 DSL、StateGraph 迁移/事件/动作，以及 checkpoint codec、并发 saver、
+write-before-checkpoint 和真实 PostgreSQL `SIGKILL` 恢复测试。进程测试默认独立运行，使用
+`AISCRIPTKILL_PROCESS_RECOVERY_DB_URL` 或本地 Supabase URL。REST action endpoint 仍未接入
+core StateGraph；该 API 级集成与并发会话队列属于 T-2.6。
 
 前端 scripts 包含 build 和 lint 命令，但 `apps/web/package.json` 中没有配置明确的测试 runner。
 
@@ -93,8 +116,8 @@ npm --prefix apps/web run lint
 
 - 剧本包导入到数据库的替换行为和 warnings 持久化/暴露策略。
 - 基于已导入剧本包 fixtures 创建会话，并让 REST action endpoint 调用 core StateGraph。
-- 真实数据库上的 `session_checkpoints` 写入/恢复，以及进程重启后的继续游戏路径。
-- 如果测试可连接 Supabase/Postgres，则覆盖 RLS 敏感查询行为。
+- T-2.6 接线后的 REST 动作到 StateGraph/检查点全链路，以及 API 进程重启恢复。
+- 保持本地 Supabase 的 anon/authenticated 拒绝探针，防止后续迁移意外恢复直接表权限。
 - Mock/真实边界和会话创建相关的前端路由行为。
 
 ## 运维注意事项
@@ -102,4 +125,4 @@ npm --prefix apps/web run lint
 - `.env.example` 是安全模板；真实凭据只放 `.env` 或部署环境。
 - Docker Compose 引用的 Dockerfile 已存在。
 - 后端健康检查要求存在 `script_knowledge`；使用 `/health/db` 前确保已应用向量迁移。
-- 直接表访问和后端 API 访问使用不同安全模型。保持 RLS、service-role 使用和应用层检查同步。
+- 浏览器表访问应始终被拒绝；保持 RLS、角色 grants、service-role 使用和 FastAPI 应用层检查同步。

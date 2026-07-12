@@ -1,3 +1,5 @@
+"""将持久化 JSON 值解码为严格的游戏状态模型。"""
+
 from collections.abc import Mapping
 
 from engine.api.schemas.common import JsonValue
@@ -19,6 +21,8 @@ from engine.core.game_state import (
 
 
 def game_state_from_mapping(raw: Mapping[str, JsonValue]) -> GameState:
+    """重建完整 GameState，同时规范化格式错误的可选字段。"""
+
     state = create_initial_state(
         session_id=_text(raw, "session_id"),
         script_id=_text(raw, "script_id"),
@@ -242,7 +246,7 @@ def _player_action_input(value: JsonValue | None) -> PlayerActionInput | None:
                 target=target if isinstance(target, str) else None,
                 text=text if isinstance(text, str) else None,
             )
-        case str() | int() | float() | bool() | list() | dict() | None:
+        case _:
             return None
 
 

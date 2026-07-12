@@ -22,7 +22,7 @@ script-packages/
 │   │   ├── rounds/                  #   公共线索按轮次
 │   │   │   ├── <round-id>.yml
 │   │   │   └── ...
-│   │   └── personal/                #   个人线索
+│   │   └── personal/                #   保留目录；T-4.2 定义并启用个人线索文件格式
 │   │       └── <character-id>.yml
 │   ├── evidences/                   # ○ 可选：证物定义
 │   │   ├── <evidence-id>.yml
@@ -44,6 +44,8 @@ script-packages/
 ```
 
 > ★ = 必须  ○ = 可选，但推荐
+
+> `clues/personal/` 当前仅保留目录名，不属于 T-2.1 导入契约。个人线索的文件结构、可见性与角色绑定规则将在 T-4.2 内容生产导入阶段定义；在该阶段前，加载器会拒绝该目录内的文件，也不应自行推断文件格式。
 
 ---
 
@@ -168,6 +170,15 @@ acts:
     stages: ["act3_online", "true_final", "epilogue"]
 ```
 
+`stages/_index.yml` 是阶段顺序、展示名和 act 归属的唯一权威来源。索引中的 stage
+必须有同 ID 的 YAML 文件，所有 stage YAML 也必须在索引中声明；重复 ID、悬空 act
+引用、一个 stage 同属多个 act，或 stage 文件中的 `act_id` 与索引冲突都会拒绝导入。
+离开某个 act 最后列出的 stage 后，该 act 才会写入 `completed_acts`。
+
+目标阶段的 `entry_conditions` 会在候选状态上评估：来源阶段及其完成的 act 已可被
+`stage_completed` / `act_completed` 观察，但只有入口条件全部满足后才真正提交完成状态并
+执行来源阶段退出事件；入口失败时来源阶段仍保持活动状态。
+
 ---
 
 ## 4. stages/<stage-id>.yml — 单阶段定义
@@ -183,6 +194,15 @@ sort_order: 20
 
 # ○ 可选：属于某个幕/本
 act_id: "book1"
+
+# ○ 可选：显式允许从本阶段跳转到这些目标
+allowed_transitions: ["act1_event"]
+
+# ○ 可选：默认 false；允许跳过中间阶段向前跳转
+allow_stage_jump: false
+
+# ○ 可选：默认 false；允许向更早阶段回退
+allow_stage_regression: false
 
 # ★ 必须：进入条件（玩家如何到达此阶段）
 entry_conditions:
@@ -231,16 +251,16 @@ available_actions:
     label: "请求推进"
     description: "询问DM是否可以进入下一阶段"
 
-# ★ 必须：本阶段开放的场景
+# ○ 可选：本阶段开放的场景；缺省为空列表
 available_scenes:
   - "crime_scene"                     # 案发现场
   - "village_square"                  # 村口广场
 
-# ★ 必须：本阶段开放的线索轮次
+# ○ 可选：本阶段开放的线索轮次；缺省为空列表
 available_clue_rounds:
   - "act1_round1"                     # 第一轮公共线索
 
-# ★ 必须：本阶段可对话的角色
+# ○ 可选：本阶段可对话的角色；缺省为空列表
 available_characters:
   - "zhuosiyuan"
   - "cuikaiqiang"
@@ -249,7 +269,7 @@ available_characters:
   - "xiaomeng"
   - "chenji"
 
-# ★ 必须：进入本阶段时触发的事件
+# ○ 可选：进入本阶段时触发的事件；缺省为空列表
 on_stage_entry:
   - action: "dm_narrate"
     text: >
@@ -279,9 +299,9 @@ on_stage_exit:
 
 # ○ 可选：本阶段的媒体触发器
 media_triggers:
-  - event: "clue_discovered"
-    clue_id: "bloody_footprint"
-    then:
+  - event: "clue_discovered"         # 当前唯一支持的触发事件
+    clue_id: "bloody_footprint"       # ★ 必须：已声明的线索 ID
+    then:                              # ★ 必须：至少一个合法事件动作
       - action: "play_audio"
         asset_id: "sfx_discovery"
       - action: "npc_emotion"
@@ -332,24 +352,28 @@ npc_rules:
   trust_decay_per_turn: 2            # 每轮不对话信任自然衰减
 ```
 
+`characters/_index.yml` 必须存在且至少声明一个角色。索引与角色 YAML 按 ID 必须完全
+一一对应；索引多项、文件多项或重复 ID 都会在入库前失败。
+
 ---
 
 ## 6. characters/<character-id>.yml — 单角色定义
 
 ```yaml
 # script-packages/snow-village/characters/wangdada.yml
-# ★ 必须：角色信息
+# ★ 必须：角色 id 和名称
 id: "wangdada"
 name: "王大达"
+# ○ 可选：角色头像
 portrait: "assets/portraits/wangdada.jpg"
 
-# ★ 必须：身份定义
+# ○ 可选：身份定义；缺省为空对象
 identity:
   public: "热情好客的饭店老板"        # 角色卡显示的公众形象
   hidden: "连环杀人案嫌疑人之一"      # 需玩家推理得出的真相
   ultimate_truth: "他不是凶手，但他在掩护真正的凶手"  # 最终真相
 
-# ★ 必须：基础属性
+# ○ 可选：基础属性；缺省为空对象
 attributes:
   age: 45
   gender: "male"
@@ -399,7 +423,7 @@ knowledge:
       - "凶手动机"
       - "另一名受害者的关联"
 
-# ★ 必须：面对证物的反应
+# ○ 可选：面对证物的反应；缺省为空列表
 evidence_reactions:
   - evidence_id: "bloody_knife"
     stage_visible: "act1_investigation"
@@ -440,11 +464,12 @@ dialogue_strategy:
 # 线索轮次定义
 round_id: "act1_round1"
 name: "第一幕第一轮搜证"
-stage_visible: "act1_investigation"    # 在哪个stage开放
+stage_visible: "act1_investigation"    # 轮次归属阶段；不替代 clue.stage_visible
 
 clues:
   - id: "bloody_footprint"
     name: "带血脚印"
+    stage_visible: "act1_investigation" # ★ 必须：线索自身的首次可见阶段
     image: "assets/clues/1.jpg"        # 原始线索图
     description: >
       雪地上有一串带血的脚印，从村口饭店方向
@@ -456,6 +481,7 @@ clues:
 
   - id: "broken_glass"
     name: "碎玻璃碴"
+    stage_visible: "act1_investigation" # ★ 必须：即使与轮次相同也要显式声明
     image: "assets/clues/2.jpg"
     description: >
       饭店后门地上有破碎的玻璃杯，
@@ -545,7 +571,7 @@ discovery:
   hotspot_id: "back_door"
   stage_visible: "act1_investigation"
 
-# ★ 必须：交互规则
+# ○ 可选：交互规则；缺省为空对象
 interactions:
   can_show_to_npc: true                # 是否能出示给NPC
   can_combine: true                    # 是否能与其他证物组合
@@ -732,25 +758,30 @@ stage_notes:
 
 performance:
   dm_split_personality:
-    phase_1: "李白（正常DM）"
+    phase_1:
+      character: "李白（正常DM）"
       actor: "DM1"
       traits: ["热情", "专业", "稍微有点话痨"]
     
-    phase_2: "王大达（DM扮演）"
+    phase_2:
+      character: "王大达（DM扮演）"
       actor: "DM2"
       traits: ["谄媚", "碎嘴", "东北口音"]
       pre_broadcast: "正常的饭店老板"
       post_broadcast: "恐惧但强装镇定"
     
-    phase_3: "王小达（戴面具）"
+    phase_3:
+      character: "王小达（戴面具）"
       actor: "DM2"
       traits: ["神秘", "压低声音说话"]
     
-    phase_4: "崔鹏（假复盘）"
+    phase_4:
+      character: "崔鹏（假复盘）"
       actor: "DM2"
       traits: ["专业", "泰然自若", "套话"]
     
-    phase_5: "程俊（真身）"
+    phase_5:
+      character: "程俊（真身）"
       actor: "DM2"
       traits: ["阴森", "变态", "控制狂", "享受玩家的恐惧"]
 
@@ -839,6 +870,13 @@ endings:
 
 ## 13. Schema验证规则（引擎侧）
 
+导入器对已经建模的 YAML object（包括 `dm_guide/` 的三个支持文件）使用 `extra="forbid"`，未知字段会被拒绝而不是被忽略。条件、事件、热点和规则载荷仍以 JSON object 原样保留，但它们的列表项类型、动作名和已实现引用会在导入边界继续校验；尚未建模的个人线索格式不在当前导入范围内。
+
+下面的 `validation_rules` 是本规范对引擎行为的说明清单，不是 `package.yml` 中允许的
+字段，不能复制进剧本包。实际导入还执行这些边界：ZIP 最多 2048 个文件、单文件
+64 MiB、总展开 512 MiB、压缩比 200；单个 YAML 最多 1 MiB、深度 64、节点 50000，
+并拒绝 alias、重复成员、路径穿越、符号链接和非普通文件。
+
 ```yaml
 # 引擎在 import 时自动验证以下规则
 validation_rules:
@@ -850,11 +888,15 @@ validation_rules:
   
   stage:
     required_fields: ["id", "name", "entry_conditions", "exit_conditions", "available_actions"]
+    index_file_parity: true                # stages/_index.yml 与 stage YAML 必须一一对应
+    transition_policy_valid: true          # 默认仅允许相邻前进；显式配置才可跳跃/回退
     condition_references_valid: true       # 检查引用的stage_id/clue_id/char_id是否存在
     event_actions_valid: true              # 检查action名称是否引擎支持
+    event_payloads_valid: true             # 按 action 校验必需字段、类型和实体引用
   
   character:
     required_fields: ["id", "name", "personality.summary", "knowledge"]
+    index_file_parity: true                # characters/_index.yml 与角色 YAML 必须一一对应
     stage_knowledge_coverage:              # 检查每个stage是否都有知识定义
       warn_if_missing: true
   
@@ -864,7 +906,12 @@ validation_rules:
   
   evidence:
     required_fields: ["id", "name", "description.surface", "discovery.scene_id"]
+    allowed_types: ["key_evidence", "evidence", "prop", "skill_card"]
     npc_reactions_valid: true              # 检查引用的character_id是否存在
+
+  scene:
+    required_fields: ["id", "name", "visual", "available_in_stages"]
+    stage_references_valid: true
 ```
 
 ---

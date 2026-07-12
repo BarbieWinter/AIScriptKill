@@ -86,9 +86,11 @@ loose package directory
 
 - 线索和证据通过 `session_discoveries` join，所以这些端点只返回已发现行。
 - 角色和卡牌查询使用当前会话状态加已存储的剧本包数据。
-- `session_context.py` 在可见性敏感查询前设置当前阶段和玩家角色的 Postgres session settings，与 `supabase/migrations/004_rls_policies.sql` 中的 RLS 设计匹配。
+- `session_context.py` 仍会为查询设置当前阶段和玩家角色上下文，但玩家授权由 FastAPI
+  服务层执行，不能把这些 session settings 当成浏览器直接访问凭据。
 
-RLS 策略保护认证用户的直接表访问，但引入 service-role 访问、匿名会话或新查询端点时，仍需仔细审查后端服务本身。
+`20260711073629_fastapi_data_access_boundary.sql` 已撤销 anon/authenticated 的直接表权限。
+新增 service-role 查询、匿名会话或 API 端点时，必须在服务层继续执行会话归属和内容可见性检查。
 
 ## 需要关注的工作流缺口
 

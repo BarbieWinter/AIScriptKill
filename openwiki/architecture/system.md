@@ -92,18 +92,29 @@ Supabase/Postgres schema 位于 `supabase/migrations/`：
 - `004_rls_policies.sql`：service role、认证玩家访问、阶段/角色可见性的 RLS 策略。
 - `005_runtime_persistence_indexes.sql`：会话、剧本包、提交、复盘、检查点、卡牌/证据查询索引。
 - `006_api_role_privileges.sql`：授权和公开已发布剧本包策略。
+- `007_schema_comments.sql` 至 `009_restrict_package_private_tables.sql`：schema 注释、结局/DM
+  导入表和私有内容权限收紧。
+- `20260711073629_fastapi_data_access_boundary.sql`：撤销 anon/authenticated 的直接表权限，
+  把玩家数据访问统一收口到 FastAPI。
+- `20260711105015_checkpoint_idempotency.sql` 与
+  `20260711143000_checkpoint_pending_writes.sql`：checkpoint 幂等索引和规范化 pending writes。
 
 `engine/db/session.py` 创建异步 SQLAlchemy engine，优先使用 `DATABASE_POOLER_URL`，其次使用 `DATABASE_URL`，并要求 SSL。
 
 ### AI、RAG、媒体和 LangGraph
 
-仓库命名和文档指向 LangGraph、DM/NPC/Guard/Hint agent、RAG 检索和媒体编排。当前源码尚未把这些接入玩法；条件 DSL 核心评估器已实现，但还未接入阶段推进。代表性的骨架文件包括 `engine/agents/*.py`、`engine/rag/*.py`、`engine/media/orchestrator.py`、`engine/core/script_engine.py` 和 `engine/services/scoring_service.py`。
+LangGraph StateGraph、条件 DSL、checkpoint 和 RAG 后端已经有独立核心实现与测试，但 REST
+动作路由尚未接入 StateGraph。DM/NPC/Guard/Hint agent 和媒体编排仍主要是后续阶段边界。
+相关模块包括 `engine/core/script_engine.py`、`engine/core/checkpoint.py`、`engine/rag/*.py`、
+`engine/agents/*.py`、`engine/media/orchestrator.py` 和 `engine/services/scoring_service.py`。
 
 添加这些功能时，不要假设文档化架构已经生效。应从真实 route/service/repository 流程出发，谨慎引入集成点。
 
 ## 重要横切约束
 
-- 防剧透是核心产品要求。RLS 策略和 `stage_visible`、`visibility`、`character_id` 等剧本包元数据字段用于防止过早泄露，但应用层行为仍不完整。
+- 防剧透是核心产品要求。浏览器角色没有剧本内容和运行期表权限；FastAPI 根据
+  `stage_visible`、`visibility`、`character_id` 等元数据执行字段投影和可见性检查，RLS
+  保留为纵深防御。
 - 后端目前允许 `player_id = NULL` 的匿名会话；只要知道 UUID，`session_service._assert_session_access` 就允许访问这些会话。
 - 前端和后端都知道 API 契约，但活跃玩法仍然以 Mock 为先。
 - 现有文档可能描述的是预期验收标准，而不是当前行为。发生冲突时以源码为准。

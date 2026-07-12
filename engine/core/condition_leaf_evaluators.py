@@ -1,9 +1,12 @@
+"""求值条件 DSL 定义的叶子运算符。"""
+
 from dataclasses import dataclass
 
 from engine.core.condition_leaf_helpers import (
     clues_label,
     compare_state_value,
     count_matches,
+    json_scalar_equal,
     matching_clues,
     optional_label,
     parse_time,
@@ -16,21 +19,29 @@ from engine.core.game_state import GameState
 
 @dataclass(frozen=True, slots=True)
 class LeafEvaluation:
+    """携带叶子结果及调试跟踪使用的观测值。"""
+
     value: bool
     label: str
     detail: str | None = None
 
     def to_trace(self) -> ConditionTraceNode:
+        """将叶子结果转换为公开的条件跟踪结构。"""
+
         return ConditionTraceNode(label=self.label, value=self.value, detail=self.detail)
 
 
 def stage_completed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.1 节求值 `stage_completed`。"""
+
     # DSL §2.1 游戏进度条件。
     stage_id = condition.required_text("stage_id")
     return LeafEvaluation(stage_id in state["completed_stages"], f"stage_completed({stage_id})")
 
 
 def stage_reached(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.1 节求值 `stage_reached`。"""
+
     # DSL §2.1 游戏进度条件。
     stage_id = condition.required_text("stage_id")
     reached = stage_id == state["current_stage"] or stage_id in state["completed_stages"]
@@ -38,12 +49,16 @@ def stage_reached(condition: ConditionNode, state: GameState) -> LeafEvaluation:
 
 
 def act_completed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.1 节求值 `act_completed`。"""
+
     # DSL §2.1 游戏进度条件。
     act_id = condition.required_text("act_id")
     return LeafEvaluation(act_id in state["completed_acts"], f"act_completed({act_id})")
 
 
 def clues_discovered(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.2 节求值 `clues_discovered`。"""
+
     # DSL §2.2 线索和证物条件。
     clues = matching_clues(condition, state)
     count = len(clues)
@@ -57,12 +72,17 @@ def clues_discovered(condition: ConditionNode, state: GameState) -> LeafEvaluati
 
 
 def clue_discovered(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.2 节求值 `clue_discovered`。"""
+
     # DSL §2.2 线索和证物条件。
     clue_id = condition.required_text("clue_id")
-    return LeafEvaluation(clue_id in state["unlocked_clues"], f"clue_discovered({clue_id})")
+    discovered = any(clue["clue_id"] == clue_id for clue in state["discovered_clues"])
+    return LeafEvaluation(discovered, f"clue_discovered({clue_id})")
 
 
 def evidence_found(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.2 节求值 `evidence_found`。"""
+
     # DSL §2.2 线索和证物条件。
     evidence_id = condition.required_text("evidence_id")
     return LeafEvaluation(
@@ -72,6 +92,8 @@ def evidence_found(condition: ConditionNode, state: GameState) -> LeafEvaluation
 
 
 def evidence_shown_to_npc(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.2 节求值 `evidence_shown_to_npc`。"""
+
     # DSL §2.2 线索和证物条件。
     evidence_id = condition.required_text("evidence_id")
     character_id = condition.required_text("character_id")
@@ -83,6 +105,8 @@ def evidence_shown_to_npc(condition: ConditionNode, state: GameState) -> LeafEva
 
 
 def character_talked_to(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.3 节求值 `character_talked_to`。"""
+
     # DSL §2.3 对话交互条件。
     character_id = condition.required_text("character_id")
     count = state["character_dialog_counts"].get(character_id, 0)
@@ -95,12 +119,16 @@ def character_talked_to(condition: ConditionNode, state: GameState) -> LeafEvalu
 
 
 def dialog_triggered(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.3 节求值 `dialog_triggered`。"""
+
     # DSL §2.3 对话交互条件。
     dialog_id = condition.required_text("dialog_id")
     return LeafEvaluation(dialog_id in state["triggered_dialogs"], f"dialog_triggered({dialog_id})")
 
 
 def player_said_keyword(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.3 节求值 `player_said_keyword`。"""
+
     # DSL §2.3 对话交互条件。
     keyword = condition.required_text("keyword")
     case_sensitive = condition.boolean("case_sensitive")
@@ -113,19 +141,24 @@ def player_said_keyword(condition: ConditionNode, state: GameState) -> LeafEvalu
 
 
 def npc_state_reached(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.3 节求值 `npc_state_reached`。"""
+
     # DSL §2.3 对话交互条件。
     character_id = condition.required_text("character_id")
     state_name = condition.required_text("state")
-    value = state["npc_states"].get(character_id, {}).get(state_name)
+    comparison = condition.text("comparison") or "gte"
     threshold = condition.integer("threshold", 0)
-    matched = compare_state_value(value, threshold, condition.text("comparison") or "gte")
+    value = state["npc_states"].get(character_id, {}).get(state_name)
+    matched = compare_state_value(value, threshold, comparison)
     return LeafEvaluation(matched, f"npc_state_reached({character_id}, {state_name})")
 
 
 def player_action_performed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.4 节求值 `player_action_performed`。"""
+
     # DSL §2.4 玩家行为条件。
     action_id = condition.required_text("action_id")
-    target = condition.text("target")
+    target = condition.text("target", allow_none=True)
     matched = any(
         action["action_id"] == action_id and (target is None or action["target"] == target)
         for action in state["performed_actions"]
@@ -134,6 +167,8 @@ def player_action_performed(condition: ConditionNode, state: GameState) -> LeafE
 
 
 def player_requested(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.4 节求值 `player_requested`。"""
+
     # DSL §2.4 玩家行为条件。
     dialog_id = condition.text("dialog_id")
     if dialog_id is None:
@@ -144,6 +179,8 @@ def player_requested(condition: ConditionNode, state: GameState) -> LeafEvaluati
 
 
 def player_used_card(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.4 节求值 `player_used_card`。"""
+
     # DSL §2.4 玩家行为条件。
     card_id = condition.text("card_id")
     card_type = condition.text("card_type")
@@ -156,8 +193,10 @@ def player_used_card(condition: ConditionNode, state: GameState) -> LeafEvaluati
 
 
 def time_elapsed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
-    # DSL §2.5 时间条件。
-    minutes = condition.integer("minutes")
+    """按照 DSL 参考文档 2.5 节求值 `time_elapsed`。"""
+
+    # DSL §2.5：当前 GameState 只建模阶段进入时间，不能把 false 猜测为会话起点。
+    minutes = condition.required_integer("minutes")
     elapsed = int(
         (parse_time(state["current_time"]) - parse_time(state["stage_entered_at"])).total_seconds()
         // 60,
@@ -170,6 +209,8 @@ def time_elapsed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
 
 
 def real_time_reached(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.5 节求值 `real_time_reached`。"""
+
     # DSL §2.5 时间条件。
     target_time = condition.required_text("time")
     reached = parse_time(state["current_time"]) >= parse_time(target_time)
@@ -177,22 +218,47 @@ def real_time_reached(condition: ConditionNode, state: GameState) -> LeafEvaluat
 
 
 def submission_correct(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.6 节求值 `submission_correct`。"""
+
     # DSL §2.6 提交答案条件。
     field = condition.required_text("field")
-    expected = condition.parameters.get("value", state["answer_key"].get(field))
-    submission = state["final_submission"] or {}
-    return LeafEvaluation(submission.get(field) == expected, f"submission_correct({field})")
+    has_explicit_value = "value" in condition.parameters
+    explicit_value = condition.required_scalar("value") if has_explicit_value else None
+    submission = state["final_submission"]
+    if submission is None or field not in submission:
+        return LeafEvaluation(False, f"submission_correct({field})")
+    if not has_explicit_value and field not in state["answer_key"]:
+        return LeafEvaluation(False, f"submission_correct({field})")
+    expected = explicit_value if has_explicit_value else state["answer_key"][field]
+    return LeafEvaluation(
+        json_scalar_equal(submission[field], expected),
+        f"submission_correct({field})",
+    )
 
 
 def submission_incorrect(condition: ConditionNode, state: GameState) -> LeafEvaluation:
-    # DSL §2.6 提交答案条件。
+    """按照 DSL 参考文档 2.6 节求值 `submission_incorrect`。"""
+
+    # DSL §2.6：显式 value 是要命中的特定错误值；缺失时才对照标准答案。
     field = condition.required_text("field")
-    expected = condition.parameters.get("value", state["answer_key"].get(field))
-    submission = state["final_submission"] or {}
-    return LeafEvaluation(submission.get(field) != expected, f"submission_incorrect({field})")
+    has_explicit_value = "value" in condition.parameters
+    explicit_value = condition.required_scalar("value") if has_explicit_value else None
+    submission = state["final_submission"]
+    if submission is None or field not in submission:
+        return LeafEvaluation(False, f"submission_incorrect({field})")
+    submitted_value = submission[field]
+    if has_explicit_value:
+        is_incorrect = json_scalar_equal(submitted_value, explicit_value)
+    elif field not in state["answer_key"]:
+        is_incorrect = False
+    else:
+        is_incorrect = not json_scalar_equal(submitted_value, state["answer_key"][field])
+    return LeafEvaluation(is_incorrect, f"submission_incorrect({field})")
 
 
 def key_evidence_used(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.6 节求值 `key_evidence_used`。"""
+
     # DSL §2.6 提交答案条件。
     submission = state["final_submission"] or {}
     submitted_ids = submitted_key_evidence_ids(submission.get("key_evidences"))
@@ -203,6 +269,8 @@ def key_evidence_used(condition: ConditionNode, state: GameState) -> LeafEvaluat
 
 
 def deduction_chain_complete(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.6 节求值 `deduction_chain_complete`。"""
+
     # DSL §2.6 提交答案条件。
     chain_id = condition.required_text("chain_id")
     return LeafEvaluation(
@@ -212,12 +280,16 @@ def deduction_chain_complete(condition: ConditionNode, state: GameState) -> Leaf
 
 
 def event_triggered(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.7 节求值 `event_triggered`。"""
+
     # DSL §2.7 事件触发条件。
     event_id = condition.required_text("event_id")
     return LeafEvaluation(event_id in state["completed_events"], f"event_triggered({event_id})")
 
 
 def event_not_triggered(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.7 节求值 `event_not_triggered`。"""
+
     # DSL §2.7 事件触发条件。
     event_id = condition.required_text("event_id")
     return LeafEvaluation(
@@ -227,6 +299,8 @@ def event_not_triggered(condition: ConditionNode, state: GameState) -> LeafEvalu
 
 
 def session_count(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.8 节求值 `session_count`。"""
+
     # DSL §2.8 全局状态条件。
     counter = condition.required_text("counter")
     count = state["session_counters"].get(counter, 0)
@@ -237,6 +311,8 @@ def session_count(condition: ConditionNode, state: GameState) -> LeafEvaluation:
 
 
 def hint_count_used(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """按照 DSL 参考文档 2.8 节求值 `hint_count_used`。"""
+
     # DSL §2.8 全局状态条件。
     count = state["hint_count"]
     return LeafEvaluation(

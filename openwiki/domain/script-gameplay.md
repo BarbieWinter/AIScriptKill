@@ -64,13 +64,17 @@ AI 不应：
 - 线索是调查事实，存储在 `script_clues`，通过 `session_discoveries` 中的 `entity_type='clue'` 解锁。
 - 证据是道具、关键证据、技能卡或普通证据，存储在 `script_evidences`，发现后同样在 discoveries 中跟踪。
 
-RLS 和查询代码使用阶段可见性、角色可见性等元数据来防剧透。当前后端动作逻辑只会在 `examine_scene` 时解锁固定的 `broken_glass` 线索。
+FastAPI 查询代码使用阶段可见性、角色可见性等元数据防剧透；anon/authenticated 不能直接
+读取底层剧本和运行期表。当前 REST 动作仍未接入 core StateGraph，完整玩法动作闭环属于 T-2.6。
 
 ### 场景和媒体
 
 按预期设计，场景是带背景/热点的互动地点。当前后端存储场景定义和背景 URL，但真实后端尚未从剧本包内容求值热点。前端 Mock 玩法中最完整的场景/热点实现位于 `apps/web/lib/mock-data.ts` 和 `components/game/SceneHotspots.tsx`。
 
-媒体资产定义存储在 `script_media`，类型包括 `bgm`、`story`、`sfx`、`voice`、`image` 和 `video`。剧本包中的二进制素材来自 `assets/`，导入准备阶段可通过 `package_storage.py` 上传到 Supabase Storage，并把 package config、线索图片、证据图片、场景背景、媒体文件、结局和 DM guide 中的本地路径改写为 URL。`engine/media/orchestrator.py` 仍是占位模块。
+媒体资产定义存储在 `script_media`，类型包括 `bgm`、`story`、`sfx`、`voice`、`image` 和
+`video`。剧本包中的二进制素材来自 `assets/`，导入准备阶段可通过 `package_storage.py`
+上传到私有 Supabase Storage，并把本地路径改写为 `storage://` 定位符。面向玩家的签名
+URL/代理下载属于 T-2.6；`engine/media/orchestrator.py` 仍是占位模块。
 
 ### DM 指引、真相和复盘
 

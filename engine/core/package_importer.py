@@ -1,3 +1,5 @@
+"""准备私有资源并持久化一个已校验的剧本包导入。"""
+
 from dataclasses import replace
 from typing import Protocol
 
@@ -21,13 +23,19 @@ from engine.repositories.package_import_repository import PackageImportRepositor
 
 
 class PackageAssetStorage(Protocol):
-    async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str: ...
+    """存储剧本包资源并返回不透明的运行时定位符。"""
+
+    async def upload_asset(self, package_id: str, asset: PackageAssetRecord) -> str:
+        """在剧本包命名空间下上传一个资源。"""
+        ...
 
 
 async def prepare_package_for_import(
     package: ScriptPackageImport,
     asset_storage: PackageAssetStorage | None = None,
 ) -> ScriptPackageImport:
+    """上传剧本包资源，并将匹配路径改写为私有定位符。"""
+
     if asset_storage is None or len(package.assets) == 0:
         return package
 
@@ -43,6 +51,8 @@ async def import_to_db(
     asset_storage: PackageAssetStorage | None = None,
     rag_embedding_provider: EmbeddingProvider | None = None,
 ) -> ScriptPackageImport:
+    """持久化准备完成的剧本包，并可选择刷新其 RAG 索引。"""
+
     prepared_package = await prepare_package_for_import(package, asset_storage)
     await PackageImportRepository(db).import_package(prepared_package)
     if rag_embedding_provider is not None:

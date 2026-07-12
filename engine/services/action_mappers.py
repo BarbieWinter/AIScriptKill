@@ -1,4 +1,4 @@
-from typing import assert_never
+"""将 API 动作载荷映射为已校验的领域动作指令。"""
 
 from engine.api.schemas import (
     ActionRequest,
@@ -26,6 +26,8 @@ from engine.repositories.session_repository import (
 def action_response_and_effect(
     payload: ActionRequest,
 ) -> tuple[ActionResponse, SessionActionEffect]:
+    """将一个已校验动作映射为确定性响应和持久化效果。"""
+
     match payload.action:
         case "talk_to_npc":
             character_id = payload.character_id or "wangdada"
@@ -120,14 +122,14 @@ def action_response_and_effect(
                 suggested_target="crime_scene",
             )
             return response, SessionActionEffect(state_patch={})
-        case unreachable:
-            assert_never(unreachable)
 
 
 # ── 最终推理评分映射 ──
 
 
 def final_submission_result(payload: FinalSubmissionRequest) -> SubmissionResult:
+    """按照当前确定性最终提交契约评分。"""
+
     hit_count = len(payload.key_evidences)
     score = min(100, 55 + hit_count * 10)
     return SubmissionResult(
@@ -149,4 +151,6 @@ def final_submission_result(payload: FinalSubmissionRequest) -> SubmissionResult
 
 
 def submission_result_payload(result: SubmissionResult) -> dict[str, JsonValue]:
+    """将提交结果序列化为可供存储的 JSON 兼容值。"""
+
     return result.model_dump(mode="json")

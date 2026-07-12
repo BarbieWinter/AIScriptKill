@@ -65,6 +65,8 @@ acts:
 id: "prologue"
 name: "序章"
 sort_order: 0
+entry_conditions: []
+exit_conditions: []
 available_actions:
   - talk_to_npc
 available_characters:
@@ -77,6 +79,8 @@ available_scenes:
 id: "act1"
 name: "第一幕"
 sort_order: 10
+entry_conditions: []
+exit_conditions: []
 available_actions:
   - examine_scene
 available_characters:
@@ -88,6 +92,8 @@ available_scenes:
 id: "review"
 name: "复盘"
 sort_order: 20
+entry_conditions: []
+exit_conditions: []
 available_actions:
   - open_clue_board
 available_characters:
@@ -145,11 +151,14 @@ knowledge:
         "scenes/main_hall.yml": """
 id: "main_hall"
 name: "大厅"
+visual:
+  background: "assets/scenes/main_hall.jpg"
 available_in_stages:
   - prologue
   - act1
   - review
 """,
+        "assets/scenes/main_hall.jpg": "fixture-scene-image",
         "clues/rounds/act1_round1.yml": """
 round_id: "act1_round1"
 name: "第一轮搜证"
@@ -157,20 +166,24 @@ stage_visible: "act1"
 clues:
   - id: "clue_1"
     name: "线索一"
+    stage_visible: "act1"
     description: "第一条线索"
     related_scene: "main_hall"
     related_characters: ["player"]
   - id: "clue_2"
     name: "线索二"
+    stage_visible: "act1"
     description: "第二条线索"
     related_scene: "main_hall"
     related_characters: ["npc"]
   - id: "clue_3"
     name: "线索三"
+    stage_visible: "act1"
     description: "第三条线索"
     related_scene: "main_hall"
   - id: "clue_4"
     name: "线索四"
+    stage_visible: "act1"
     description: "第四条线索"
     related_scene: "main_hall"
 """,

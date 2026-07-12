@@ -1,3 +1,5 @@
+"""声明后端自有持久化使用的 SQLAlchemy 表元数据。"""
+
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
@@ -14,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
-# ── Supabase public schema 元数据 ──
+# ── Supabase public 模式元数据 ──
 
 metadata = MetaData()
 
@@ -106,7 +108,7 @@ script_media = Table(
     Column("type", Text, nullable=False),
     Column("file_url", Text, nullable=False),
     Column("subtitle_url", Text),
-    Column("duration_sec", Float),
+    Column("duration_sec", Float()),
     Column("metadata", JSONB, nullable=False),
 )
 
@@ -177,6 +179,28 @@ session_checkpoints = Table(
     Column("parent_ts", Text),
     Column("state", JSONB, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "session_id",
+        "thread_ts",
+        name="uq_session_checkpoints_session_thread_ts",
+    ),
+)
+
+session_checkpoint_writes = Table(
+    "session_checkpoint_writes",
+    metadata,
+    Column(
+        "session_id",
+        UUID(as_uuid=True),
+        ForeignKey("game_sessions.id"),
+        primary_key=True,
+    ),
+    Column("checkpoint_id", Text, primary_key=True),
+    Column("task_id", Text, primary_key=True),
+    Column("write_idx", Integer, primary_key=True),
+    Column("channel", Text, nullable=False),
+    Column("value", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
 )
 
 chat_messages = Table(

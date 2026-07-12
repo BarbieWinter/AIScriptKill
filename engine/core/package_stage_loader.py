@@ -1,3 +1,5 @@
+"""加载权威阶段索引及与其严格匹配的阶段文件。"""
+
 from zipfile import ZipFile
 
 from engine.core.package_archive import PackageArchiveError, read_yaml_mapping, yaml_paths
@@ -16,6 +18,8 @@ def load_stage_index(
     names: tuple[str, ...],
     root: str,
 ) -> JsonMapping:
+    """加载必需的 stages/_index.yml 映射。"""
+
     path = f"{root}stages/_index.yml"
     if path not in names:
         raise PackageArchiveError(
@@ -31,6 +35,8 @@ def load_stages(
     root: str,
     stage_index_raw: JsonMapping,
 ) -> tuple[StageRecord, ...]:
+    """校验索引与文件一致性，并按权威顺序返回阶段。"""
+
     stage_index = stage_index_from_mapping(stage_index_raw)
     act_ids = stage_act_ids_by_stage(stage_index)
     stage_mappings = _stage_mappings_by_id(archive, names, root)

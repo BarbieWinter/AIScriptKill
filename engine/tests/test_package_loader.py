@@ -149,14 +149,14 @@ def test_load_package_archive_rejects_unknown_stage_event_action() -> None:
 
 def test_load_package_archive_accepts_documented_logic_conditions() -> None:
     files = minimal_package_files()
-    files["stages/prologue.yml"] = (
-        f"{files['stages/prologue.yml']}\n"
+    files["stages/prologue.yml"] = files["stages/prologue.yml"].replace(
+        "exit_conditions: []",
         "exit_conditions:\n"
         "  - type: count\n"
         "    min: 1\n"
         "    conditions:\n"
         "      - type: always\n"
-        "      - type: never\n"
+        "      - type: never",
     )
 
     package = load_package_archive(package_archive(files))
@@ -173,12 +173,12 @@ def test_load_package_archive_accepts_documented_logic_conditions() -> None:
 
 def test_load_package_archive_accepts_documented_player_action_condition() -> None:
     files = minimal_package_files()
-    files["stages/prologue.yml"] = (
-        f"{files['stages/prologue.yml']}\n"
+    files["stages/prologue.yml"] = files["stages/prologue.yml"].replace(
+        "exit_conditions: []",
         "exit_conditions:\n"
         "  - type: player_action_performed\n"
         "    action_id: use_card\n"
-        "    target: door\n"
+        "    target: door",
     )
 
     package = load_package_archive(package_archive(files))

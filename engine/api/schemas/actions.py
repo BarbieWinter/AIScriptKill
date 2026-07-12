@@ -1,3 +1,5 @@
+"""定义玩家动作的严格请求与响应模型。"""
+
 from typing import Literal
 
 from pydantic import Field
@@ -15,24 +17,44 @@ from engine.api.schemas.common import (
 
 
 class ActionRequest(ApiModel):
+    """描述动作端点接受的一条玩家指令。"""
+
     action: ActionType = Field(description="Player action type.")
-    character_id: str | None = Field(default=None, description="Target character ID.")
-    message: str | None = Field(default=None, description="Chat message.")
-    scene_id: str | None = Field(default=None, description="Target scene ID.")
-    hotspot_id: str | None = Field(default=None, description="Target hotspot ID.")
-    evidence_id: str | None = Field(default=None, description="Target evidence ID.")
-    card_id: str | None = Field(default=None, description="Target card ID.")
+    character_id: str | None = Field(
+        default=None, min_length=1, max_length=128, description="Target character ID."
+    )
+    message: str | None = Field(
+        default=None, min_length=1, max_length=8000, description="Chat message."
+    )
+    scene_id: str | None = Field(
+        default=None, min_length=1, max_length=128, description="Target scene ID."
+    )
+    hotspot_id: str | None = Field(
+        default=None, min_length=1, max_length=128, description="Target hotspot ID."
+    )
+    evidence_id: str | None = Field(
+        default=None, min_length=1, max_length=128, description="Target evidence ID."
+    )
+    card_id: str | None = Field(
+        default=None, min_length=1, max_length=128, description="Target card ID."
+    )
     target_character_id: str | None = Field(
         default=None,
+        min_length=1,
+        max_length=128,
         description="Target character for card usage.",
     )
-    reason: str | None = Field(default=None, description="Advance request reason.")
+    reason: str | None = Field(
+        default=None, min_length=1, max_length=2000, description="Advance request reason."
+    )
 
 
 # ── 行动响应类型 ──
 
 
 class NpcResponse(ApiModel):
+    """返回交谈动作生成的确定性 NPC 结果。"""
+
     type: Literal["npc_response"] = Field(description="Response discriminator.")
     character_id: str = Field(description="NPC character ID.")
     text: str = Field(description="NPC reply text.")
@@ -43,6 +65,8 @@ class NpcResponse(ApiModel):
 
 
 class SceneResult(ApiModel):
+    """返回场景搜索产生的发现和叙述。"""
+
     type: Literal["scene_result"] = Field(description="Response discriminator.")
     scene_id: str = Field(description="Scene ID.")
     hotspot_id: str = Field(description="Hotspot ID.")
@@ -53,6 +77,8 @@ class SceneResult(ApiModel):
 
 
 class EvidenceReaction(ApiModel):
+    """返回 NPC 对玩家出示证物的反应。"""
+
     type: Literal["evidence_reaction"] = Field(description="Response discriminator.")
     character_id: str = Field(description="NPC character ID.")
     text: str = Field(description="NPC reaction text.")
@@ -63,6 +89,8 @@ class EvidenceReaction(ApiModel):
 
 
 class CardResult(ApiModel):
+    """返回卡牌已生效的效果和剩余使用次数。"""
+
     type: Literal["card_result"] = Field(description="Response discriminator.")
     card_id: str = Field(description="Used card ID.")
     remaining_uses: int = Field(description="Remaining uses.")
@@ -73,11 +101,15 @@ class CardResult(ApiModel):
 
 
 class StageTransitionState(ApiModel):
+    """公开阶段跳转后的客户端可见状态。"""
+
     current_stage: str = Field(description="New current stage.")
     available_actions: list[ActionType] = Field(description="Allowed actions.")
 
 
 class StageTransition(ApiModel):
+    """返回成功的阶段跳转及其发出的事件。"""
+
     type: Literal["stage_transition"] = Field(description="Response discriminator.")
     from_stage: str = Field(description="Previous stage.")
     to_stage: str = Field(description="Next stage.")
@@ -86,6 +118,8 @@ class StageTransition(ApiModel):
 
 
 class AdvanceDenied(ApiModel):
+    """说明当前阶段暂时无法推进的原因。"""
+
     type: Literal["advance_denied"] = Field(description="Response discriminator.")
     reason: str = Field(description="Why advance is currently denied.")
     hint: str = Field(description="Lightweight next-step hint.")
@@ -97,13 +131,19 @@ class AdvanceDenied(ApiModel):
 
 
 class FinalSubmissionRequest(ApiModel):
-    suspect: str = Field(description="Accused suspect ID.")
-    motive: str = Field(description="Submitted motive.")
-    key_evidences: list[str] = Field(description="Submitted evidence IDs.")
-    deduction: str = Field(description="Free-form deduction chain.")
+    """记录玩家最终选择的嫌疑人及支撑推理。"""
+
+    suspect: str = Field(min_length=1, max_length=128, description="Accused suspect ID.")
+    motive: str = Field(min_length=1, max_length=2000, description="Submitted motive.")
+    key_evidences: list[str] = Field(max_length=128, description="Submitted evidence IDs.")
+    deduction: str = Field(
+        min_length=1, max_length=20_000, description="Free-form deduction chain."
+    )
 
 
 class SubmissionDetail(ApiModel):
+    """拆分最终提交中判断正确的组成部分。"""
+
     correct_suspect: bool = Field(description="Whether suspect is correct.")
     correct_motive: bool = Field(description="Whether motive is correct.")
     key_evidence_hit_rate: str = Field(description="Hit count string.")
@@ -111,6 +151,8 @@ class SubmissionDetail(ApiModel):
 
 
 class SubmissionResult(ApiModel):
+    """返回已评分的最终提交和选定结局。"""
+
     type: Literal["submission_result"] = Field(description="Response discriminator.")
     correct: bool = Field(description="Overall correctness.")
     score: int = Field(description="Score from 0 to 100.")

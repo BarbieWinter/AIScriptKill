@@ -27,6 +27,23 @@ AIScriptKill/
 # 安装依赖
 make install
 
+# 验证锁文件中的后端开发工具
+make verify-dev-tools
+
+# 后端测试、静态检查与严格类型检查
+make test
+make lint-api
+make typecheck-api
+
+# 启动本地 Supabase（Colima 环境默认跳过日志采集服务）
+make db-start
+
+# 重置本地 Supabase（需要先启动本地 Supabase）
+make db-reset
+
+# 本地 Supabase 上验证 StateGraph 进程强杀恢复
+make test-checkpoint-recovery
+
 # 同时启动后端和前端
 make dev
 
@@ -35,15 +52,6 @@ make dev-api
 
 # 只启动前端
 make dev-web
-
-# 测试
-make test
-
-# 启动本地 Supabase（Colima 环境默认跳过日志采集服务）
-make db-start
-
-# 重置本地 Supabase（需要先启动本地 Supabase）
-make db-reset
 ```
 
 ## 设计文档

@@ -364,10 +364,19 @@ engine = ScriptEngine.load_package("snow-village")
 ## 8. 数据权限模型
 
 ```
-                    ┌──────────────────┐
-                    │     Supabase     │
-                    │     RLS Policy   │
-                    └──────────────────┘
+浏览器 / 玩家
+      │ 仅调用 /api/v1
+      ▼
+┌────────────────────────────┐
+│ FastAPI 授权、会话归属检查 │
+│ 阶段/角色可见性与字段投影  │
+└─────────────┬──────────────┘
+              │ 服务端数据库角色
+              ▼
+┌────────────────────────────┐
+│ Supabase/Postgres + RLS    │
+│ anon/authenticated 无表权限│
+└────────────────────────────┘
 
 玩家可见:
   ├─ 当前stage前的所有公开线索（按stage_visible过滤）
@@ -388,6 +397,11 @@ engine = ScriptEngine.load_package("snow-village")
   ├─ 所有游戏会话状态
   ├─ 售后资料
   └─ 玩家行为分析
+
+私有素材:
+  ├─ Storage bucket 强制 private
+  ├─ 数据库只保存 storage:// 定位符
+  └─ T-2.6 在会话鉴权后提供短期签名 URL 或代理下载
 ```
 
 ---

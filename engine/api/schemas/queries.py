@@ -1,3 +1,5 @@
+"""定义已过滤剧透内容的会话查询响应模型。"""
+
 from pydantic import Field
 
 from engine.api.schemas.common import ApiModel
@@ -6,6 +8,8 @@ from engine.api.schemas.common import ApiModel
 
 
 class Clue(ApiModel):
+    """公开当前会话已解锁的一条线索。"""
+
     id: str = Field(description="Clue ID.")
     name: str = Field(description="Clue display name.")
     image_url: str = Field(description="Storage URL.")
@@ -17,6 +21,8 @@ class Clue(ApiModel):
 
 
 class ClueListResponse(ApiModel):
+    """返回当前会话可见的线索。"""
+
     clues: list[Clue] = Field(description="Unlocked clues.")
 
 
@@ -24,6 +30,8 @@ class ClueListResponse(ApiModel):
 
 
 class Evidence(ApiModel):
+    """公开当前会话已发现的一件证物。"""
+
     id: str = Field(description="Evidence ID.")
     name: str = Field(description="Evidence display name.")
     image_url: str = Field(description="Storage URL.")
@@ -34,6 +42,8 @@ class Evidence(ApiModel):
 
 
 class EvidenceListResponse(ApiModel):
+    """返回当前会话已发现的证物。"""
+
     evidences: list[Evidence] = Field(description="Discovered evidences.")
 
 
@@ -41,6 +51,8 @@ class EvidenceListResponse(ApiModel):
 
 
 class CharacterSummary(ApiModel):
+    """公开玩家当前可用的一个角色。"""
+
     id: str = Field(description="Character ID.")
     name: str = Field(description="Character display name.")
     portrait_url: str = Field(description="Portrait storage URL.")
@@ -50,6 +62,8 @@ class CharacterSummary(ApiModel):
 
 
 class CharacterListResponse(ApiModel):
+    """返回当前会话场景中的可用角色。"""
+
     characters: list[CharacterSummary] = Field(description="Current scene characters.")
 
 
@@ -57,6 +71,8 @@ class CharacterListResponse(ApiModel):
 
 
 class ChatMessage(ApiModel):
+    """公开一条已持久化的玩家、NPC 或 DM 聊天消息。"""
+
     id: str = Field(description="Message ID.")
     role: str = Field(description="player, npc, or dm.")
     character_id: str | None = Field(description="NPC character ID when present.")
@@ -66,6 +82,8 @@ class ChatMessage(ApiModel):
 
 
 class ChatHistoryResponse(ApiModel):
+    """返回一页会话聊天消息及其续传令牌。"""
+
     messages: list[ChatMessage] = Field(description="Chat messages.")
     next_page_token: str | None = Field(description="Pagination token.")
 
@@ -74,6 +92,8 @@ class ChatHistoryResponse(ApiModel):
 
 
 class Card(ApiModel):
+    """公开一张可用的技能卡或道具卡及其使用次数。"""
+
     id: str = Field(description="Card ID.")
     name: str = Field(description="Card display name.")
     type: str = Field(description="Card type.")
@@ -85,4 +105,6 @@ class Card(ApiModel):
 
 
 class CardListResponse(ApiModel):
+    """返回当前会话可用的卡牌。"""
+
     cards: list[Card] = Field(description="Available cards.")

@@ -1,3 +1,5 @@
+"""定义会话最终复盘和分数明细模型。"""
+
 from pydantic import Field
 
 from engine.api.schemas.common import ApiModel
@@ -6,6 +8,8 @@ from engine.api.schemas.common import ApiModel
 
 
 class ReviewBreakdown(ApiModel):
+    """将最终分数拆分为推理、线索和提示指标。"""
+
     suspect_correct: bool = Field(description="Whether suspect was correct.")
     motive_correct: bool = Field(description="Whether motive was correct.")
     key_evidence_hit_rate: str = Field(description="Evidence hit rate.")
@@ -17,6 +21,8 @@ class ReviewBreakdown(ApiModel):
 
 
 class MissedKeyClue(ApiModel):
+    """描述玩家流程中遗漏的一条关键线索。"""
+
     id: str = Field(description="Clue ID.")
     name: str = Field(description="Clue display name.")
     description: str = Field(description="Clue description.")
@@ -26,6 +32,8 @@ class MissedKeyClue(ApiModel):
 
 
 class ReviewResponse(ApiModel):
+    """返回已完成会话的分数、路径和真相摘要。"""
+
     session_id: str = Field(description="Game session ID.")
     script_id: str = Field(description="Script package ID.")
     score: int = Field(description="Player score.")

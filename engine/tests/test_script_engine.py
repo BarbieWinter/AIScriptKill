@@ -1,22 +1,20 @@
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
-from sqlalchemy.sql import ClauseElement
 
-from engine.api.schemas.common import JsonValue
 from engine.core.checkpoint import SupabaseSessionCheckpointSaver
 from engine.core.game_state import create_initial_state
 from engine.core.package_loader import load_package_archive
 from engine.core.package_schema import JsonMapping
 from engine.core.script_engine import ScriptEngine
-from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
-
-type CheckpointRow = dict[str, str | dict[str, JsonValue] | None]
+from engine.tests.checkpoint_fakes import MemoryCheckpointSession
+from engine.tests.package_loader_fixtures import package_archive
+from engine.tests.stategraph_fixtures import state_graph_package, state_graph_package_files
 
 
 async def test_script_engine_runs_stage_transition_and_ending_with_event_sequence() -> None:
-    # Given: a package whose prologue entry event unlocks content and whose player action exits.
-    package = load_package_archive(package_archive(_state_graph_package_files()))
+    # 给定：序章进入事件会解锁内容、玩家动作会退出阶段的剧本包。
+    package = state_graph_package()
     event_sink = RecordingEventSink()
     engine = ScriptEngine.from_package(package, event_sink=event_sink)
     state = create_initial_state(
@@ -27,10 +25,10 @@ async def test_script_engine_runs_stage_transition_and_ending_with_event_sequenc
         entry_stage="prologue",
     )
 
-    # When: the player asks the DM to advance out of the prologue.
+    # 当：玩家请求 DM 推进并离开序章。
     state = await engine.run_action(state, action_id="request_advance", target="request_advance")
 
-    # Then: the graph performs entry events, action processing, condition checking and stage entry.
+    # 则：图执行进入事件、动作处理、条件检查和阶段进入。
     assert state["current_stage"] == "act1"
     assert state["previous_stage"] == "prologue"
     assert "prologue" in state["completed_stages"]
@@ -44,7 +42,7 @@ async def test_script_engine_runs_stage_transition_and_ending_with_event_sequenc
         "dm_narrate",
     ]
 
-    # When: the player supplies a correct final submission in act1.
+    # 当：玩家在第一幕提交正确的最终答案。
     state["final_submission"] = {
         "suspect": "npc",
         "key_evidences": ["knife"],
@@ -52,15 +50,15 @@ async def test_script_engine_runs_stage_transition_and_ending_with_event_sequenc
     state["answer_key"] = {"suspect": "npc"}
     state = await engine.run_action(state, action_id="request_advance", target="finish")
 
-    # Then: ending conditions fire and ending actions run exactly once.
+    # 则：结局条件触发，且结局动作仅执行一次。
     assert state["ending_triggered"] is True
     assert state["ending_id"] == "truth"
     assert event_sink.actions[-2:] == ["dm_narrate", "play_audio"]
 
 
 async def test_script_engine_restores_state_from_langgraph_checkpoint() -> None:
-    # Given: a compiled graph with a LangGraph checkpointer and one completed action.
-    package = load_package_archive(package_archive(_state_graph_package_files()))
+    # 给定：带有 LangGraph 检查点保存器且已完成一个动作的编译图。
+    package = state_graph_package()
     checkpointer = InMemorySaver()
     session_id = str(uuid4())
     engine = ScriptEngine.from_package(package, checkpointer=checkpointer)
@@ -78,11 +76,11 @@ async def test_script_engine_restores_state_from_langgraph_checkpoint() -> None:
         thread_id=session_id,
     )
 
-    # When: a new engine instance is created with the same checkpointer after a process restart.
+    # 当：进程重启后，使用同一检查点保存器创建新的引擎实例。
     restarted_engine = ScriptEngine.from_package(package, checkpointer=checkpointer)
     restored_state = await restarted_engine.restore_state(thread_id=session_id)
 
-    # Then: the latest checkpoint rebuilds the full GameState.
+    # 则：最新检查点重建完整的 GameState。
     assert restored_state is not None
     assert restored_state["current_stage"] == "act1"
     assert restored_state["previous_stage"] == "prologue"
@@ -90,9 +88,9 @@ async def test_script_engine_restores_state_from_langgraph_checkpoint() -> None:
 
 
 async def test_script_engine_restores_state_from_session_checkpoints_after_restart() -> None:
-    # Given: a Supabase-backed saver that persists LangGraph checkpoints into session_checkpoints.
-    package = load_package_archive(package_archive(_state_graph_package_files()))
-    session = RecordingCheckpointSession()
+    # 给定：将 LangGraph 检查点持久化到 session_checkpoints 的 Supabase 保存器。
+    package = state_graph_package()
+    session = MemoryCheckpointSession()
     session_id = str(uuid4())
     engine = ScriptEngine.from_package(
         package,
@@ -112,14 +110,14 @@ async def test_script_engine_restores_state_from_session_checkpoints_after_resta
         thread_id=session_id,
     )
 
-    # When: a new engine uses the same checkpoint table after the original process is gone.
+    # 当：原进程结束后，新引擎使用同一个检查点表。
     restarted_engine = ScriptEngine.from_package(
         package,
         checkpointer=SupabaseSessionCheckpointSaver(session),
     )
     restored_state = await restarted_engine.restore_state(thread_id=session_id)
 
-    # Then: the persisted session checkpoint is enough to continue from the advanced stage.
+    # 则：持久化的会话检查点足以从推进后的阶段继续运行。
     assert restored_state is not None
     assert restored_state["current_stage"] == "act1"
     assert restored_state["previous_stage"] == "prologue"
@@ -127,8 +125,8 @@ async def test_script_engine_restores_state_from_session_checkpoints_after_resta
 
 
 async def test_script_engine_rejects_stage_jump_without_stage_permission() -> None:
-    # Given: a stage entry event tries to jump from prologue directly to review.
-    files = _state_graph_package_files()
+    # 给定：阶段进入事件尝试从序章直接跳到复盘阶段。
+    files = state_graph_package_files()
     prologue_file = files["stages/prologue.yml"]
     if not isinstance(prologue_file, str):
         raise AssertionError("prologue stage fixture must be text")
@@ -154,147 +152,176 @@ async def test_script_engine_rejects_stage_jump_without_stage_permission() -> No
         entry_stage="prologue",
     )
 
-    # When: the graph executes prologue entry and the player action.
+    # 当：图执行序章进入和玩家动作。
     state = await engine.run_action(state, action_id="open_clue_board")
 
-    # Then: the illegal jump is recorded but the stage does not skip ahead.
+    # 则：记录非法跳转，但阶段不会越级推进。
     assert state["current_stage"] == "prologue"
     assert state["blocked_transitions"] == [
         {"from_stage": "prologue", "to_stage": "review", "reason": "stage_jump_denied"},
     ]
 
 
+async def test_script_engine_blocks_transition_when_target_entry_condition_is_false() -> None:
+    # 给定：顺序中的下一阶段存在未满足的进入条件。
+    files = state_graph_package_files()
+    act1 = files["stages/act1.yml"]
+    assert isinstance(act1, str)
+    files["stages/act1.yml"] = act1.replace(
+        "entry_conditions: []",
+        "entry_conditions:\n  - type: never",
+    )
+    package = load_package_archive(package_archive(files))
+    engine = ScriptEngine.from_package(package)
+    state = create_initial_state(
+        session_id=str(uuid4()),
+        script_id=package.package.id,
+        player_id=str(uuid4()),
+        player_character_id="player",
+        entry_stage="prologue",
+    )
+
+    # 当：当前阶段的退出条件请求正常推进。
+    state = await engine.run_action(state, action_id="request_advance")
+
+    # 则：当前阶段保持活动状态，并记录进入守卫失败。
+    assert state["current_stage"] == "prologue"
+    assert state["completed_stages"] == []
+    assert state["blocked_transitions"][-1] == {
+        "from_stage": "prologue",
+        "to_stage": "act1",
+        "reason": "entry_conditions_not_met",
+    }
+
+
+async def test_target_entry_condition_observes_the_stage_being_completed() -> None:
+    # 给定：下一阶段要求当前阶段完成后才能进入。
+    files = state_graph_package_files()
+    act1 = files["stages/act1.yml"]
+    assert isinstance(act1, str)
+    files["stages/act1.yml"] = act1.replace(
+        "entry_conditions: []",
+        'entry_conditions:\n  - type: stage_completed\n    stage_id: "prologue"',
+    )
+    package = load_package_archive(package_archive(files))
+    engine = ScriptEngine.from_package(package)
+    state = create_initial_state(
+        session_id=str(uuid4()),
+        script_id=package.package.id,
+        player_id=str(uuid4()),
+        player_character_id="player",
+        entry_stage="prologue",
+    )
+
+    # 当：当前阶段满足退出条件。
+    state = await engine.run_action(state, action_id="request_advance")
+
+    # 则：预期完成状态满足目标守卫并被提交。
+    assert state["current_stage"] == "act1"
+    assert state["completed_stages"] == ["prologue"]
+    assert state["blocked_transitions"] == []
+
+
+async def test_script_engine_allows_configured_forward_jump() -> None:
+    # 给定：阶段明确允许向前跳转到非相邻阶段。
+    files = state_graph_package_files()
+    prologue = files["stages/prologue.yml"]
+    assert isinstance(prologue, str)
+    files["stages/prologue.yml"] = prologue.replace(
+        'id: "prologue"',
+        'id: "prologue"\nallow_stage_jump: true',
+    ).replace(
+        '  - action: "play_audio"\n    asset_id: "intro"',
+        '  - action: "play_audio"\n    asset_id: "intro"\n'
+        '  - action: "transition_to"\n    stage_id: "review"',
+    )
+    package = load_package_archive(package_archive(files))
+    engine = ScriptEngine.from_package(package)
+    state = create_initial_state(
+        session_id=str(uuid4()),
+        script_id=package.package.id,
+        player_id=str(uuid4()),
+        player_character_id="player",
+        entry_stage="prologue",
+    )
+
+    # 当：进入事件请求已配置的跳转。
+    state = await engine.run_action(state, action_id="open_clue_board")
+
+    # 则：图到达非相邻目标，而不是阻止跳转。
+    assert state["current_stage"] == "review"
+
+
+async def test_script_engine_allows_configured_stage_regression() -> None:
+    # 给定：第一幕明确允许回退，并在进入时请求上一阶段。
+    files = state_graph_package_files()
+    act1 = files["stages/act1.yml"]
+    assert isinstance(act1, str)
+    files["stages/act1.yml"] = act1.replace(
+        'id: "act1"',
+        'id: "act1"\nallow_stage_regression: true',
+    ).replace(
+        '  - action: "dm_narrate"\n    text: "第一幕开始"',
+        '  - action: "dm_narrate"\n    text: "第一幕开始"\n'
+        '  - action: "transition_to"\n    stage_id: "prologue"',
+    )
+    package = load_package_archive(package_archive(files))
+    engine = ScriptEngine.from_package(package)
+    state = create_initial_state(
+        session_id=str(uuid4()),
+        script_id=package.package.id,
+        player_id=str(uuid4()),
+        player_character_id="player",
+        entry_stage="act1",
+    )
+
+    # 当：第一幕处理已配置的向后跳转。
+    state = await engine.run_action(state, action_id="request_advance")
+
+    # 则：仅因严格阶段字段已启用，回退才会成功。
+    assert state["current_stage"] == "prologue"
+    assert state["completed_stages"] == []
+    assert state["completed_acts"] == []
+
+
+async def test_script_engine_marks_act_complete_after_its_final_stage_exits() -> None:
+    # 给定：第一幕的最终阶段退出到复盘，且不会先触发结局。
+    files = state_graph_package_files()
+    act1 = files["stages/act1.yml"]
+    assert isinstance(act1, str)
+    files["stages/act1.yml"] = act1.replace(
+        '  - type: "submission_correct"\n    field: "suspect"\n    value: "npc"',
+        "  - type: always",
+    )
+    package = load_package_archive(package_archive(files))
+    engine = ScriptEngine.from_package(package)
+    state = create_initial_state(
+        session_id=str(uuid4()),
+        script_id=package.package.id,
+        player_id=str(uuid4()),
+        player_character_id="player",
+        entry_stage="prologue",
+    )
+
+    # 当：流程退出分配给第一幕的两个阶段。
+    state = await engine.run_action(state, action_id="request_advance")
+
+    # 则：act_completed 条件可以观察权威的幕生命周期。
+    assert state["current_stage"] == "review"
+    assert state["completed_acts"] == ["book1"]
+
+
 class RecordingEventSink:
     def __init__(self) -> None:
         self.actions: list[str] = []
 
-    async def execute(self, action: str, payload: JsonMapping) -> None:
+    async def execute(
+        self,
+        action: str,
+        payload: JsonMapping,
+        *,
+        idempotency_key: str,
+    ) -> None:
         _ = payload
+        _ = idempotency_key
         self.actions.append(action)
-
-
-class RecordingCheckpointSession:
-    def __init__(self) -> None:
-        self.rows: list[CheckpointRow] = []
-
-    async def execute(self, statement: ClauseElement) -> "RecordingCheckpointResult":
-        table_name = getattr(getattr(statement, "table", None), "name", None)
-        if table_name == "session_checkpoints":
-            params = statement.compile().params
-            thread_ts = params.get("thread_ts") if isinstance(params, dict) else None
-            state = params.get("state") if isinstance(params, dict) else None
-            if not isinstance(thread_ts, str) or not isinstance(state, dict):
-                return RecordingCheckpointResult(self.rows)
-            self.rows.append(
-                {
-                    "thread_ts": thread_ts,
-                    "parent_ts": params.get("parent_ts") if isinstance(params, dict) else None,
-                    "state": state,
-                },
-            )
-        return RecordingCheckpointResult(self.rows)
-
-
-class RecordingCheckpointResult:
-    def __init__(self, rows: list[CheckpointRow]) -> None:
-        self._rows = rows
-
-    def mappings(self) -> "RecordingCheckpointResult":
-        return self
-
-    def one_or_none(self) -> CheckpointRow | None:
-        if len(self._rows) == 0:
-            return None
-        return self._rows[-1]
-
-    def all(self) -> list[CheckpointRow]:
-        return list(reversed(self._rows))
-
-
-def _state_graph_package_files() -> dict[str, str | bytes]:
-    files: dict[str, str | bytes] = dict(minimal_package_files())
-    files["stages/prologue.yml"] = """
-id: "prologue"
-name: "序章"
-sort_order: 0
-available_actions:
-  - request_advance
-  - open_clue_board
-available_characters:
-  - player
-  - npc
-available_scenes:
-  - main_hall
-available_clue_rounds:
-  - act1_round1
-exit_conditions:
-  - type: "player_requested"
-    dialog_id: "request_advance"
-on_stage_entry:
-  - action: "dm_narrate"
-    text: "序章开始"
-  - action: "play_audio"
-    asset_id: "intro"
-  - action: "unlock_clue_round"
-    round_id: "act1_round1"
-on_stage_exit:
-  - action: "save_checkpoint"
-media_triggers:
-  - event: "clue_discovered"
-    clue_id: "clue_1"
-    then:
-      - action: "play_audio"
-        asset_id: "intro"
-"""
-    files["stages/act1.yml"] = """
-id: "act1"
-name: "第一幕"
-sort_order: 10
-available_actions:
-  - request_advance
-available_characters:
-  - player
-available_scenes:
-  - main_hall
-exit_conditions:
-  - type: "submission_correct"
-    field: "suspect"
-    value: "npc"
-on_stage_entry:
-  - action: "dm_narrate"
-    text: "第一幕开始"
-"""
-    files["media/default.yml"] = """
-audio_assets:
-  - id: "intro"
-    type: "bgm"
-    file: "assets/audio/intro.mp3"
-  - id: "ending_audio"
-    type: "story"
-    file: "assets/audio/ending.mp3"
-"""
-    files["evidences/knife.yml"] = """
-id: "knife"
-name: "刀"
-description:
-  surface: "一把刀"
-discovery:
-  scene_id: "main_hall"
-"""
-    files["endings.yml"] = """
-endings:
-  - id: "truth"
-    name: "真相复盘"
-    condition:
-      type: "submission_correct"
-      field: "suspect"
-      value: "npc"
-    on_trigger:
-      - action: "dm_narrate"
-        text: "真相揭开"
-      - action: "play_audio"
-        asset_id: "ending_audio"
-"""
-    files["assets/audio/intro.mp3"] = b"intro"
-    files["assets/audio/ending.mp3"] = b"ending"
-    return files

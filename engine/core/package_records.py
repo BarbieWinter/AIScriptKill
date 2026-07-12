@@ -1,5 +1,7 @@
+"""将已校验的剧本包 YAML 映射为可持久化记录。"""
+
 from collections.abc import Iterable
-from typing import Final, assert_never
+from typing import Final
 
 from engine.api.schemas.common import JsonValue
 from engine.core.package_archive import PackageArchiveError
@@ -38,6 +40,8 @@ def stage_record_from_mapping(
     index_item: StageIndexItem,
     act_id: str | None,
 ) -> StageRecord:
+    """校验一个阶段映射并序列化其可执行定义。"""
+
     stage = StageDefinition.model_validate(raw)
     return StageRecord(
         id=stage.id,
@@ -51,6 +55,8 @@ def character_record_from_mapping(
     raw: JsonMapping,
     index_item: CharacterIndexItem,
 ) -> CharacterRecord:
+    """校验一个角色映射并序列化其剧本包定义。"""
+
     character = CharacterDefinition.model_validate(raw)
     return CharacterRecord(
         id=character.id,
@@ -63,11 +69,15 @@ def character_record_from_mapping(
 
 
 def clue_records_from_mapping(raw: JsonMapping) -> tuple[ClueRecord, ...]:
+    """校验一个线索轮次并将其线索展开为记录。"""
+
     clue_round = ClueRoundDefinition.model_validate(raw)
     return tuple(_clue_records(clue_round))
 
 
 def evidence_record_from_mapping(raw: JsonMapping) -> EvidenceRecord:
+    """校验一个证物映射并序列化其剧本包定义。"""
+
     evidence = EvidenceDefinition.model_validate(raw)
     return EvidenceRecord(
         id=evidence.id,
@@ -81,6 +91,8 @@ def evidence_record_from_mapping(raw: JsonMapping) -> EvidenceRecord:
 
 
 def scene_record_from_mapping(raw: JsonMapping) -> SceneRecord:
+    """校验一个场景映射并序列化其剧本包定义。"""
+
     scene = SceneDefinition.model_validate(raw)
     return SceneRecord(
         id=scene.id,
@@ -91,11 +103,15 @@ def scene_record_from_mapping(raw: JsonMapping) -> SceneRecord:
 
 
 def media_records_from_mapping(raw: JsonMapping) -> tuple[MediaRecord, ...]:
+    """校验一个媒体映射并将音频和图像展开为记录。"""
+
     media_file = MediaFileDefinition.model_validate(raw)
     return (*_audio_records(media_file.audio_assets), *_image_records(media_file.image_assets))
 
 
 def ending_records_from_mapping(raw: JsonMapping) -> tuple[EndingRecord, ...]:
+    """校验一个结局文件并将其结局展开为记录。"""
+
     ending_file = EndingFileDefinition.model_validate(raw)
     raw_endings = _json_mapping_list(raw.get("endings"))
     return tuple(
@@ -120,8 +136,14 @@ def _stage_definition_mapping(
     normalized["name"] = index_item.name
     normalized["sort_order"] = index_item.sort_order
     if len(index_item.meta) > 0:
-        normalized["meta"] = index_item.meta
-    if act_id is not None and normalized.get("act_id") is None:
+        meta: JsonMapping = {key: value for key, value in index_item.meta.items()}
+        normalized["meta"] = meta
+    if stage.act_id is not None and stage.act_id != act_id:
+        raise PackageArchiveError(
+            "PACKAGE_STAGE_ACT_CONFLICT",
+            f"stage {stage.id} 的 act_id 与 stages/_index.yml 不一致",
+        )
+    if act_id is not None:
         normalized["act_id"] = act_id
     action_ids: list[JsonValue] = []
     action_definitions: list[JsonValue] = []
@@ -138,8 +160,6 @@ def _stage_definition_mapping(
                         "description": description,
                     },
                 )
-            case unreachable:
-                assert_never(unreachable)
     normalized["available_actions"] = action_ids
     if len(action_definitions) > 0:
         normalized["action_definitions"] = action_definitions
@@ -150,7 +170,9 @@ def _clue_records(clue_round: ClueRoundDefinition) -> Iterable[ClueRecord]:
     for clue in clue_round.clues:
         related_characters: list[JsonValue] = [character for character in clue.related_characters]
         metadata: JsonMapping = {
-            "stage_visible": clue.stage_visible or clue_round.stage_visible,
+            "stage_visible": clue.stage_visible,
+            # 轮次阶段与线索自身阶段是两个独立契约，必须保留到统一引用校验边界。
+            "round_stage_visible": clue_round.stage_visible,
             "visibility": "public",
             "round_name": clue_round.name,
             "related_scene": clue.related_scene,
@@ -201,9 +223,22 @@ def _media_type(value: str) -> MediaType:
 
 
 def _json_mapping_list(value: JsonValue | None) -> list[JsonMapping]:
-    if not isinstance(value, list):
+    if value is None:
         return []
-    return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, list):
+        raise PackageArchiveError(
+            "PACKAGE_MAPPING_LIST_INVALID",
+            "endings.yml 条件或事件集合必须是对象列表",
+        )
+    mappings: list[JsonMapping] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise PackageArchiveError(
+                "PACKAGE_MAPPING_LIST_INVALID",
+                f"endings.yml 条件或事件集合第 {index} 项必须是对象",
+            )
+        mappings.append(item)
+    return mappings
 
 
 def _required_mapping(mapping: JsonMapping, key: str) -> JsonMapping:

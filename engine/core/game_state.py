@@ -1,3 +1,5 @@
+"""定义 LangGraph 游戏节点间传递的完整类型化状态。"""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,6 +12,8 @@ RuntimeScalar = str | int | float | bool | None
 
 
 class Message(TypedDict):
+    """表示图状态中的一条玩家、NPC 或 DM 消息。"""
+
     id: str
     role: str
     character_id: str | None
@@ -19,12 +23,16 @@ class Message(TypedDict):
 
 
 class GameEvent(TypedDict):
+    """表示一批等待处理的有序事件动作。"""
+
     event_id: str
     actions: list[dict[str, JsonValue]]
     source: str
 
 
 class EventActionRecord(TypedDict):
+    """记录一个已应用事件动作，供回放和复盘使用。"""
+
     event_id: str
     source: str
     action: str
@@ -32,6 +40,8 @@ class EventActionRecord(TypedDict):
 
 
 class ClueDiscovery(TypedDict):
+    """记录一条线索被发现时的玩法上下文。"""
+
     clue_id: str
     round_id: str
     scene_id: str
@@ -39,33 +49,45 @@ class ClueDiscovery(TypedDict):
 
 
 class EvidencePresentation(TypedDict):
+    """记录向一个角色出示的证物。"""
+
     evidence_id: str
     character_id: str
 
 
 class PlayerActionRecord(TypedDict):
+    """记录一个已校验动作及其规范化目标。"""
+
     action_id: str
     target: str | None
 
 
 class CardUsageRecord(TypedDict):
+    """记录一次卡牌使用，供条件求值使用。"""
+
     card_id: str
     card_type: str | None
 
 
 class PlayerActionInput(TypedDict):
+    """将一条已校验的玩家指令传入图。"""
+
     action_id: ActionType
     target: str | None
     text: str | None
 
 
 class BlockedTransition(TypedDict):
+    """记录一次被拒绝的阶段跳转及其稳定原因。"""
+
     from_stage: str
     to_stage: str
     reason: str
 
 
 class GameState(TypedDict):
+    """包含全部持久状态、条件可见状态和单回合引擎状态。"""
+
     session_id: str
     script_id: str
     player_id: str
@@ -128,6 +150,8 @@ def create_initial_state(
     player_character_id: str,
     entry_stage: str = "prologue",
 ) -> GameState:
+    """在剧本包入口阶段创建完整的空游戏状态。"""
+
     return GameState(
         session_id=session_id,
         script_id=script_id,
@@ -179,4 +203,6 @@ def create_initial_state(
 
 
 def clone_game_state(state: GameState) -> GameState:
+    """深拷贝图状态，确保节点不会修改输入快照。"""
+
     return deepcopy(state)

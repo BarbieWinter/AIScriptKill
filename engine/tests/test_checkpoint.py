@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import empty_checkpoint
-from sqlalchemy.sql import ClauseElement
+from sqlalchemy.sql import ClauseElement, Executable
 
 from engine.api.schemas.common import JsonValue
 from engine.core.checkpoint import SupabaseSessionCheckpointSaver
@@ -11,7 +11,7 @@ type CheckpointRow = dict[str, str | dict[str, JsonValue] | None]
 
 
 async def test_supabase_checkpoint_saver_round_trips_langgraph_checkpoint() -> None:
-    # Given: a saver backed by the session_checkpoints table contract.
+    # 给定：由 session_checkpoints 表契约支持的保存器。
     session = RecordingAsyncSession()
     saver = SupabaseSessionCheckpointSaver(session)
     session_id = str(uuid4())
@@ -19,11 +19,11 @@ async def test_supabase_checkpoint_saver_round_trips_langgraph_checkpoint() -> N
     checkpoint = empty_checkpoint()
     checkpoint["channel_values"] = {"current_stage": "prologue"}
 
-    # When: LangGraph stores and fetches the checkpoint.
+    # 当：LangGraph 存储并获取检查点。
     saved_config = await saver.aput(config, checkpoint, {"source": "update"}, {})
     restored = await saver.aget_tuple(saved_config)
 
-    # Then: the same checkpoint payload can rebuild graph state after restart.
+    # 则：同一检查点载荷可以在重启后重建图状态。
     assert restored is not None
     assert restored.config.get("configurable", {}).get("thread_id") == session_id
     assert restored.checkpoint["channel_values"] == {"current_stage": "prologue"}
@@ -33,11 +33,17 @@ async def test_supabase_checkpoint_saver_round_trips_langgraph_checkpoint() -> N
 class RecordingAsyncSession:
     def __init__(self) -> None:
         self.rows: list[CheckpointRow] = []
+        self.commit_count = 0
 
-    async def execute(self, statement: ClauseElement) -> "RecordingResult":
+    async def execute(self, statement: Executable) -> "RecordingResult":
+        if not isinstance(statement, ClauseElement):
+            raise AssertionError("checkpoint fake only accepts SQL clause statements")
+        compiled = statement.compile()
+        if "session_checkpoint_writes" in compiled.string:
+            return RecordingResult([])
         table_name = getattr(getattr(statement, "table", None), "name", None)
         if table_name == "session_checkpoints":
-            params = statement.compile().params
+            params = compiled.params
             thread_ts = params.get("thread_ts") if isinstance(params, dict) else None
             parent_ts = params.get("parent_ts") if isinstance(params, dict) else None
             state = params.get("state") if isinstance(params, dict) else None
@@ -51,6 +57,12 @@ class RecordingAsyncSession:
                 },
             )
         return RecordingResult(self.rows)
+
+    async def commit(self) -> None:
+        self.commit_count += 1
+
+    async def rollback(self) -> None:
+        pass
 
 
 class RecordingResult:
