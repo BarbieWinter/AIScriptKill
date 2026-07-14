@@ -91,6 +91,26 @@ def evidence_found(condition: ConditionNode, state: GameState) -> LeafEvaluation
     )
 
 
+def evidence_viewed(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """求值玩家是否已查看一件已发现证物。"""
+
+    evidence_id = condition.required_text("evidence_id")
+    return LeafEvaluation(
+        evidence_id in state["viewed_evidences"],
+        f"evidence_viewed({evidence_id})",
+    )
+
+
+def character_chapter_read(condition: ConditionNode, state: GameState) -> LeafEvaluation:
+    """求值玩家是否已阅读一个已授权人物章节。"""
+
+    chapter_id = condition.required_text("chapter_id")
+    return LeafEvaluation(
+        chapter_id in state["read_character_chapters"],
+        f"character_chapter_read({chapter_id})",
+    )
+
+
 def evidence_shown_to_npc(condition: ConditionNode, state: GameState) -> LeafEvaluation:
     """按照 DSL 参考文档 2.2 节求值 `evidence_shown_to_npc`。"""
 

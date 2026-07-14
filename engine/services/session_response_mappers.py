@@ -35,6 +35,7 @@ def state_response(session: StoredSession, stage_name: str | None) -> SessionSta
         unlocked_clues_count=len(state.unlocked_clues),
         total_clues_in_round=max(len(state.unlocked_clues), 0),
         discovered_evidences=state.discovered_evidences,
+        viewed_evidences=state.viewed_evidences,
         current_scene=state.current_scene,
         pending_media=[
             PendingMedia(id=item["id"], type=item["type"], status=item["status"])

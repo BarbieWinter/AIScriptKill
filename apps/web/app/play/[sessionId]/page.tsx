@@ -17,18 +17,19 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore, type ActionType } from "@/stores/gameStore";
 import { api, isMockMode } from "@/lib/api";
 import { WsClient } from "@/lib/ws";
-import { getMockEngine, mockScenes } from "@/lib/mock-data";
+import { mockScenes } from "@/lib/mock-data";
 import { SceneBackground } from "@/components/game/SceneBackground";
 import { SceneHotspots } from "@/components/game/SceneHotspots";
 import { ChatPanel } from "@/components/game/ChatPanel";
 import { ClueBoard } from "@/components/game/ClueBoard";
 import { EvidenceBackpack } from "@/components/game/EvidenceBackpack";
+import { CharacterChapters } from "@/components/game/CharacterChapters";
 import { StageTransition } from "@/components/game/StageTransition";
 import { FinalSubmission } from "@/components/game/FinalSubmission";
 import { TruthReveal } from "@/components/game/TruthReveal";
@@ -44,6 +45,22 @@ const npcNames: Record<string, string> = {
   zhuosiyuan: "卓司元", cuikaiqiang: "崔铠强",
 };
 
+const liveSceneHotspots: Record<
+  string,
+  Array<{ id: string; label: string; x: number; y: number; width: number; height: number }>
+> = {
+  "back-alley": [
+    {
+      id: "back-door-traces",
+      label: "🔍 后门旁的痕迹",
+      x: 58,
+      y: 44,
+      width: 18,
+      height: 18,
+    },
+  ],
+};
+
 export default function GamePage() {
   const params = useParams();
   const router = useRouter();
@@ -54,14 +71,18 @@ export default function GamePage() {
   const setStage = useGameStore((s) => s.setStage);
   const setScene = useGameStore((s) => s.setScene);
   const setActions = useGameStore((s) => s.setActions);
+  const setTotalCluesInRound = useGameStore((s) => s.setTotalCluesInRound);
+  const setCharacters = useGameStore((s) => s.setCharacters);
+  const setClues = useGameStore((s) => s.setClues);
+  const setEvidences = useGameStore((s) => s.setEvidences);
+  const setMessages = useGameStore((s) => s.setMessages);
+  const setCards = useGameStore((s) => s.setCards);
   const currentStage = useGameStore((s) => s.currentStage);
   const currentScene = useGameStore((s) => s.currentScene);
   const addMessage = useGameStore((s) => s.addMessage);
   const addClue = useGameStore((s) => s.addClue);
   const addEvidence = useGameStore((s) => s.addEvidence);
   const openPanel = useGameStore((s) => s.openPanel);
-  const closePanel = useGameStore((s) => s.closePanel);
-  const activePanel = useGameStore((s) => s.activePanel);
 
   /* local state */
   const [flash, setFlash] = useState(false);
@@ -72,71 +93,78 @@ export default function GamePage() {
   const [chatOpen, setChatOpen] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [clueToast, setClueToast] = useState<{ name: string; isKey: boolean } | null>(null);
+  const [truthSummary, setTruthSummary] = useState("");
 
-  const engineRef = useRef(getMockEngine());
-  const stageRef = useRef(currentStage);
+  const hydrateSession = useCallback(async () => {
+    const [session, characters, clues, evidences, chat, cards] = await Promise.all([
+      api.getSession(sessionId),
+      api.getCharacters(sessionId),
+      api.getClues(sessionId),
+      api.getEvidences(sessionId),
+      api.getChatHistory(sessionId),
+      api.getCards(sessionId),
+    ]);
+
+    const availableCharacterIds = new Set(session.available_characters);
+    const availableCharacters = characters.characters
+      .filter(
+        (character) =>
+          character.dialogue_available &&
+          (availableCharacterIds.size === 0 || availableCharacterIds.has(character.id))
+      )
+      .map((character) => ({
+        id: character.id,
+        name: character.name,
+        mood: character.current_mood,
+      }));
+
+    const hydratedEvidences = evidences.evidences.map((evidence) => ({
+      ...evidence,
+      status: session.viewed_evidences.includes(evidence.id)
+        ? "viewed"
+        : evidence.status,
+    }));
+
+    setSession(session.session_id, session.script_id, session.player_character_id);
+    setStage(session.current_stage);
+    setScene(session.current_scene);
+    setActions(session.available_actions as ActionType[]);
+    setTotalCluesInRound(session.total_clues_in_round);
+    setCharacters(availableCharacters);
+    setClues(clues.clues);
+    setEvidences(hydratedEvidences);
+    setMessages(chat.messages);
+    setCards(cards.cards);
+  }, [
+    sessionId,
+    setActions,
+    setCards,
+    setCharacters,
+    setClues,
+    setEvidences,
+    setMessages,
+    setScene,
+    setSession,
+    setStage,
+    setTotalCluesInRound,
+  ]);
 
   // ══ 初始化 ══
   useEffect(() => {
     let cancelled = false;
-    const introTimers: ReturnType<typeof setTimeout>[] = [];
 
-    const syncMockSession = () => {
-      const engine = engineRef.current;
-      if (!useGameStore.getState().sessionId) {
-        setSession(sessionId, "snow-village", "zhuosiyuan");
-      }
-      const stage = engine.getStage();
-      const scene = engine.getCurrentScene();
-      setStage(stage.id);
-      setScene(scene.id);
-      setActions(stage.available_actions as ActionType[]);
-      stageRef.current = stage.id;
-      return stage.id;
-    };
-
-    const showPrologueIntro = () => {
-      const msgs = [
-        { id: "init-1", text: "夜幕降临，雪乡的灯笼一盏盏亮了起来。温暖的灯光映照着飘落的雪花，远处传来零星的爆竹声。" },
-        { id: "init-2", text: "你推开饭店的木门，一股热浪扑面而来。炉火烧得正旺，几个客人正在喝酒聊天。王大达在柜台后面擦拭着酒杯。", delay: 2200 },
-        { id: "init-3", text: "你注意到，虽然王大达在笑，但他的眼神中似乎藏着一丝不安。你的调查，从这里开始。", delay: 4500 },
-      ];
-      msgs.forEach(({ id, text, delay = 0 }) => {
-        const timer = setTimeout(() => addMessage({
-          id: `init-${id}`,
-          role: "npc", character_id: "dm", text,
-          emotion: "calm", timestamp: new Date().toISOString(),
-        }), delay);
-        introTimers.push(timer);
+    hydrateSession().catch((error) => {
+      if (cancelled) return;
+      console.error("[GamePage] 会话状态同步失败:", error);
+      toast.error("无法加载游戏会话", {
+        description: "请确认后端服务和剧本包已就绪。",
       });
-    };
-
-    if (isMockMode()) {
-      if (syncMockSession() === "prologue") {
-        showPrologueIntro();
-      }
-      return () => introTimers.forEach(clearTimeout);
-    }
-
-    api.getSession(sessionId)
-      .then((session) => {
-        if (cancelled) return;
-        setSession(session.session_id, session.script_id, session.player_character_id);
-        setStage(session.current_stage);
-        setScene(session.current_scene);
-        setActions(session.available_actions as ActionType[]);
-        stageRef.current = session.current_stage;
-      })
-      .catch((error) => {
-        console.error("[GamePage] 会话状态同步失败:", error);
-        toast.error("无法加载后端会话状态", { description: "已保留当前界面，等待后端会话恢复。" });
-      });
+    });
 
     return () => {
       cancelled = true;
-      introTimers.forEach(clearTimeout);
     };
-  }, [addMessage, sessionId, setActions, setScene, setSession, setStage]);
+  }, [hydrateSession]);
 
   // ══ WebSocket 事件 ══
   useEffect(() => {
@@ -145,7 +173,6 @@ export default function GamePage() {
     if (!isMockMode()) {
       const ws = new WsClient(sessionId);
       let firstPong = true;
-      const heartbeatTimer = setTimeout(() => ws.send("session.ping", {}), 500);
       const offPong = ws.on("session.pong", (data: { session_id?: string }) => {
         if (firstPong) {
           firstPong = false;
@@ -158,7 +185,6 @@ export default function GamePage() {
 
       ws.connect();
       wsCleanup = () => {
-        clearTimeout(heartbeatTimer);
         offPong();
         ws.disconnect();
       };
@@ -185,7 +211,6 @@ export default function GamePage() {
 
       ws.on("stage.changed", (data: any) => {
         setStage(data.to);
-        stageRef.current = data.to;
         setActions(data.available_actions || []);
         setBanner({ name: data.stage_name, reason: data.reason });
         const sceneMap: Record<string, string> = {
@@ -204,8 +229,18 @@ export default function GamePage() {
     return () => wsCleanup?.();
   }, [addClue, addEvidence, addMessage, sessionId, setActions, setScene, setStage]);
 
-  const currentSceneConfig = mockScenes.find((s) => s.id === currentScene);
-  const canSubmitFinal = ["act2_investigation", "act2_confrontation", "act3_reveal"].includes(currentStage);
+  const currentSceneConfig = isMockMode()
+    ? mockScenes.find((scene) => scene.id === currentScene)
+    : null;
+  const currentHotspots = isMockMode()
+    ? currentSceneConfig?.hotspots ?? []
+    : liveSceneHotspots[currentScene] ?? [];
+  const discoveredEvidences = useGameStore((state) => state.discoveredEvidences);
+  const discoveredEvidenceIds = discoveredEvidences.map((evidence) => evidence.id);
+  const investigatedHotspotIds = discoveredEvidenceIds.includes("evidence-back-door-image")
+    ? ["back-door-traces"]
+    : [];
+  const canSubmitFinal = currentStage === "back_door_judgement";
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[var(--background)] select-none">
@@ -271,8 +306,13 @@ export default function GamePage() {
       )}
 
       {/* ══ Layer 2: 场景热区 ══ */}
-      {currentSceneConfig && (
-        <SceneHotspots sceneId={currentScene} hotspots={currentSceneConfig.hotspots} />
+      {currentHotspots.length > 0 && (
+        <SceneHotspots
+          key={`${currentScene}:${investigatedHotspotIds.join(",")}`}
+          sceneId={currentScene}
+          hotspots={currentHotspots}
+          discovered={investigatedHotspotIds}
+        />
       )}
 
       {/* ══ Layer 3: 顶部栏（纯透明浮动） ══ */}
@@ -297,12 +337,17 @@ export default function GamePage() {
               title="证物背包">
               <Backpack className="h-4 w-4" />
             </button>
+            <button onClick={() => openPanel("chapter")}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-sm border border-white/5 text-white/60 hover:text-white/90 hover:bg-black/60 transition-all"
+              title="人物章节">
+              <BookOpen className="h-4 w-4" />
+            </button>
             {canSubmitFinal && (
               <button onClick={() => setShowFinal(true)}
                 className="flex items-center gap-1.5 rounded-lg bg-[var(--theme-primary)]/80 backdrop-blur-sm px-3 h-8 text-xs font-bold text-white hover:bg-[var(--theme-primary)] transition-all shadow-lg shadow-[var(--theme-primary)]/20"
               >
                 <Send className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">最终推理</span>
+                <span className="hidden sm:inline">提交判断</span>
               </button>
             )}
           </div>
@@ -317,14 +362,13 @@ export default function GamePage() {
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="absolute bottom-0 left-0 right-0 z-40"
-            style={{ maxHeight: "40vh" }}
+            className="absolute bottom-0 left-0 right-0 z-40 flex h-[40vh] min-h-0 flex-col"
           >
             {/* 毛玻璃背景 */}
             <div className="absolute inset-0 bg-gradient-to-t from-[var(--background)] via-[var(--background)]/90 to-[var(--background)]/30 backdrop-blur-md" />
 
             {/* 收起手柄 */}
-            <div className="relative flex justify-center pt-1">
+            <div className="relative flex shrink-0 justify-center pt-1">
               <button
                 onClick={() => setChatOpen(false)}
                 className="w-16 h-5 flex items-center justify-center rounded-t-lg bg-white/5 hover:bg-white/10 transition-colors border border-b-0 border-white/5"
@@ -335,7 +379,7 @@ export default function GamePage() {
               </button>
             </div>
 
-            <div className="relative">
+            <div className="relative flex min-h-0 flex-1 flex-col">
               <ChatPanel />
             </div>
           </motion.div>
@@ -354,13 +398,28 @@ export default function GamePage() {
         )}
       </AnimatePresence>
 
-      {/* ══ 最终推理 ══ */}
-      <FinalSubmission open={showFinal} onClose={() => setShowFinal(false)}
-        onComplete={() => { setShowFinal(false); setShowTruth(true); }} />
+      {/* ══ 阶段判断 ══ */}
+      <FinalSubmission
+        open={showFinal}
+        onClose={() => setShowFinal(false)}
+        onComplete={async (result) => {
+          setShowFinal(false);
+          try {
+            const review = await api.getReview(sessionId);
+            setTruthSummary(review.truth_summary);
+          } catch (error) {
+            console.error("[GamePage] 加载判断复盘失败:", error);
+            setTruthSummary(result.detail.evidence_boundary);
+          }
+          setShowTruth(true);
+        }}
+      />
 
-      {/* ══ 真相揭示 ══ */}
-      <TruthReveal open={showTruth} sessionId={sessionId}
-        truthSummary="程俊，原名程晓东，二十年前他的父亲被冤枉杀害了雪乡村民，含冤而死。他改名换姓来到雪乡，化名猎户潜伏多年，却意外卷入了一场新的谋杀案。真正的凶手其实是当年冤案的知情者——王大达。雪乡的秘密，远比表面看起来更加复杂。"
+      {/* ══ 判断结果 ══ */}
+      <TruthReveal
+        open={showTruth}
+        sessionId={sessionId}
+        truthSummary={truthSummary}
       />
 
       {/* ══ 阶段切换横幅 ══ */}
@@ -373,6 +432,7 @@ export default function GamePage() {
       {/* ══ 模态面板 ══ */}
       <ClueBoard />
       <EvidenceBackpack />
+      <CharacterChapters />
 
       {/* ══ 手机端浮动操作按钮 ══ */}
       <div className="md:hidden fixed bottom-4 right-4 z-45 flex flex-col gap-2">
@@ -408,7 +468,7 @@ export default function GamePage() {
                 {[
                   { icon: Search, label: "线索板", panel: "clue" as const, color: "text-[var(--theme-primary)]" },
                   { icon: Backpack, label: "证物背包", panel: "evidence" as const, color: "text-[var(--warning)]" },
-                  { icon: BookOpen, label: "笔记", panel: "note" as const, color: "text-[var(--info)]" },
+                  { icon: BookOpen, label: "人物章节", panel: "chapter" as const, color: "text-[var(--info)]" },
                 ].map((item) => (
                   <button key={item.panel}
                     onClick={() => { openPanel(item.panel); setMobileMenu(false); }}
@@ -423,7 +483,7 @@ export default function GamePage() {
                     className="w-full flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-bold text-white bg-[var(--theme-primary)]/20 hover:bg-[var(--theme-primary)]/30 transition-colors"
                   >
                     <Send className="h-5 w-5" />
-                    <span>最终推理</span>
+                    <span>提交判断</span>
                   </button>
                 )}
               </div>

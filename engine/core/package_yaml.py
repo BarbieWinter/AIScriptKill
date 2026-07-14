@@ -1,5 +1,8 @@
 """重新导出公开的剧本包 YAML 模型接口。"""
 
+from engine.core.package_character_chapter_yaml import (
+    CharacterChapterFrontmatter as CharacterChapterFrontmatter,
+)
 from engine.core.package_character_yaml import CharacterDefinition as CharacterDefinition
 from engine.core.package_character_yaml import CharacterIndex as CharacterIndex
 from engine.core.package_character_yaml import CharacterIndexItem as CharacterIndexItem

@@ -4,7 +4,6 @@ from engine.rag.chunk_sources import (
     clue_chunks,
     dm_guide_chunks,
     ending_chunks,
-    evidence_chunks,
     package_context_chunks,
     stage_chunks,
 )
@@ -21,9 +20,6 @@ def chunk_package(package: ScriptPackageImport, max_chars: int = 800) -> tuple[R
     chunks.extend(stage_chunks(script_id, package.stages, stage_orders, max_chars))
     chunks.extend(character_chunks(script_id, package.characters, stage_orders, max_chars))
     chunks.extend(clue_chunks(script_id, package.clues, stage_orders, entry_stage, max_chars))
-    chunks.extend(
-        evidence_chunks(script_id, package.evidences, stage_orders, entry_stage, max_chars),
-    )
     chunks.extend(ending_chunks(script_id, package.endings, entry_stage, stage_orders, max_chars))
     chunks.extend(
         dm_guide_chunks(script_id, package.dm_guide, entry_stage, stage_orders, max_chars),

@@ -42,6 +42,9 @@ def rich_state() -> GameState:
         },
     ]
     state["discovered_evidences"] = ["bloody_knife"]
+    state["viewed_evidences"] = ["bloody_knife"]
+    state["unlocked_character_chapters"] = ["detective-chapter-01"]
+    state["read_character_chapters"] = ["detective-chapter-01"]
     state["evidences_shown_to_npcs"] = [{"evidence_id": "bloody_knife", "character_id": "wangdada"}]
     state["character_dialog_counts"] = {"wangdada": 3}
     state["triggered_dialogs"] = ["letter_sender"]
@@ -78,6 +81,10 @@ def leaf_condition_cases() -> tuple[tuple[JsonMapping, bool], ...]:
         ({"type": "clue_discovered", "clue_id": "missing_clue"}, False),
         ({"type": "evidence_found", "evidence_id": "bloody_knife"}, True),
         ({"type": "evidence_found", "evidence_id": "missing_evidence"}, False),
+        ({"type": "evidence_viewed", "evidence_id": "bloody_knife"}, True),
+        ({"type": "evidence_viewed", "evidence_id": "missing_evidence"}, False),
+        ({"type": "character_chapter_read", "chapter_id": "detective-chapter-01"}, True),
+        ({"type": "character_chapter_read", "chapter_id": "detective-chapter-02"}, False),
         (
             {
                 "type": "evidence_shown_to_npc",

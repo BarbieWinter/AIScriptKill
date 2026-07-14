@@ -50,6 +50,7 @@ class SessionStateResponse(ApiModel):
     unlocked_clues_count: int = Field(description="Unlocked clue count.")
     total_clues_in_round: int = Field(description="Total clue count in current round.")
     discovered_evidences: list[str] = Field(description="Discovered evidence IDs.")
+    viewed_evidences: list[str] = Field(description="Viewed evidence IDs.")
     current_scene: str = Field(description="Current scene ID.")
     pending_media: list[PendingMedia] = Field(description="Active media queue.")
 

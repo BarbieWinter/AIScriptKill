@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">王氏杀猪菜前厅占位图</title>
+  <desc id="desc">已经打烊的饭馆前厅，炉火仍有微光。</desc>
+  <rect width="1600" height="900" fill="#201915"/>
+  <rect y="560" width="1600" height="340" fill="#34261f"/>
+  <rect x="160" y="150" width="420" height="410" rx="12" fill="#15191f" stroke="#74513c" stroke-width="16"/>
+  <rect x="1030" y="300" width="250" height="260" rx="16" fill="#3d241d" stroke="#87604a" stroke-width="14"/>
+  <ellipse cx="1155" cy="560" rx="170" ry="50" fill="#e07b39" opacity=".35"/>
+  <text x="800" y="110" text-anchor="middle" fill="#e7d2bb" font-size="54" font-family="sans-serif">王氏杀猪菜 · 已打烊</text>
+</svg>

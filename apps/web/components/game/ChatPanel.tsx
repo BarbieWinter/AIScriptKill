@@ -15,8 +15,10 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useGameStore } from "@/stores/gameStore";
+import { useGameStore, type ActionType } from "@/stores/gameStore";
+import { api, isMockMode } from "@/lib/api";
 import { getMockEngine } from "@/lib/mock-data";
+import { toast } from "sonner";
 import { Send, ChevronUp, Sparkles } from "lucide-react";
 
 /* ── NPC 配置 ── */
@@ -165,23 +167,39 @@ export function ChatPanel() {
   const setNpcTyping = useGameStore((s) => s.setNpcTyping);
   const availableCharacters = useGameStore((s) => s.availableCharacters);
   const currentStage = useGameStore((s) => s.currentStage);
+  const sessionId = useGameStore((s) => s.sessionId);
+  const setStage = useGameStore((s) => s.setStage);
+  const setScene = useGameStore((s) => s.setScene);
+  const setActions = useGameStore((s) => s.setActions);
 
   const [inputText, setInputText] = useState("");
-  const [selectedChar, setSelectedChar] = useState("dm");
+  const [selectedChar, setSelectedChar] = useState("wangdada");
   const [showCharMenu, setShowCharMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const shouldFollowLatestRef = useRef(true);
 
-  // 自动滚动
+  // 只在玩家仍停留在底部时跟随新消息；向上翻阅历史时不强制拉回底部。
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!shouldFollowLatestRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chatMessages, isNpcTyping]);
 
-  /** 发送消息 → 触发 NPC 回复 */
-  const handleSend = useCallback(() => {
-    const text = inputText.trim();
-    if (!text) return;
+  const handleMessagesScroll = () => {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    shouldFollowLatestRef.current = distanceFromBottom < 48;
+  };
 
+  /** 发送消息 → 触发 NPC 回复 */
+  const handleSend = useCallback(async () => {
+    const text = inputText.trim();
+    if (!text || !sessionId || isNpcTyping) return;
+
+    shouldFollowLatestRef.current = true;
     addMessage({
       id: `msg-p-${Date.now()}`,
       role: "player",
@@ -192,37 +210,91 @@ export function ChatPanel() {
     setInputText("");
     setNpcTyping(selectedChar);
 
-    const engine = getMockEngine();
-    const delay = 1000 + Math.random() * 1200;
+    try {
+      if (isMockMode()) {
+        const response = getMockEngine().sendMessage(selectedChar, text);
+        if (response) {
+          addMessage({
+            id: `msg-n-${Date.now()}`,
+            role: "npc",
+            character_id: selectedChar,
+            text: response.text,
+            emotion: response.emotion,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return;
+      }
 
-    setTimeout(() => {
-      const response = engine.sendMessage(selectedChar, text);
-      if (response) {
+      const response = await api.performAction(sessionId, "talk_to_npc", {
+        character_id: selectedChar,
+        message: text,
+      });
+      if (response.type === "npc_response") {
         addMessage({
           id: `msg-n-${Date.now()}`,
           role: "npc",
-          character_id: selectedChar,
+          character_id: response.character_id,
           text: response.text,
           emotion: response.emotion,
           timestamp: new Date().toISOString(),
         });
       }
+    } catch (error) {
+      console.error("[ChatPanel] NPC 对话失败:", error);
+      toast.error("王大达暂时没有回应");
+    } finally {
       setNpcTyping(null);
-    }, delay);
-  }, [inputText, selectedChar, addMessage, setNpcTyping]);
+    }
+  }, [
+    addMessage,
+    inputText,
+    isNpcTyping,
+    selectedChar,
+    sessionId,
+    setNpcTyping,
+  ]);
+
+  const handleAdvance = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const result = await api.performAction(sessionId, "request_advance", {
+        reason: "玩家请求推进",
+      });
+      if (result.type === "advance_denied") {
+        toast(result.hint, { icon: "💡", duration: 4000 });
+        return;
+      }
+      if (!isMockMode() && result.type === "stage_transition") {
+        const session = await api.getSession(sessionId);
+        setStage(session.current_stage);
+        setScene(session.current_scene);
+        setActions(session.available_actions as ActionType[]);
+      }
+    } catch (error) {
+      console.error("[ChatPanel] 阶段推进失败:", error);
+      toast.error("当前还不能推进", {
+        description: "请检查人物章节、调查材料和证物出示是否完成。",
+      });
+    }
+  }, [sessionId, setActions, setScene, setStage]);
 
   const currentCharConfig = npcConfig[selectedChar] || { name: selectedChar, color: "#fff", icon: "?" };
-  const canShowAdvance = currentStage !== "epilogue" && currentStage !== "act3_reveal";
+  const canShowAdvance = currentStage !== "epilogue" && currentStage !== "back_door_judgement";
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* 拖拽手柄（手机） */}
       <div className="flex justify-center py-1.5 md:hidden">
         <div className="w-10 h-1 rounded-full bg-white/20" />
       </div>
 
       {/* 对话列表 */}
-      <div className="flex-1 overflow-y-auto py-2 space-y-1.5 scroll-smooth">
+      <div
+        ref={messagesViewportRef}
+        onScroll={handleMessagesScroll}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2 space-y-1.5 scroll-smooth"
+      >
         {chatMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-white/30 text-sm">
             <p className="mb-1 text-lg">💬</p>
@@ -242,7 +314,7 @@ export function ChatPanel() {
       </div>
 
       {/* 输入区 */}
-      <div className="border-t border-white/5 px-3 py-2.5 bg-gradient-to-t from-[var(--background)] via-[var(--background)]/95 to-transparent">
+      <div className="shrink-0 border-t border-white/5 px-3 py-2.5 bg-gradient-to-t from-[var(--background)] via-[var(--background)]/95 to-transparent">
         {/* 快捷操作行 */}
         <div className="flex items-center gap-1.5 mb-2">
           {/* 角色选择 */}
@@ -267,16 +339,21 @@ export function ChatPanel() {
                   exit={{ opacity: 0, y: -4, scale: 0.95 }}
                   className="absolute bottom-full left-0 mb-1 flex gap-1 flex-wrap bg-[var(--panel-bg)] border border-white/10 rounded-xl p-2 shadow-2xl backdrop-blur-xl min-w-[200px]"
                 >
-                  <button
-                    onClick={() => { setSelectedChar("dm"); setShowCharMenu(false); }}
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all w-full ${
-                      selectedChar === "dm"
-                        ? "bg-[var(--info)]/20 text-[var(--info)]"
-                        : "text-white/60 hover:text-white hover:bg-white/5"
-                    }`}
-                  >
-                    🎭 DM · 叙事者
-                  </button>
+                  {isMockMode() && (
+                    <button
+                      onClick={() => {
+                        setSelectedChar("dm");
+                        setShowCharMenu(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all ${
+                        selectedChar === "dm"
+                          ? "bg-[var(--info)]/20 text-[var(--info)]"
+                          : "text-white/60 hover:bg-white/5 hover:text-white"
+                      }`}
+                    >
+                      🎭 DM · 叙事者
+                    </button>
+                  )}
                   {availableCharacters.map((c: any) => {
                     const cfg = npcConfig[c.id];
                     return (
@@ -340,14 +417,7 @@ export function ChatPanel() {
           </button>
           {canShowAdvance && (
             <button
-              onClick={() => {
-                const engine = getMockEngine();
-                const result = engine.requestAdvance("推进");
-                if (result.type === "advance_denied") {
-                  const { toast } = require("sonner");
-                  toast(result.hint, { icon: "💡", duration: 4000 });
-                }
-              }}
+              onClick={handleAdvance}
               className="hidden sm:flex items-center gap-1 rounded-xl border border-white/10 px-3 py-2.5 text-xs text-white/50 hover:text-white/80 hover:border-white/20 transition-all"
               title="推进到下一阶段"
             >

@@ -22,6 +22,7 @@ export function ClueBoard() {
   const open = useGameStore((s) => s.activePanel === "clue");
   const onClose = () => useGameStore.getState().closePanel();
   const clues = useGameStore((s) => s.unlockedClues);
+  const totalCluesInRound = useGameStore((s) => s.totalCluesInRound);
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClue, setSelectedClue] = useState<any>(null);
@@ -83,7 +84,12 @@ export function ClueBoard() {
             <motion.div
               className="h-full rounded-full bg-[var(--theme-primary)]"
               initial={{ width: 0 }}
-              animate={{ width: `${(clues.length / 9) * 100}%` }}
+              animate={{
+                width: `${Math.min(
+                  100,
+                  (clues.length / Math.max(totalCluesInRound, 1)) * 100
+                )}%`,
+              }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             />
           </div>

@@ -137,7 +137,10 @@ export const api = {
     available_characters: string[];
     unlocked_clues_count: number;
     total_clues_in_round: number;
+    discovered_evidences: string[];
+    viewed_evidences: string[];
     current_scene: string;
+    pending_media: Array<{ id: string; type: string; status: string }>;
   }> => {
     if (USE_MOCK) {
       const engine = getMockEngine();
@@ -154,7 +157,10 @@ export const api = {
         available_characters: stage.available_characters,
         unlocked_clues_count: engine.getUnlockedClues().length,
         total_clues_in_round: mockClues.filter((c) => c.stage === stage.id).length,
+        discovered_evidences: engine.getDiscoveredEvidences().map((item) => item.id),
+        viewed_evidences: [],
         current_scene: scene.id,
+        pending_media: [],
       };
     }
     return request("GET", `/sessions/${sessionId}`);
@@ -231,43 +237,48 @@ export const api = {
     });
   },
 
-  /**
-   * 提交最终推理
-   * POST /sessions/{sessionId}/final-submission
-   *
-   * @param sessionId - 会话 ID
-   * @param submission - 推理提交内容
-   * @param submission.suspect - 指控对象 ID
-   * @param submission.motive - 作案动机
-   * @param submission.key_evidences - 关键证物 ID 列表
-   * @param submission.deduction - 推理描述文字
-   * @returns 评分结果
-   */
+  /** 提交雪乡首个切片的确定性阶段判断。 */
   submitFinal: async (
     sessionId: string,
-    submission: {
-      suspect: string;
-      motive: string;
-      key_evidences: string[];
-      deduction: string;
-    }
+    submission: { option: "A" | "B" | "C" | "D" }
   ): Promise<{
-    type: string;
+    type: "submission_result";
     correct: boolean;
     score: number;
-    rating: string;
     detail: {
-      correct_suspect: boolean;
-      correct_motive: boolean;
-      key_evidence_hit_rate: string;
-      missed_key_evidences: string[];
+      selected_option: "A" | "B" | "C" | "D";
+      correct_option: "C";
+      evidence_boundary: string;
+      npc_disclosure: string | null;
     };
     ending_id: string;
-    triggered_events: Array<{ action: string; asset_id: string }>;
+    triggered_events: Array<{
+      action: string;
+      asset_id?: string;
+      text?: string;
+    }>;
   }> => {
     if (USE_MOCK) {
-      const engine = getMockEngine();
-      return engine.submitFinal(submission);
+      const correct = submission.option === "C";
+      return {
+        type: "submission_result",
+        correct,
+        score: correct ? 100 : 0,
+        detail: {
+          selected_option: submission.option,
+          correct_option: "C",
+          evidence_boundary: correct
+            ? "后门半开是已证实事实，但开门者和目的仍不可确认。"
+            : "这项判断超出了当前材料能够证实的范围。",
+          npc_disclosure: correct
+            ? "后门当时确实开着。我后来发现门闩没扣严，就重新扣好了；我没看见是谁开的。"
+            : null,
+        },
+        ending_id: correct
+          ? "back_door_judgement_supported"
+          : "back_door_judgement_unsupported",
+        triggered_events: [],
+      };
     }
     return request("POST", `/sessions/${sessionId}/final-submission`, submission);
   },
@@ -304,6 +315,64 @@ export const api = {
       return { evidences: engine.getDiscoveredEvidences() };
     }
     return request("GET", `/sessions/${sessionId}/evidences`);
+  },
+
+  /** 标记一件已发现证物为已查看。 */
+  viewEvidence: async (
+    sessionId: string,
+    evidenceId: string
+  ): Promise<{ evidence_id: string; status: string }> => {
+    if (USE_MOCK) {
+      return { evidence_id: evidenceId, status: "viewed" };
+    }
+    return request(
+      "POST",
+      `/sessions/${sessionId}/evidences/${encodeURIComponent(evidenceId)}/viewed`
+    );
+  },
+
+  /** 获取当前玩家角色已解锁的人物章节。 */
+  getCharacterChapters: async (
+    sessionId: string
+  ): Promise<{
+    chapters: Array<{
+      id: string;
+      character_id: string;
+      order: number;
+      title: string;
+      status: string;
+    }>;
+  }> => {
+    if (USE_MOCK) return { chapters: [] };
+    return request("GET", `/sessions/${sessionId}/character-chapters`);
+  },
+
+  /** 读取授权章节正文，并在服务端持久化已读状态。 */
+  readCharacterChapter: async (
+    sessionId: string,
+    chapterId: string
+  ): Promise<{
+    id: string;
+    character_id: string;
+    order: number;
+    title: string;
+    status: string;
+    content: string;
+  }> => {
+    if (USE_MOCK) {
+      return {
+        id: chapterId,
+        character_id: "zhuosiyuan",
+        order: 1,
+        title: "人物章节",
+        status: "viewed",
+        content: "Mock 模式的人物章节由旧交互流程提供。",
+      };
+    }
+    return request(
+      "GET",
+      `/sessions/${sessionId}/character-chapters/${encodeURIComponent(chapterId)}`
+    );
   },
 
   /**

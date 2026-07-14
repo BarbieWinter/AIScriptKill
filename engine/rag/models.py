@@ -56,7 +56,8 @@ class RagSessionContext:
     script_id: str
     current_stage: str
     current_stage_order: int
-    character_id: str
+    viewer_character_id: str
+    speaker_character_id: str | None = None
     unlocked_clue_ids: tuple[str, ...] = ()
     is_dm: bool = False
 

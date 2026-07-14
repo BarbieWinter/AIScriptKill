@@ -49,6 +49,20 @@ class CharacterRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CharacterChapterRecord:
+    """携带一个角色专属、独立授权的 Markdown 章节。"""
+
+    id: str
+    character_id: str
+    sort_order: int
+    title: str
+    visibility: Literal["character_only"]
+    release: JsonMapping
+    stage_min: str | None
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
 class ClueRecord:
     """携带从线索轮次文档展开的一条线索。"""
 
@@ -124,6 +138,7 @@ class ScriptPackageImport:
     package: PackageRecord
     stages: tuple[StageRecord, ...]
     characters: tuple[CharacterRecord, ...]
+    chapters: tuple[CharacterChapterRecord, ...] = field(default_factory=tuple)
     clues: tuple[ClueRecord, ...] = field(default_factory=tuple)
     evidences: tuple[EvidenceRecord, ...] = field(default_factory=tuple)
     scenes: tuple[SceneRecord, ...] = field(default_factory=tuple)

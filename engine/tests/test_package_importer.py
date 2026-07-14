@@ -230,6 +230,72 @@ async def test_import_to_db_replaces_endings_and_dm_guide_on_repeated_import() -
     assert session.commit_count == 2
 
 
+async def test_import_to_db_persists_and_replaces_character_chapters() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = """---
+chapter_id: chapter-01
+character_id: player
+order: 1
+title: 抵达
+visibility: character_only
+release:
+  type: game_start
+stage_min: prologue
+---
+
+不会进入普通知识索引的章节正文。
+"""
+    package = load_package_archive(package_archive(files))
+    session = RecordingAsyncSession()
+
+    await import_to_db(package, session)
+    await import_to_db(package, session)
+
+    chapter_params = _insert_params(session, "script_character_chapters")
+    assert chapter_params == [
+        {
+            "script_id": "minimal-case",
+            "chapter_id": "chapter-01",
+            "character_id": "player",
+            "sort_order": 1,
+            "title": "抵达",
+            "visibility": "character_only",
+            "release": {"type": "game_start"},
+            "stage_min": "prologue",
+            "content": "\n不会进入普通知识索引的章节正文。\n",
+        },
+        {
+            "script_id": "minimal-case",
+            "chapter_id": "chapter-01",
+            "character_id": "player",
+            "sort_order": 1,
+            "title": "抵达",
+            "visibility": "character_only",
+            "release": {"type": "game_start"},
+            "stage_min": "prologue",
+            "content": "\n不会进入普通知识索引的章节正文。\n",
+        },
+    ]
+    deleted_tables = [
+        table_name
+        for statement in session.statements
+        if isinstance(statement, Delete)
+        if (table_name := _table_name(statement)) is not None
+    ]
+    assert deleted_tables.count("script_character_chapters") == 2
+    assert session.commit_count == 2
+
+
+async def test_import_to_db_without_chapters_does_not_insert_chapter_rows() -> None:
+    package = load_package_archive(package_archive(minimal_package_files()))
+    session = RecordingAsyncSession()
+
+    await import_to_db(package, session)
+
+    assert _insert_params(session, "script_character_chapters") == []
+    assert session.commit_count == 1
+
+
 async def test_import_to_db_indexes_rag_knowledge_when_embedding_provider_is_supplied() -> None:
     # 给定：已加载剧本包包含仅供 DM 使用的 RAG 真相资料。
     package = rag_package()
@@ -250,7 +316,7 @@ async def test_import_to_db_indexes_rag_knowledge_when_embedding_provider_is_sup
     assert len(knowledge_params) > 0
     assert len(truth_params) > 0
     assert all(_metadata_visibility(params) == "dm_only" for params in truth_params)
-    assert all(_embedding_length(params) == 1536 for params in knowledge_params)
+    assert all(_embedding_length(params) == 1024 for params in knowledge_params)
     assert session.commit_count == 2
 
 

@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from engine.api.schemas import CreateSessionRequest
 from engine.api.schemas.common import ActionType
-from engine.db.tables import script_characters, script_packages, script_stages
+from engine.db.tables import (
+    script_character_chapters,
+    script_characters,
+    script_packages,
+    script_stages,
+)
 from engine.repositories.session_models import SessionRuntimeState
 
 # ── 初始会话种子模型 ──
@@ -52,6 +57,7 @@ class SessionSeed:
     available_actions: tuple[ActionType, ...]
     available_characters: tuple[str, ...]
     current_scene: str
+    unlocked_character_chapters: tuple[str, ...]
 
 
 # ── 剧本包入口读取 ──
@@ -73,12 +79,18 @@ async def load_session_seed(
     if payload.preferred_character_id not in playable_characters:
         return None
 
+    unlocked_character_chapters = await _game_start_chapters(
+        db,
+        payload.script_id,
+        payload.preferred_character_id,
+    )
     return SessionSeed(
         stage_id=package.engine.entry_stage,
         stage_name=stage.name,
         available_actions=_available_actions(stage.definition),
         available_characters=_available_characters(stage.definition, playable_characters),
         current_scene=_current_scene(stage.definition),
+        unlocked_character_chapters=unlocked_character_chapters,
     )
 
 
@@ -92,6 +104,7 @@ def initial_session_state(
         stage_name=seed.stage_name,
         available_actions=list(seed.available_actions),
         available_characters=list(seed.available_characters),
+        unlocked_character_chapters=list(seed.unlocked_character_chapters),
         current_scene=seed.current_scene,
     )
 
@@ -151,6 +164,28 @@ async def _playable_characters(db: AsyncSession, script_id: str) -> tuple[str, .
         .order_by(script_characters.c.sort_order, script_characters.c.character_id),
     )
     return tuple(str(character_id) for character_id in result.scalars().all())
+
+
+async def _game_start_chapters(
+    db: AsyncSession,
+    script_id: str,
+    character_id: str,
+) -> tuple[str, ...]:
+    result = await db.execute(
+        select(script_character_chapters.c.chapter_id)
+        .where(
+            and_(
+                script_character_chapters.c.script_id == script_id,
+                script_character_chapters.c.character_id == character_id,
+                script_character_chapters.c.release["type"].astext == "game_start",
+            ),
+        )
+        .order_by(
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.chapter_id,
+        ),
+    )
+    return tuple(str(chapter_id) for chapter_id in result.scalars().all())
 
 
 # ── 运行时字段派生 ──

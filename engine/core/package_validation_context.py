@@ -10,12 +10,14 @@ SUPPORTED_EVENT_ACTIONS: Final[frozenset[str]] = frozenset(
     (
         "clue_discover",
         "dm_narrate",
+        "evidence_discover",
         "npc_emotion",
         "npc_enter_scene",
         "play_audio",
         "save_checkpoint",
         "show_truth_summary",
         "transition_to",
+        "unlock_character_chapter",
         "unlock_clue_round",
         "unlock_scenes",
     ),
@@ -39,6 +41,7 @@ class PackageValidationContext:
     stage_ids: frozenset[str]
     act_ids: frozenset[str]
     character_ids: frozenset[str]
+    chapter_ids: frozenset[str]
     clue_ids: frozenset[str]
     evidence_ids: frozenset[str]
     scene_ids: frozenset[str]

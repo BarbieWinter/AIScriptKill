@@ -4,9 +4,11 @@ from math import sqrt
 
 from pydantic import SecretStr
 
+EMBEDDING_DIMENSIONS = 1024
+
 
 class DeterministicEmbeddingProvider:
-    def __init__(self, dimensions: int = 1536) -> None:
+    def __init__(self, dimensions: int = EMBEDDING_DIMENSIONS) -> None:
         self._dimensions = dimensions
 
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
@@ -36,12 +38,13 @@ def _tokens(text: str) -> tuple[str, ...]:
     return tuple(normalized[index : index + 2] for index in range(max(len(normalized) - 1, 0)))
 
 
-class OpenAIEmbeddingProvider:
+class DashScopeEmbeddingProvider:
     def __init__(
         self,
-        model: str = "text-embedding-3-small",
-        dimensions: int = 1536,
+        model: str = "text-embedding-v4",
+        dimensions: int = EMBEDDING_DIMENSIONS,
         api_key: str | None = None,
+        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ) -> None:
         from langchain_openai import OpenAIEmbeddings
 
@@ -49,6 +52,7 @@ class OpenAIEmbeddingProvider:
             model=model,
             dimensions=dimensions,
             api_key=SecretStr(api_key) if api_key is not None else None,
+            base_url=base_url,
         )
 
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:

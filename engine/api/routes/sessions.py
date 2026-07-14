@@ -5,12 +5,15 @@ from fastapi import APIRouter
 from engine.api.middleware.auth import CurrentUserDep
 from engine.api.schemas import (
     CardListResponse,
+    CharacterChapterListResponse,
+    CharacterChapterResponse,
     CharacterListResponse,
     ChatHistoryResponse,
     ClueListResponse,
     CreateSessionRequest,
     CreateSessionResponse,
     EvidenceListResponse,
+    EvidenceViewedResponse,
     ReviewResponse,
     SessionStateResponse,
     UpdateSessionRequest,
@@ -19,12 +22,15 @@ from engine.api.schemas import (
 from engine.db.session import SessionDep
 from engine.services.session_service import (
     get_cards,
+    get_character_chapters,
     get_characters,
     get_chat_history,
     get_clues,
     get_evidences,
+    read_character_chapter,
     restore_session,
     start_session,
+    view_evidence,
 )
 from engine.services.session_service import (
     get_review as get_session_review,
@@ -159,6 +165,90 @@ async def list_evidences(
             `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
     """
     return await get_evidences(session_id, current_user, db)
+
+
+@router.post(
+    "/{session_id}/evidences/{evidence_id}/viewed",
+    response_model=EvidenceViewedResponse,
+)
+async def mark_evidence_viewed(
+    session_id: str,
+    evidence_id: str,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+) -> EvidenceViewedResponse:
+    """将可访问会话中已发现的证物单调升级为已查看。
+
+    Args:
+        session_id: 待更新会话的 UUID 字符串。
+        evidence_id: 已由当前会话发现的证物 ID。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        已查看证物的标识符和不会降级的持久化状态。
+
+    Raises:
+        ApiError: 会话或证物不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID`、`SESSION_NOT_FOUND` 或
+            `EVIDENCE_NOT_DISCOVERED`。
+    """
+    return await view_evidence(session_id, evidence_id, current_user, db)
+
+
+@router.get(
+    "/{session_id}/character-chapters",
+    response_model=CharacterChapterListResponse,
+)
+async def list_character_chapters(
+    session_id: str,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+) -> CharacterChapterListResponse:
+    """列出可访问会话中当前玩家角色已解锁的人物章节。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        仅包含当前玩家角色且已有会话授权的章节目录。
+
+    Raises:
+        ApiError: 会话不可访问时抛出 `INVALID_TOKEN`、`INVALID_SESSION_ID`、
+            `INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
+    """
+    return await get_character_chapters(session_id, current_user, db)
+
+
+@router.get(
+    "/{session_id}/character-chapters/{chapter_id}",
+    response_model=CharacterChapterResponse,
+)
+async def get_character_chapter(
+    session_id: str,
+    chapter_id: str,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+) -> CharacterChapterResponse:
+    """读取当前玩家角色已解锁的人物章节并持久化已读状态。
+
+    Args:
+        session_id: 待查询会话的 UUID 字符串。
+        chapter_id: 已由当前会话授权的人物章节 ID。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        经角色归属和会话授权过滤的章节元数据与 Markdown 正文。
+
+    Raises:
+        ApiError: 会话或章节不可访问时抛出 `INVALID_TOKEN`、
+            `INVALID_SESSION_ID`、`INVALID_USER_ID`、`SESSION_NOT_FOUND` 或
+            `CHARACTER_CHAPTER_NOT_FOUND`。
+    """
+    return await read_character_chapter(session_id, chapter_id, current_user, db)
 
 
 @router.get("/{session_id}/characters", response_model=CharacterListResponse)

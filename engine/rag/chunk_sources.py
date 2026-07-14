@@ -4,7 +4,6 @@ from engine.core.package_schema import (
     CharacterRecord,
     ClueRecord,
     EndingRecord,
-    EvidenceRecord,
     JsonMapping,
     ScriptPackageImport,
     StageRecord,
@@ -67,7 +66,6 @@ def character_chunks(
             lines = [
                 f"角色: {character.name}",
                 *json_string_list(stage_mapping.get("knows")),
-                *json_string_list(stage_mapping.get("doesnt_know")),
             ]
             metadata = chunk_metadata(
                 script_id=script_id,
@@ -108,47 +106,6 @@ def clue_chunks(
         )
         text = "\n".join((clue.name, clue.description))
         yield from source_chunks("clue", clue.id, text, metadata, max_chars)
-
-
-def evidence_chunks(
-    script_id: str,
-    evidences: tuple[EvidenceRecord, ...],
-    stage_orders: dict[str, int],
-    entry_stage: str,
-    max_chars: int,
-) -> Iterable[RagChunk]:
-    for evidence in evidences:
-        metadata = chunk_metadata(
-            script_id=script_id,
-            source_type="evidence",
-            visibility="public",
-            stage_visible=entry_stage,
-            stage_order=stage_order(stage_orders, entry_stage),
-            extra={"evidence_id": evidence.id, "segment": "surface"},
-        )
-        yield from source_chunks(
-            "evidence",
-            f"{evidence.id}:surface",
-            "\n".join((evidence.name, evidence.description_surface)),
-            metadata,
-            max_chars,
-        )
-        if evidence.description_deep:
-            dm_metadata = chunk_metadata(
-                script_id=script_id,
-                source_type="evidence",
-                visibility="dm_only",
-                stage_visible=entry_stage,
-                stage_order=stage_order(stage_orders, entry_stage),
-                extra={"evidence_id": evidence.id, "segment": "deep"},
-            )
-            yield from source_chunks(
-                "evidence",
-                f"{evidence.id}:deep",
-                "\n".join((evidence.name, evidence.description_deep)),
-                dm_metadata,
-                max_chars,
-            )
 
 
 def ending_chunks(

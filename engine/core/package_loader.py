@@ -15,6 +15,7 @@ from engine.core.package_archive import (
     validate_archive_members,
     visible_file,
 )
+from engine.core.package_character_chapter_loader import load_character_chapters
 from engine.core.package_content_loader import (
     load_assets,
     load_characters,
@@ -53,7 +54,7 @@ def load_package_archive(archive_bytes: bytes, publish: bool = False) -> ScriptP
             names = tuple(name for name in archive.namelist() if visible_file(name))
             manifest_path = package_path(names)
             package_root = manifest_path.removesuffix("package.yml")
-            _ensure_supported_paths(names, package_root)
+            _ensure_supported_paths(tuple(archive.namelist()), names, package_root)
             return _load_package(archive, names, package_root, manifest_path, publish)
     except BadZipFile as exc:
         raise PackageArchiveError("INVALID_PACKAGE_ZIP", "上传文件不是有效的 zip 剧本包") from exc
@@ -67,12 +68,22 @@ def load_package_directory(package_dir: Path, publish: bool = False) -> ScriptPa
     return load_package_archive(package_directory_archive(package_dir), publish)
 
 
-def _ensure_supported_paths(names: tuple[str, ...], root: str) -> None:
+def _ensure_supported_paths(
+    archive_names: tuple[str, ...],
+    names: tuple[str, ...],
+    root: str,
+) -> None:
     personal_clue_prefix = f"{root}clues/personal/"
     if any(name.startswith(personal_clue_prefix) for name in names):
         raise PackageArchiveError(
             "PACKAGE_PERSONAL_CLUES_UNSUPPORTED",
             "clues/personal/ 文件格式将在 T-4.2 定义，当前版本不接受该目录内容",
+        )
+    chapter_prefix = f"{root}character_scripts/"
+    if any(name.startswith(chapter_prefix) and not visible_file(name) for name in archive_names):
+        raise PackageArchiveError(
+            "PACKAGE_CHARACTER_CHAPTER_PATH_UNSUPPORTED",
+            "character_scripts/ 不接受隐藏人物章节文件或目录",
         )
 
 
@@ -97,6 +108,7 @@ def _load_package(
         ),
         stages=load_stages(archive, names, root, stage_index),
         characters=load_characters(archive, names, root),
+        chapters=load_character_chapters(archive, names, root),
         clues=load_clues(archive, names, root),
         evidences=load_evidences(archive, names, root),
         scenes=load_scenes(archive, names, root),
@@ -113,6 +125,7 @@ def _load_package(
         package=package.package,
         stages=package.stages,
         characters=package.characters,
+        chapters=package.chapters,
         clues=package.clues,
         evidences=package.evidences,
         scenes=package.scenes,

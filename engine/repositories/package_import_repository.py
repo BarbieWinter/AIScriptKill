@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from engine.core.package_schema import ScriptPackageImport
 from engine.db.protocols import WriteSession
 from engine.db.tables import (
+    script_character_chapters,
     script_characters,
     script_clues,
     script_dm_guides,
@@ -74,6 +75,20 @@ class PackageImportRepository:
                     is_playable=character.is_playable,
                     is_dm_alter_ego=character.is_dm_alter_ego,
                     sort_order=character.sort_order,
+                ),
+            )
+        for chapter in package.chapters:
+            await self._db.execute(
+                insert(script_character_chapters).values(
+                    script_id=script_id,
+                    chapter_id=chapter.id,
+                    character_id=chapter.character_id,
+                    sort_order=chapter.sort_order,
+                    title=chapter.title,
+                    visibility=chapter.visibility,
+                    release=chapter.release,
+                    stage_min=chapter.stage_min,
+                    content=chapter.content,
                 ),
             )
         await self._insert_optional_structure(package)
@@ -165,6 +180,7 @@ class PackageImportRepository:
             script_scenes,
             script_evidences,
             script_clues,
+            script_character_chapters,
             script_characters,
             script_stages,
         ):

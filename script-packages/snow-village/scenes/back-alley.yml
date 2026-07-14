@@ -1,0 +1,20 @@
+id: "back-alley"
+name: "饭馆后巷"
+description: "风雪覆盖的狭窄后巷，后门旁的积雪有新鲜扰动。"
+visual:
+  background: "assets/scenes/back-alley.svg"
+  ambient_color: "#17243a"
+available_in_stages:
+  - investigate_back_alley
+hotspots:
+  - id: "back-door-traces"
+    label: "后门旁的痕迹"
+    x: 58
+    y: 44
+    on_click:
+      - action: "clue_discover"
+        clue_id: "clue-back-alley-note"
+      - action: "evidence_discover"
+        evidence_id: "evidence-back-door-image"
+      - action: "dm_narrate"
+        text: "你拨开门槛旁的薄雪，找到一张折起的便签，也保存了邻近摄像头在21:13拍到的后门截图。"

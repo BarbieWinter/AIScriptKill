@@ -17,6 +17,7 @@ from engine.tests.stategraph_fixtures import (
     [
         ("talk_to_npc", "npc"),
         ("examine_scene", "main_hall"),
+        ("examine_scene", "main_hall:back_door"),
         ("show_evidence", "knife:npc"),
         ("use_card", "insight"),
         ("open_clue_board", None),
@@ -44,6 +45,10 @@ async def test_each_enabled_action_accepts_its_core_target_contract(
             assert result["chat_history"][-1]["character_id"] == "npc"
         case "examine_scene":
             assert result["current_scene"] == "main_hall"
+            if target == "main_hall:back_door":
+                assert result["unlocked_clues"] == ["clue_1"]
+                assert result["discovered_evidences"] == ["knife"]
+                assert result["chat_history"][-1]["text"] == "你在后门旁发现了一把刀。"
         case "show_evidence":
             assert result["evidences_shown_to_npcs"] == [
                 {"evidence_id": "knife", "character_id": "npc"},
@@ -63,6 +68,7 @@ async def test_each_enabled_action_accepts_its_core_target_contract(
         ("talk_to_npc", "missing", "ACTION_TARGET_UNAVAILABLE"),
         ("examine_scene", None, "ACTION_TARGET_REQUIRED"),
         ("examine_scene", "missing", "ACTION_TARGET_UNAVAILABLE"),
+        ("examine_scene", "main_hall:missing", "ACTION_TARGET_UNAVAILABLE"),
         ("show_evidence", "knife", "ACTION_TARGET_INVALID"),
         ("show_evidence", "missing:npc", "EVIDENCE_NOT_DISCOVERED"),
         ("show_evidence", "knife:missing", "ACTION_TARGET_UNAVAILABLE"),

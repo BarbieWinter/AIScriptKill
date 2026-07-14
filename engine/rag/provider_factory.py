@@ -1,7 +1,7 @@
 """解析 RAG 索引和检索使用的已配置嵌入提供方。"""
 
 from engine.api.config import Settings, get_settings
-from engine.rag.embeddings import DeterministicEmbeddingProvider, OpenAIEmbeddingProvider
+from engine.rag.embeddings import DashScopeEmbeddingProvider, DeterministicEmbeddingProvider
 from engine.rag.models import EmbeddingProvider
 
 
@@ -11,9 +11,10 @@ def create_embedding_provider(settings: Settings | None = None) -> EmbeddingProv
     match resolved_settings.rag_embedding_provider:
         case "deterministic":
             return DeterministicEmbeddingProvider(resolved_settings.rag_embedding_dimensions)
-        case "openai":
-            return OpenAIEmbeddingProvider(
-                model=resolved_settings.rag_openai_embedding_model,
+        case "dashscope":
+            return DashScopeEmbeddingProvider(
+                model=resolved_settings.rag_dashscope_embedding_model,
                 dimensions=resolved_settings.rag_embedding_dimensions,
-                api_key=resolved_settings.openai_api_key,
+                api_key=resolved_settings.dashscope_api_key,
+                base_url=resolved_settings.dashscope_base_url,
             )

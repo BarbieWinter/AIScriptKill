@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     MetaData,
     Table,
@@ -57,6 +58,37 @@ script_characters = Table(
     Column("is_playable", Boolean, nullable=False),
     Column("is_dm_alter_ego", Boolean, nullable=False),
     Column("sort_order", Integer, nullable=False),
+)
+
+script_character_chapters = Table(
+    "script_character_chapters",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("script_id", Text, ForeignKey("script_packages.id"), nullable=False),
+    Column("chapter_id", Text, nullable=False),
+    Column("character_id", Text, nullable=False),
+    Column("sort_order", Integer, nullable=False),
+    Column("title", Text, nullable=False),
+    Column("visibility", Text, nullable=False),
+    Column("release", JSONB, nullable=False),
+    Column("stage_min", Text),
+    Column("content", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["script_id", "character_id"],
+        ["script_characters.script_id", "script_characters.character_id"],
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["script_id", "stage_min"],
+        ["script_stages.script_id", "script_stages.stage_id"],
+    ),
+    UniqueConstraint(
+        "script_id",
+        "chapter_id",
+        name="uq_script_character_chapters_script_chapter",
+    ),
 )
 
 script_clues = Table(
@@ -142,7 +174,7 @@ script_knowledge = Table(
     Column("source_id", Text, nullable=False),
     Column("chunk_index", Integer, nullable=False),
     Column("chunk_text", Text, nullable=False),
-    Column("embedding", Vector(1536)),
+    Column("embedding", Vector(1024)),
     Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint(
@@ -213,7 +245,13 @@ chat_messages = Table(
     Column("text", Text, nullable=False),
     Column("emotion", Text),
     Column("metadata", JSONB, nullable=False),
+    Column("engine_message_id", Text),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "session_id",
+        "engine_message_id",
+        name="uq_chat_messages_session_engine_message",
+    ),
 )
 
 session_discoveries = Table(
@@ -225,6 +263,12 @@ session_discoveries = Table(
     Column("entity_id", Text, nullable=False),
     Column("status", Text, nullable=False),
     Column("discovered_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "session_id",
+        "entity_type",
+        "entity_id",
+        name="uq_session_discoveries_session_entity",
+    ),
 )
 
 final_submissions = Table(

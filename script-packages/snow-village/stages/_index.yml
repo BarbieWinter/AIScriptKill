@@ -1,0 +1,21 @@
+stages:
+  - id: "return_to_snow_village"
+    name: "炉火未熄"
+    sort_order: 0
+  - id: "investigate_back_alley"
+    name: "调查后巷"
+    sort_order: 10
+  - id: "confront_wangdada"
+    name: "没有打开的门"
+    sort_order: 20
+  - id: "back_door_judgement"
+    name: "后门判断"
+    sort_order: 30
+acts:
+  - id: "back_door_footprints"
+    name: "后门的脚印"
+    stages:
+      - return_to_snow_village
+      - investigate_back_alley
+      - confront_wangdada
+      - back_door_judgement

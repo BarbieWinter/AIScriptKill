@@ -7,7 +7,7 @@
 
 import { create } from "zustand";
 
-export type PanelType = "clue" | "evidence" | "note" | "cards" | null;
+export type PanelType = "clue" | "evidence" | "chapter" | "cards" | null;
 export type TransitionType =
   | "scene_change"
   | "stage_change"
@@ -37,6 +37,7 @@ interface GameStore {
   // ── 游戏进度 ──
   currentStage: string;
   currentScene: string;
+  totalCluesInRound: number;
 
   // ── 操作选项 ──
   availableActions: ActionType[];
@@ -68,6 +69,13 @@ interface GameStore {
   setStage: (stage: string) => void;
   setScene: (sceneId: string) => void;
   setActions: (actions: ActionType[]) => void;
+  setTotalCluesInRound: (total: number) => void;
+  setCharacters: (characters: GameStore["availableCharacters"]) => void;
+  setClues: (clues: any[]) => void;
+  setEvidences: (evidences: any[]) => void;
+  updateEvidence: (evidenceId: string, patch: Record<string, any>) => void;
+  setMessages: (messages: any[]) => void;
+  setCards: (cards: any[]) => void;
   addMessage: (msg: any) => void;
   setNpcTyping: (charId: string | null) => void;
   openPanel: (panel: PanelType) => void;
@@ -86,6 +94,7 @@ const initial = {
   playerCharacterId: null as string | null,
   currentStage: "",
   currentScene: "",
+  totalCluesInRound: 0,
   availableActions: [] as ActionType[],
   availableCharacters: [],
   availableScenes: [],
@@ -114,6 +123,25 @@ export const useGameStore = create<GameStore>((set) => ({
   setScene: (sceneId) => set({ currentScene: sceneId }),
 
   setActions: (actions) => set({ availableActions: actions }),
+
+  setTotalCluesInRound: (total) => set({ totalCluesInRound: total }),
+
+  setCharacters: (characters) => set({ availableCharacters: characters }),
+
+  setClues: (clues) => set({ unlockedClues: clues }),
+
+  setEvidences: (evidences) => set({ discoveredEvidences: evidences }),
+
+  updateEvidence: (evidenceId, patch) =>
+    set((state) => ({
+      discoveredEvidences: state.discoveredEvidences.map((evidence) =>
+        evidence.id === evidenceId ? { ...evidence, ...patch } : evidence
+      ),
+    })),
+
+  setMessages: (messages) => set({ chatMessages: messages }),
+
+  setCards: (cards) => set({ cards }),
 
   addMessage: (msg) =>
     set((state) => ({

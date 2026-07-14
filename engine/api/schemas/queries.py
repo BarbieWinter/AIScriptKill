@@ -47,6 +47,38 @@ class EvidenceListResponse(ApiModel):
     evidences: list[Evidence] = Field(description="Discovered evidences.")
 
 
+class EvidenceViewedResponse(ApiModel):
+    """确认已发现证物进入已查看状态。"""
+
+    evidence_id: str = Field(description="Viewed evidence ID.")
+    status: str = Field(description="Monotonic evidence status.")
+
+
+# ── 人物章节查询 ──
+
+
+class CharacterChapterSummary(ApiModel):
+    """公开玩家角色已解锁章节的目录信息。"""
+
+    id: str = Field(description="Character chapter ID.")
+    character_id: str = Field(description="Owning player character ID.")
+    order: int = Field(description="Chapter display order.")
+    title: str = Field(description="Chapter title.")
+    status: str = Field(description="Unlocked or viewed status.")
+
+
+class CharacterChapterListResponse(ApiModel):
+    """返回当前玩家角色已解锁的章节目录。"""
+
+    chapters: list[CharacterChapterSummary] = Field(description="Unlocked chapters.")
+
+
+class CharacterChapterResponse(CharacterChapterSummary):
+    """公开一个已授权人物章节的正文。"""
+
+    content: str = Field(description="Authorized Markdown chapter body.")
+
+
 # ── 角色查询 ──
 
 

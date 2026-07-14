@@ -46,6 +46,17 @@ def game_state_from_mapping(raw: Mapping[str, JsonValue]) -> GameState:
     state["current_scene"] = _text(raw, "current_scene")
     state["unlocked_clues"] = _text_list(raw.get("unlocked_clues"))
     state["discovered_evidences"] = _text_list(raw.get("discovered_evidences"))
+    state["viewed_evidences"] = _subset_text_list(
+        raw.get("viewed_evidences"),
+        state["discovered_evidences"],
+    )
+    state["unlocked_character_chapters"] = _text_list(
+        raw.get("unlocked_character_chapters")
+    )
+    state["read_character_chapters"] = _subset_text_list(
+        raw.get("read_character_chapters"),
+        state["unlocked_character_chapters"],
+    )
     state["completed_events"] = _text_list(raw.get("completed_events"))
     state["pending_media"] = _json_mapping_list(raw.get("pending_media"))
     state["pending_npc_responses"] = _json_mapping_list(raw.get("pending_npc_responses"))
@@ -106,6 +117,10 @@ def _text_list(value: JsonValue | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _subset_text_list(value: JsonValue | None, allowed: list[str]) -> list[str]:
+    return [item for item in _text_list(value) if item in allowed]
 
 
 def _json_mapping(value: JsonValue | None) -> dict[str, JsonValue]:

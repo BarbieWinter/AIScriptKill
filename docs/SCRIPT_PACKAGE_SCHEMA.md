@@ -18,6 +18,10 @@ script-packages/
 │   │   ├── _index.yml               # ★ 必须：角色清单
 │   │   ├── <character-id>.yml       # ★ 必须：每个角色一个文件
 │   │   └── ...
+│   ├── character_scripts/           # ○ 可选：角色专属章节（独立授权）
+│   │   └── <character-id>/
+│   │       ├── <chapter-id>.md       # YAML frontmatter + Markdown 正文
+│   │       └── ...
 │   ├── clues/                       # ○ 可选：线索定义
 │   │   ├── rounds/                  #   公共线索按轮次
 │   │   │   ├── <round-id>.yml
@@ -46,6 +50,44 @@ script-packages/
 > ★ = 必须  ○ = 可选，但推荐
 
 > `clues/personal/` 当前仅保留目录名，不属于 T-2.1 导入契约。个人线索的文件结构、可见性与角色绑定规则将在 T-4.2 内容生产导入阶段定义；在该阶段前，加载器会拒绝该目录内的文件，也不应自行推断文件格式。
+
+### 1.1 人物章节 Markdown
+
+人物章节是独立于 Stage 的授权单位，不是 `characters/<character-id>.yml` 中
+`knowledge` 的扩展。文件必须严格放在：
+
+```text
+character_scripts/<character-id>/<chapter-id>.md
+```
+
+每个文件以 YAML frontmatter 开始，并包含非空 Markdown 正文：
+
+```markdown
+---
+chapter_id: chapter-01
+character_id: zhuosiyuan
+order: 1
+title: 炉火未熄
+visibility: character_only
+release:
+  type: game_start
+stage_min: return_to_snow_village
+---
+
+这里是只在本章获准后才能读取的 Markdown 正文。
+```
+
+约束如下：
+
+- `chapter_id` 必须与文件名 stem 完全一致，且在整个剧本包内唯一；
+- `character_id` 必须与父目录名完全一致，并引用 `characters/` 中已有角色；
+- `order` 是非负整数；
+- `visibility` 目前只能是 `character_only`；
+- `release` 必须是 JSON-compatible YAML mapping，其内部语义由后续确定性授权规则消费；
+- `stage_min` 可省略；存在时必须引用已有 Stage，但它不替代独立章节授权；
+- 不接受嵌套子目录、非 `.md` 文件、非 UTF-8 文件、缺失 frontmatter 或空正文；
+- 章节正文持久化到私有章节表，不自动进入 `script_knowledge` 或当前
+  `character_knowledge` RAG 索引；后续只能由服务端依据玩家角色与已解锁章节读取。
 
 ---
 

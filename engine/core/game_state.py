@@ -113,6 +113,9 @@ class GameState(TypedDict):
     unlocked_clues: list[str]
     discovered_clues: list[ClueDiscovery]
     discovered_evidences: list[str]
+    viewed_evidences: list[str]
+    unlocked_character_chapters: list[str]
+    read_character_chapters: list[str]
     evidences_shown_to_npcs: list[EvidencePresentation]
     completed_events: list[str]
     event_log: list[EventActionRecord]
@@ -175,6 +178,9 @@ def create_initial_state(
         unlocked_clues=[],
         discovered_clues=[],
         discovered_evidences=[],
+        viewed_evidences=[],
+        unlocked_character_chapters=[],
+        read_character_chapters=[],
         evidences_shown_to_npcs=[],
         completed_events=[],
         event_log=[],

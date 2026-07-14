@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">饭馆后巷占位图</title>
+  <desc id="desc">积雪覆盖的后巷与半掩的后门。</desc>
+  <rect width="1600" height="900" fill="#142034"/>
+  <rect y="570" width="1600" height="330" fill="#dbe5ed"/>
+  <rect x="840" y="160" width="450" height="500" fill="#352a25"/>
+  <rect x="940" y="270" width="220" height="390" fill="#1c1715" stroke="#665044" stroke-width="16"/>
+  <path d="M180 690 C380 610 560 760 800 655" fill="none" stroke="#8da4b5" stroke-width="28" stroke-linecap="round" opacity=".55"/>
+  <text x="800" y="100" text-anchor="middle" fill="#edf5fa" font-size="54" font-family="sans-serif">饭馆后巷</text>
+</svg>

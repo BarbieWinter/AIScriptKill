@@ -124,28 +124,57 @@ def action_response_and_effect(
             return response, SessionActionEffect(state_patch={})
 
 
-# ── 最终推理评分映射 ──
+# ── 阶段判断评分映射 ──
+
+_JUDGMENT_BOUNDARIES = {
+    "A": "截图不能确认影子身份、进出方向或目的，因此不能指认陈吉。",
+    "B": "当前材料不能确认便签由谁制作，也不能据此推断王大达与旧案的关系。",
+    "C": (
+        "已证实的范围只有21:13、后门半开、灯光和不可辨认的影子；"
+        "这足以说明“没人来过”的表述不完整，但不足以确认开门者和目的。"
+    ),
+    "D": "后门异常只能证明后门当时半开，不能单独证明当晚发生过犯罪。",
+}
+_CORRECT_DISCLOSURE = (
+    "后门当时确实开着。我后来发现门闩没扣严，就重新扣好了；"
+    "我没看见是谁开的。"
+)
 
 
-def final_submission_result(payload: FinalSubmissionRequest) -> SubmissionResult:
-    """按照当前确定性最终提交契约评分。"""
+def final_submission_result(
+    payload: FinalSubmissionRequest,
+    *,
+    correct_option: str = "C",
+) -> SubmissionResult:
+    """按照剧本包声明的确定性四选一判断评分。"""
 
-    hit_count = len(payload.key_evidences)
-    score = min(100, 55 + hit_count * 10)
+    if correct_option != "C":
+        raise ValueError("首个垂直切片当前只支持答案 C")
+    correct = payload.option == correct_option
     return SubmissionResult(
         type="submission_result",
-        correct=True,
-        score=score,
+        correct=correct,
+        score=100 if correct else 0,
         detail=SubmissionDetail(
-            correct_suspect=True,
-            correct_motive=True,
-            key_evidence_hit_rate=f"{hit_count}/5",
-            missed_key_evidences=["hidden_letter", "phone_record"],
+            selected_option=payload.option,
+            correct_option="C",
+            evidence_boundary=_JUDGMENT_BOUNDARIES[payload.option],
+            npc_disclosure=_CORRECT_DISCLOSURE if correct else None,
         ),
-        ending_id="truth_revealed",
+        ending_id=(
+            "back_door_judgement_supported"
+            if correct
+            else "back_door_judgement_unsupported"
+        ),
         triggered_events=[
-            EventTrigger(action="play_audio", asset_id="ending_bgm_true"),
-            EventTrigger(action="dm_narrate", text="真相，终于浮出水面……"),
+            EventTrigger(
+                action="dm_narrate",
+                text=(
+                    "你的判断没有越过现有证据的边界。"
+                    if correct
+                    else "这项判断超出了当前材料能够证实的范围。"
+                ),
+            ),
         ],
     )
 

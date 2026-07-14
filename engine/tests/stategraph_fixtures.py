@@ -47,6 +47,26 @@ description:
   surface: "一把刀"
 discovery:
   scene_id: "main_hall"
+  hotspot_id: "back_door"
+"""
+    files["scenes/main_hall.yml"] = """
+id: "main_hall"
+name: "大厅"
+visual:
+  background: "assets/scenes/main_hall.jpg"
+available_in_stages:
+  - prologue
+  - act1
+  - review
+hotspots:
+  - id: "back_door"
+    on_click:
+      - action: "clue_discover"
+        clue_id: "clue_1"
+      - action: "evidence_discover"
+        evidence_id: "knife"
+      - action: "dm_narrate"
+        text: "你在后门旁发现了一把刀。"
 """
     return load_package_archive(package_archive(files))
 

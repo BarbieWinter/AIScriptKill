@@ -21,6 +21,7 @@ MAX_PACKAGE_MEMBER_BYTES: Final = 64 * 1024 * 1024
 MAX_PACKAGE_EXPANDED_BYTES: Final = 512 * 1024 * 1024
 MAX_PACKAGE_COMPRESSION_RATIO: Final = 200.0
 MAX_PACKAGE_YAML_BYTES: Final = 1024 * 1024
+MAX_PACKAGE_CHARACTER_CHAPTER_BYTES: Final = 1024 * 1024
 MAX_PACKAGE_YAML_DEPTH: Final = 64
 MAX_PACKAGE_YAML_NODES: Final = 50_000
 
@@ -132,6 +133,17 @@ def read_yaml_mapping(archive: ZipFile, path: str) -> JsonMapping:
             "PACKAGE_YAML_ENCODING_INVALID",
             f"{path} 必须使用 UTF-8 编码",
         ) from exc
+    return parse_yaml_mapping(raw, path)
+
+
+def parse_yaml_mapping(raw: str, path: str) -> JsonMapping:
+    """安全解析一段 YAML 文本，并要求根节点为 JSON 兼容映射。"""
+
+    if len(raw.encode("utf-8")) > MAX_PACKAGE_YAML_BYTES:
+        raise PackageArchiveError(
+            "PACKAGE_YAML_TOO_LARGE",
+            f"{path} 超过 YAML 单文件大小上限",
+        )
     _validate_yaml_event_budget(raw, path)
     _validate_yaml_unique_keys(raw, path)
     try:

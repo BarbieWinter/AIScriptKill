@@ -27,6 +27,7 @@ def test_load_package_archive_accepts_minimal_package_when_references_are_valid(
     assert len(package.characters) == 2
     assert len(package.clues) == 4
     assert package.clues[0].metadata["related_scene"] == "main_hall"
+    assert package.chapters == ()
 
 
 def test_load_package_directory_accepts_loose_package_when_references_are_valid(
@@ -44,6 +45,71 @@ def test_load_package_directory_accepts_loose_package_when_references_are_valid(
     assert package.package.status == "published"
     assert len(package.stages) == 3
     assert len(package.characters) == 2
+
+
+def test_load_package_archive_normalizes_character_chapters() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = _character_chapter()
+
+    package = load_package_archive(package_archive(files))
+
+    assert len(package.chapters) == 1
+    chapter = package.chapters[0]
+    assert chapter.id == "chapter-01"
+    assert chapter.character_id == "player"
+    assert chapter.sort_order == 1
+    assert chapter.title == "抵达"
+    assert chapter.visibility == "character_only"
+    assert chapter.release == {"type": "game_start"}
+    assert chapter.stage_min == "prologue"
+    assert chapter.content == "\n这里是玩家独享的正文。\n"
+
+
+def test_load_package_directory_normalizes_character_chapters(tmp_path: Path) -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = _character_chapter()
+    package_dir = tmp_path / "minimal-case"
+    write_package_directory(package_dir, files)
+
+    package = load_package_directory(package_dir)
+
+    assert [chapter.id for chapter in package.chapters] == ["chapter-01"]
+
+
+def test_load_package_archive_keeps_chapters_when_validation_emits_warnings() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = _character_chapter()
+    files["characters/npc.yml"] = """
+id: "npc"
+name: "NPC角色"
+personality:
+  summary: "紧张"
+knowledge:
+  prologue:
+    knows:
+      - "见过可疑的人"
+"""
+
+    package = load_package_archive(package_archive(files))
+
+    assert [chapter.id for chapter in package.chapters] == ["chapter-01"]
+    assert package.warnings == ("character npc 缺少阶段知识: act1, review",)
+
+
+def _character_chapter() -> str:
+    return """---
+chapter_id: chapter-01
+character_id: player
+order: 1
+title: 抵达
+visibility: character_only
+release:
+  type: game_start
+stage_min: prologue
+---
+
+这里是玩家独享的正文。
+"""
 
 
 def test_load_package_archive_rejects_missing_entry_stage_when_manifest_points_elsewhere() -> None:
@@ -129,6 +195,41 @@ def test_load_package_archive_normalizes_documented_action_objects() -> None:
     assert prologue.definition["available_actions"] == ["talk_to_npc"]
     assert prologue.definition["action_definitions"] == [
         {"id": "talk_to_npc", "label": "对话角色", "description": "与 NPC 对话"},
+    ]
+
+
+def test_load_package_archive_accepts_hotspot_evidence_discovery_event() -> None:
+    files = minimal_package_files()
+    files["evidences/knife.yml"] = """
+id: "knife"
+name: "刀"
+description:
+  surface: "一把刀"
+discovery:
+  scene_id: "main_hall"
+  hotspot_id: "table"
+"""
+    files["scenes/main_hall.yml"] = """
+id: "main_hall"
+name: "大厅"
+visual:
+  background: "assets/scenes/main_hall.jpg"
+available_in_stages: ["prologue", "act1", "review"]
+hotspots:
+  - id: "table"
+    on_click:
+      - action: "evidence_discover"
+        evidence_id: "knife"
+"""
+
+    package = load_package_archive(package_archive(files))
+
+    scene = next(item for item in package.scenes if item.id == "main_hall")
+    assert scene.definition["hotspots"] == [
+        {
+            "id": "table",
+            "on_click": [{"action": "evidence_discover", "evidence_id": "knife"}],
+        }
     ]
 
 

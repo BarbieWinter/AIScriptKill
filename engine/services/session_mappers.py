@@ -5,6 +5,8 @@ from engine.services.action_mappers import (
 )
 from engine.services.query_mappers import (
     cards_response,
+    character_chapter_response,
+    character_chapters_response,
     characters_response,
     chat_history_response,
     clues_response,
@@ -22,6 +24,8 @@ from engine.services.session_response_mappers import (
 __all__ = [
     "action_response_and_effect",
     "cards_response",
+    "character_chapter_response",
+    "character_chapters_response",
     "characters_response",
     "chat_history_response",
     "clues_response",

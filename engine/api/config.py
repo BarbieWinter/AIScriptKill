@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Final, Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ── 配置来源 ──
@@ -73,27 +73,70 @@ class Settings(BaseSettings):
         ge=1,
         description="Per-client request limit for the API gateway skeleton.",
     )
-    rag_embedding_provider: Literal["deterministic", "openai"] = Field(
+    rag_embedding_provider: Literal["deterministic", "dashscope"] = Field(
         default="deterministic",
         alias="RAG_EMBEDDING_PROVIDER",
         description="Embedding backend for script_knowledge indexing.",
     )
     rag_embedding_dimensions: int = Field(
-        default=1536,
+        default=1024,
         alias="RAG_EMBEDDING_DIMENSIONS",
-        ge=1,
-        description="Vector dimensions stored in script_knowledge.embedding.",
+        ge=1024,
+        le=1024,
+        description="Fixed text-embedding-v4 dimensions stored in script_knowledge.embedding.",
     )
-    rag_openai_embedding_model: str = Field(
-        default="text-embedding-3-small",
-        alias="RAG_OPENAI_EMBEDDING_MODEL",
-        description="OpenAI embedding model used when RAG_EMBEDDING_PROVIDER=openai.",
+    rag_dashscope_embedding_model: Literal["text-embedding-v4"] = Field(
+        default="text-embedding-v4",
+        alias="RAG_DASHSCOPE_EMBEDDING_MODEL",
+        description="DashScope embedding model used for production script indexing.",
     )
-    openai_api_key: str | None = Field(
+    dashscope_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="DASHSCOPE_BASE_URL",
+        description="DashScope OpenAI-compatible API base URL.",
+    )
+    dashscope_api_key: str | None = Field(
+        default=None,
+        alias="DASHSCOPE_API_KEY",
+        description="Server-side DashScope API key.",
+        repr=False,
+    )
+    npc_generation_provider: Literal["deterministic", "openai_compatible"] = Field(
+        default="openai_compatible",
+        alias="NPC_GENERATION_PROVIDER",
+        description="NPC dialogue generation backend.",
+    )
+    openai_api_key: SecretStr | None = Field(
         default=None,
         alias="OPENAI_API_KEY",
-        description="Optional OpenAI API key for LangChain OpenAI embeddings.",
+        description="Server-side API key for the OpenAI-compatible NPC endpoint.",
         repr=False,
+    )
+    openai_base_url: str | None = Field(
+        default=None,
+        alias="OPENAI_BASE_URL",
+        description="Base URL for an OpenAI-compatible API, including its version path.",
+    )
+    openai_model: str | None = Field(
+        default=None,
+        alias="OPENAI_MODEL",
+        min_length=1,
+        max_length=256,
+        description="Model identifier accepted by the configured OpenAI-compatible API.",
+    )
+    npc_openai_max_tokens: int = Field(
+        default=512,
+        alias="NPC_OPENAI_MAX_TOKENS",
+        ge=64,
+        le=2048,
+        description="Maximum completion tokens for one compatible NPC reply.",
+    )
+    npc_openai_timeout_seconds: float = Field(
+        default=20.0,
+        alias="NPC_OPENAI_TIMEOUT_SECONDS",
+        ge=1.0,
+        le=60.0,
+        description="OpenAI-compatible request timeout for one NPC reply.",
     )
     supabase_jwt_audience: str = Field(
         default="authenticated",

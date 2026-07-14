@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import TextClause
 
 from engine.api.schemas.common import JsonValue
 from engine.core.package_schema import JsonMapping
+from engine.rag.embeddings import EMBEDDING_DIMENSIONS
 from engine.rag.models import RagChunk, RagSourceType, RetrievedChunk
 
 
@@ -36,13 +37,25 @@ def build_retrieval_sql() -> TextClause:
               AND script_id = :script_id
               -- 权限模型第8节: 阶段可见性, 玩家不能查到未来 stage 的知识。
               AND COALESCE((metadata ->> 'stage_order')::int, 0) <= :current_stage_order
-              -- 权限模型第8节: DM 可读私密材料; 玩家只读 public 或本角色私有知识。
+              -- 普通检索不接收证物文本；证物事实通过确定性发现/查看流程提供。
+              AND source_type <> 'evidence'
+              -- DM 可读私密材料；玩家角色私密内容按 viewer 授权，NPC 知识按 speaker 限定。
               AND (
                     :is_dm
                     OR metadata ->> 'visibility' = 'public'
                     OR (
                         metadata ->> 'visibility' = 'character_only'
-                        AND metadata ->> 'character_id' = :character_id
+                        AND (
+                            (
+                                source_type = 'character_knowledge'
+                                AND :speaker_character_id IS NOT NULL
+                                AND metadata ->> 'character_id' = :speaker_character_id
+                            )
+                            OR (
+                                source_type <> 'character_knowledge'
+                                AND metadata ->> 'character_id' = :viewer_character_id
+                            )
+                        )
                     )
                   )
               -- 权限模型第8节: 玩家侧 clue 必须先解锁, 未解锁线索不进入候选集。
@@ -91,7 +104,9 @@ def row_to_result(row: RowMapping) -> RetrievedChunk:
 
 
 def vector_literal(values: Sequence[float]) -> str:
-    """按照 pgvector 的方括号文本输入格式编码向量。"""
+    """按照 pgvector 的方括号文本输入格式编码固定维度向量。"""
+    if len(values) != EMBEDDING_DIMENSIONS:
+        raise ValueError(f"query embedding must contain {EMBEDDING_DIMENSIONS} values")
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 

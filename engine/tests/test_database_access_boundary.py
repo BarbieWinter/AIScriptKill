@@ -110,6 +110,25 @@ def test_fastapi_database_access_boundary_migration_contract() -> None:
     )
 
 
+def test_character_chapter_tables_have_service_role_only_access() -> None:
+    migration_root = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
+    migrations = (
+        migration_root / "20260713000000_character_chapters.sql",
+        migration_root / "20260713010000_character_chapter_discoveries.sql",
+    )
+
+    for migration in migrations:
+        sql = " ".join(migration.read_text(encoding="utf-8").lower().split())
+        assert "revoke all privileges on table public." in sql
+        assert "from anon, authenticated" in sql
+        assert "grant all privileges on table public." in sql
+        assert "to service_role" in sql
+
+    discoveries = migrations[1].read_text(encoding="utf-8").lower()
+    assert "'character_chapter'" in discoveries
+    assert "drop constraint if exists session_discoveries_entity_type_check" in discoveries
+
+
 def test_checkpoint_pending_writes_table_has_no_browser_role_access() -> None:
     # 给定：待处理写入可能先于检查点，因此使用专用迁移。
     migration = (

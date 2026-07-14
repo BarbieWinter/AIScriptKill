@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from engine.api.schemas.common import JsonValue
 from engine.core.condition_evaluator import evaluate_condition
 from engine.core.game_state import GameState
-from engine.core.package_schema import ClueRecord, EndingRecord, ScriptPackageImport, StageRecord
+from engine.core.package_schema import (
+    CharacterChapterRecord,
+    ClueRecord,
+    EndingRecord,
+    ScriptPackageImport,
+    StageRecord,
+)
 from engine.core.package_stage_index import stage_index_from_mapping
 from engine.core.package_validation_context import json_mapping_list, metadata_texts
 
@@ -24,6 +30,14 @@ class PackageRuntimeIndex:
                 return stage
         raise StageLookupError(stage_id)
 
+    def chapter_by_id(self, chapter_id: str) -> CharacterChapterRecord:
+        """按 ID 返回人物章节，否则抛出 CharacterChapterLookupError。"""
+
+        for chapter in self.package.chapters:
+            if chapter.id == chapter_id:
+                return chapter
+        raise CharacterChapterLookupError(chapter_id)
+
     def clue_by_id(self, clue_id: str) -> ClueRecord:
         """按 ID 返回线索，否则抛出 ClueLookupError。"""
 
@@ -31,6 +45,21 @@ class PackageRuntimeIndex:
             if clue.id == clue_id:
                 return clue
         raise ClueLookupError(clue_id)
+
+    def scene_hotspot_actions(
+        self,
+        scene_id: str,
+        hotspot_id: str,
+    ) -> list[dict[str, JsonValue]] | None:
+        """返回场景热点动作；场景存在但热点缺失时返回 None。"""
+
+        scene = next((item for item in self.package.scenes if item.id == scene_id), None)
+        if scene is None:
+            return None
+        for hotspot in json_mapping_list(scene.definition.get("hotspots")):
+            if hotspot.get("id") == hotspot_id:
+                return json_mapping_list(hotspot.get("on_click"))
+        return None
 
     def next_stage_id(self, stage_id: str) -> str | None:
         """返回下一个权威阶段，剧本包结束时返回 None。"""
@@ -77,7 +106,10 @@ class PackageRuntimeIndex:
         state["available_actions"] = text_list(stage.definition.get("available_actions"))
         state["available_characters"] = text_list(stage.definition.get("available_characters"))
         state["available_scenes"] = text_list(stage.definition.get("available_scenes"))
-        if state["current_scene"] == "" and len(state["available_scenes"]) > 0:
+        if (
+            len(state["available_scenes"]) > 0
+            and state["current_scene"] not in state["available_scenes"]
+        ):
             state["current_scene"] = state["available_scenes"][0]
 
     def matching_ending(self, state: GameState) -> EndingRecord | None:
@@ -122,6 +154,16 @@ class StageLookupError(Exception):
 
     def __str__(self) -> str:
         return f"stage not found: {self.stage_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterChapterLookupError(Exception):
+    """报告已校验运行时剧本包中缺少某个人物章节 ID。"""
+
+    chapter_id: str
+
+    def __str__(self) -> str:
+        return f"character chapter not found: {self.chapter_id}"
 
 
 @dataclass(frozen=True, slots=True)

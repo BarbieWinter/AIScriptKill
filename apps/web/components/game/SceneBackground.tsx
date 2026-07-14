@@ -72,6 +72,8 @@ const sceneAtmospheres: Record<string, SceneAtmosphere> = {
   },
 };
 
+const sceneKey = (sceneId: string) => sceneId.replaceAll("-", "_");
+
 const stableRandom = (index: number, salt: number) => {
   const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
   return value - Math.floor(value);
@@ -219,7 +221,8 @@ export function SceneBackground() {
   const [tensionLevel, setTensionLevel] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const atmosphere = sceneAtmospheres[currentScene] || sceneAtmospheres.village_entrance;
+  const normalizedScene = sceneKey(currentScene);
+  const atmosphere = sceneAtmospheres[normalizedScene] || sceneAtmospheres.village_entrance;
 
   // 环境音模拟
   useEffect(() => {
@@ -228,7 +231,7 @@ export function SceneBackground() {
   }, [currentScene]);
 
   return (
-    <AnimatePresence mode="wait">
+    <AnimatePresence mode="sync">
       <motion.div
         key={currentScene}
         className="absolute inset-0 z-10"
@@ -253,7 +256,7 @@ export function SceneBackground() {
         />
 
         {/* 层3: 场景装饰 */}
-        <SceneDecor sceneId={currentScene} atmosphere={atmosphere} />
+        <SceneDecor sceneId={normalizedScene} atmosphere={atmosphere} />
 
         {/* 层4: 环境粒子 */}
         {atmosphere.particles === "snow" && atmosphere.particleCount > 0 && (

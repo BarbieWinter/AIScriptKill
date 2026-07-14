@@ -1,0 +1,43 @@
+id: "investigate_back_alley"
+name: "调查后巷"
+sort_order: 10
+entry_conditions:
+  - type: "stage_completed"
+    stage_id: "return_to_snow_village"
+exit_conditions:
+  - type: "all"
+    conditions:
+      - type: "clue_discovered"
+        clue_id: "clue-back-alley-note"
+      - type: "evidence_viewed"
+        evidence_id: "evidence-back-door-image"
+      - type: "character_chapter_read"
+        chapter_id: "zhuosiyuan-chapter-01"
+      - type: "character_talked_to"
+        character_id: "wangdada"
+        min_count: 1
+      - type: "player_requested"
+        dialog_id: "request_advance"
+available_actions:
+  - examine_scene
+  - talk_to_npc
+  - request_advance
+  - open_clue_board
+available_characters:
+  - wangdada
+available_scenes:
+  - back-alley
+on_stage_entry:
+  - action: "dm_narrate"
+    text: "后巷的雪面被扰动过。调查后门旁的痕迹，查看发现的图片后再推进。"
+on_clue_discovered:
+  - condition:
+      type: "all"
+      conditions:
+        - type: "clue_discovered"
+          clue_id: "clue-back-alley-note"
+        - type: "evidence_found"
+          evidence_id: "evidence-back-door-image"
+    then:
+      - action: "dm_narrate"
+        text: "便签和截图都已收好。查看图片后，你可以回前厅继续追问。"

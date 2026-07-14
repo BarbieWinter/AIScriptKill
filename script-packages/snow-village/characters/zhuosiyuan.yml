@@ -1,0 +1,21 @@
+id: "zhuosiyuan"
+name: "卓司元"
+identity:
+  public: "北道河子长大、成年后在县城生活的返乡青年"
+personality:
+  summary: "冷静，重视事实边界"
+  traits: ["克制", "敏锐"]
+  speaking_style: "直接但不轻易指控"
+knowledge:
+  return_to_snow_village:
+    knows:
+      - "自己收到匿名信息，要求询问王大达那年后门为什么开着"
+  investigate_back_alley:
+    knows:
+      - "后巷便签提到旧账本，但作者、收件人和时间都未知"
+  confront_wangdada:
+    knows:
+      - "后门开过不代表知道开门者或是否有人进入"
+  back_door_judgement:
+    knows:
+      - "现有材料只能支持后门在21:13半开的有限判断"

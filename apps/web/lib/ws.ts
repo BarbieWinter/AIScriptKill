@@ -12,6 +12,7 @@ export class WsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  private hasOpened = false;
 
   constructor(sessionId: string) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -22,15 +23,28 @@ export class WsClient {
   }
 
   connect() {
-    if (this.destroyed) return;
-    this.ws = new WebSocket(this.url);
+    if (
+      this.destroyed ||
+      this.ws?.readyState === WebSocket.CONNECTING ||
+      this.ws?.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+    const socket = new WebSocket(this.url);
+    this.ws = socket;
 
-    this.ws.onopen = () => {
-      console.log("[WS] 连接已建立");
+    socket.onopen = () => {
+      if (this.destroyed || this.ws !== socket) {
+        socket.close();
+        return;
+      }
+      this.hasOpened = true;
+      console.info("[WS] 连接已建立");
+      this.send("session.ping", {});
       this.startPing();
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
         const eventHandlers = this.handlers.get(message.type);
@@ -42,17 +56,18 @@ export class WsClient {
       }
     };
 
-    this.ws.onclose = () => {
-      console.log("[WS] 连接已关闭");
+    socket.onclose = (event) => {
+      if (this.ws === socket) this.ws = null;
       this.stopPing();
-      // 自动重连（3 秒后）
-      if (!this.destroyed) {
-        this.reconnectTimer = setTimeout(() => this.connect(), 3000);
-      }
+      if (this.destroyed) return;
+      console.warn(`[WS] 连接已关闭，3 秒后重连（code=${event.code}）`);
+      this.reconnectTimer = setTimeout(() => this.connect(), 3000);
     };
 
-    this.ws.onerror = (err) => {
-      console.error("[WS] 连接错误:", err);
+    socket.onerror = () => {
+      if (this.destroyed || this.ws !== socket) return;
+      // 浏览器不会提供可诊断的 Error 对象；关闭事件会携带 code 并负责重连。
+      if (this.hasOpened) console.warn("[WS] 实时通道中断，等待自动重连");
     };
   }
 
@@ -89,7 +104,7 @@ export class WsClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.ws?.close();
+    this.ws?.close(1000, "client disconnect");
     this.ws = null;
   }
 

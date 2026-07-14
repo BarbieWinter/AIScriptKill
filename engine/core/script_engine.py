@@ -12,6 +12,7 @@ from langgraph.graph.state import (  # pyright: ignore[reportMissingTypeStubs]
     CompiledStateGraph,
 )
 
+from engine.agents.npc_agent import DeterministicNpcResponder, NpcResponder
 from engine.api.schemas.common import ActionType
 from engine.core.checkpoint import checkpoint_config
 from engine.core.clock import SYSTEM_CLOCK, Clock
@@ -25,8 +26,14 @@ from engine.core.game_state_codec import game_state_from_mapping
 from engine.core.package_archive import json_value
 from engine.core.package_loader import load_package_archive
 from engine.core.package_schema import ScriptPackageImport
-from engine.core.script_action_runtime import apply_player_action, validate_player_action
+from engine.core.script_action_runtime import (
+    apply_player_action,
+    parse_evidence_target,
+    parse_examine_scene_target,
+    validate_player_action,
+)
 from engine.core.script_engine_errors import (
+    ScriptEngineActionError,
     ScriptEngineGraphError,
     ScriptEngineGraphResultError,
 )
@@ -47,6 +54,7 @@ class ScriptEngine:
     event_bus: EventBus
     runtime: PackageRuntimeIndex
     clock: Clock
+    npc_responder: NpcResponder
     graph: CompiledGameGraph | None
 
     @classmethod
@@ -62,17 +70,20 @@ class ScriptEngine:
         *,
         event_sink: EventActionSink | None = None,
         checkpointer: GameCheckpointer | None = None,
+        npc_responder: NpcResponder | None = None,
         clock: Clock = SYSTEM_CLOCK,
     ) -> "ScriptEngine":
-        """使用可选事件和检查点适配器构建并编译引擎。"""
+        """使用可选事件、NPC 和检查点适配器构建并编译引擎。"""
 
         event_bus = EventBus(package, event_sink, clock)
         runtime = PackageRuntimeIndex(package)
+        resolved_npc_responder = npc_responder or DeterministicNpcResponder()
         engine = cls(
             package=package,
             event_bus=event_bus,
             runtime=runtime,
             clock=clock,
+            npc_responder=resolved_npc_responder,
             graph=None,
         )
         return cls(
@@ -80,6 +91,7 @@ class ScriptEngine:
             event_bus=event_bus,
             runtime=runtime,
             clock=clock,
+            npc_responder=resolved_npc_responder,
             graph=engine._build_graph(checkpointer),
         )
 
@@ -195,6 +207,7 @@ class ScriptEngine:
         next_state = clone_game_state(state)
         stage = self.runtime.stage_by_id(next_state["current_stage"])
         self.runtime.apply_stage_runtime(next_state, stage)
+        next_state = await self.event_bus.unlock_game_start_chapters(next_state)
         if next_state["stage_entered_at"] != "":
             return next_state
         timestamp = next_state["current_time"] or self.clock.now()
@@ -214,30 +227,59 @@ class ScriptEngine:
         if action is None:
             return next_state
         apply_player_action(next_state, action)
+        if action["action_id"] == "examine_scene":
+            scene_id, hotspot_id = parse_examine_scene_target(action["target"])
+            if hotspot_id is not None:
+                actions = self.runtime.scene_hotspot_actions(scene_id, hotspot_id)
+                if actions is None:
+                    raise ScriptEngineActionError(
+                        "ACTION_TARGET_UNAVAILABLE",
+                        f"场景热点不可用: {scene_id}:{hotspot_id}",
+                    )
+                next_state = await self.event_bus.process_actions(
+                    next_state,
+                    f"scene:{scene_id}:hotspot:{hotspot_id}",
+                    actions,
+                    source="scene_hotspot",
+                )
         return next_state
 
     async def npc_response(self, state: GameState) -> GameState:
-        """为交谈动作追加当前确定性 NPC 响应。
-
-        读取已处理的交谈目标和聊天历史，随后写入待处理响应和 NPC 消息记录。
-        T-2.5 会替换生成逻辑，同时保留此节点契约。
-        """
+        """调用受包内事实约束的 NPC 生成器并追加稳定消息记录。"""
 
         next_state = clone_game_state(state)
         action = next_state["pending_action"]
         if action is None or action["target"] is None:
             return next_state
+        character_id = action["target"]
+        player_text = action["text"] or ""
+        if action["action_id"] == "show_evidence":
+            evidence_id, character_id = parse_evidence_target(action["target"])
+            evidence = next(
+                (item for item in self.package.evidences if item.id == evidence_id),
+                None,
+            )
+            player_text = (
+                f"玩家向你出示证物「{evidence.name if evidence is not None else evidence_id}」。"
+                "只根据已授权的证物反应作答。"
+            )
+        reply = await self.npc_responder.respond(
+            next_state,
+            self.package,
+            character_id=character_id,
+            player_text=player_text,
+        )
         message_id = f"{next_state['session_id']}:npc:{len(next_state['chat_history'])}"
         next_state["pending_npc_responses"].append(
-            {"character_id": action["target"], "text": "NPC 正在回应。"},
+            {"character_id": character_id, "text": reply.text},
         )
         next_state["chat_history"].append(
             {
                 "id": message_id,
                 "role": "npc",
-                "character_id": action["target"],
-                "text": "NPC 正在回应。",
-                "emotion": None,
+                "character_id": character_id,
+                "text": reply.text,
+                "emotion": reply.emotion,
                 "timestamp": self.clock.now(),
             },
         )
@@ -345,8 +387,8 @@ class ScriptEngine:
         # 分支2：阶段切换后的自动 stage_entry 没有玩家动作，需要继续跑条件/事件收尾。
         if action is None:
             return "check_conditions"
-        # 分支3：talk_to_npc 需要 NPC 回复节点，其余动作都直接进入条件检查。
-        if action["action_id"] == "talk_to_npc":
+        # 分支3：交谈和出示证物都需要 NPC 回复节点。
+        if action["action_id"] in ("talk_to_npc", "show_evidence"):
             return "npc_response"
         return "check_conditions"
 

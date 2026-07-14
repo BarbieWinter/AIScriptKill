@@ -78,6 +78,69 @@ def validate_stage_references(
         _validate_stage_conditions(stage, context)
 
 
+def validate_character_chapter_references(
+    package: ScriptPackageImport,
+    context: PackageValidationContext,
+) -> None:
+    """校验人物章节所属角色和最早阶段引用。"""
+
+    for chapter in package.chapters:
+        ensure_reference(
+            f"character chapter {chapter.id} 的角色引用",
+            chapter.character_id,
+            context.character_ids,
+        )
+        if chapter.stage_min is not None:
+            ensure_reference(
+                f"character chapter {chapter.id} 的最早阶段引用",
+                chapter.stage_min,
+                context.stage_ids,
+            )
+        release_type = metadata_text(chapter.release.get("type"))
+        if release_type == "rule":
+            rule_id = required_text(
+                f"character chapter {chapter.id} 的授权规则",
+                chapter.release,
+                "rule_id",
+            )
+            if not _has_matching_chapter_unlock_event(package, chapter.id, rule_id):
+                raise PackageArchiveError(
+                    "PACKAGE_CHARACTER_CHAPTER_RELEASE_INVALID",
+                    f"character chapter {chapter.id} 缺少同 rule_id 的授权事件: {rule_id}",
+                )
+
+
+def _has_matching_chapter_unlock_event(
+    package: ScriptPackageImport,
+    chapter_id: str,
+    rule_id: str,
+) -> bool:
+    for event in _package_events(package):
+        if (
+            event.get("action") == "unlock_character_chapter"
+            and event.get("chapter_id") == chapter_id
+            and event.get("event_id") == rule_id
+        ):
+            return True
+    return False
+
+
+def _package_events(package: ScriptPackageImport) -> tuple[dict[str, JsonValue], ...]:
+    events: list[dict[str, JsonValue]] = []
+    for stage in package.stages:
+        for field in ("on_stage_entry", "on_stage_exit"):
+            events.extend(json_mapping_list(stage.definition.get(field)))
+        for field in ("on_clue_discovered", "media_triggers"):
+            for trigger in json_mapping_list(stage.definition.get(field)):
+                events.extend(json_mapping_list(trigger.get("then")))
+    for scene in package.scenes:
+        for hotspot in json_mapping_list(scene.definition.get("hotspots")):
+            events.extend(json_mapping_list(hotspot.get("on_click")))
+    for ending in package.endings:
+        events.extend(dict(event) for event in ending.on_trigger)
+    return tuple(events)
+
+
 def validate_character_references(
     package: ScriptPackageImport,
     context: PackageValidationContext,
@@ -298,11 +361,17 @@ def _validate_condition_references(
                 required_text(owner, condition.parameters, "clue_id"),
                 context.clue_ids,
             )
-        case ConditionType.EVIDENCE_FOUND:
+        case ConditionType.EVIDENCE_FOUND | ConditionType.EVIDENCE_VIEWED:
             ensure_reference(
                 owner,
                 required_text(owner, condition.parameters, "evidence_id"),
                 context.evidence_ids,
+            )
+        case ConditionType.CHARACTER_CHAPTER_READ:
+            ensure_reference(
+                owner,
+                required_text(owner, condition.parameters, "chapter_id"),
+                context.chapter_ids,
             )
         case ConditionType.EVIDENCE_SHOWN_TO_NPC:
             _validate_evidence_shown_condition(owner, condition.parameters, context)

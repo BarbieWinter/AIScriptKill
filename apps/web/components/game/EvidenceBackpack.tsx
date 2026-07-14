@@ -5,60 +5,101 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet } from "@/components/ui/Sheet";
 import { useGameStore } from "@/stores/gameStore";
-import { Eye, Share2, Crosshair } from "lucide-react";
+import { Eye, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api, isMockMode } from "@/lib/api";
 import { getMockEngine } from "@/lib/mock-data";
 import { toast } from "sonner";
-
-// 角色列表（用于出示证物）
-const characterList = [
-  { id: "wangdada", name: "王大达" },
-  { id: "chengjun", name: "程俊" },
-];
 
 export function EvidenceBackpack() {
   const open = useGameStore((s) => s.activePanel === "evidence");
   const onClose = () => useGameStore.getState().closePanel();
+  const sessionId = useGameStore((s) => s.sessionId);
   const evidences = useGameStore((s) => s.discoveredEvidences);
+  const characters = useGameStore((s) => s.availableCharacters);
   const addMessage = useGameStore((s) => s.addMessage);
+  const updateEvidence = useGameStore((s) => s.updateEvidence);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showNpcList, setShowNpcList] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const selected = evidences[selectedIndex];
+  const selectedImageUrl =
+    selected?.id === "evidence-back-door-image"
+      ? "/snow-village/evidences/back-door-2113.svg"
+      : selected?.image_url;
+  const characterList = characters.filter((character) => character.id !== "zhuosiyuan");
+
+  useEffect(() => {
+    if (selectedIndex >= evidences.length) setSelectedIndex(0);
+  }, [evidences.length, selectedIndex]);
+
+  useEffect(() => {
+    if (!open || !sessionId || !selected || selected.status === "viewed") return;
+
+    let cancelled = false;
+    const markViewed = async () => {
+      try {
+        const result = await api.viewEvidence(sessionId, selected.id);
+        if (!cancelled) updateEvidence(selected.id, { status: result.status });
+      } catch (error) {
+        console.error("[EvidenceBackpack] 标记证物已查看失败:", error);
+      }
+    };
+    void markViewed();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selected, sessionId, updateEvidence]);
 
   /** 出示证物给角色 */
-  const handleShowEvidence = (charId: string) => {
-    if (!selected) return;
-    const engine = getMockEngine();
-    const result = engine.showEvidence(charId, selected.id);
+  const handleShowEvidence = async (charId: string) => {
+    if (!sessionId || !selected || submitting) return;
+    setSubmitting(true);
+    try {
+      const result = isMockMode()
+        ? getMockEngine().showEvidence(charId, selected.id)
+        : await api.performAction(sessionId, "show_evidence", {
+            character_id: charId,
+            evidence_id: selected.id,
+          });
 
-    // 添加 DM 叙述
-    addMessage({
-      id: `msg-ev-${Date.now()}`,
-      role: "npc",
-      character_id: "dm",
-      text: `你向${characterList.find((c) => c.id === charId)?.name}出示了「${selected.name}」。`,
-      emotion: "calm",
-      timestamp: new Date().toISOString(),
-    });
+      const characterName = characterList.find((character) => character.id === charId)?.name ?? charId;
+      addMessage({
+        id: `msg-ev-${Date.now()}`,
+        role: "npc",
+        character_id: "dm",
+        text: `你向${characterName}出示了「${selected.name}」。`,
+        emotion: "calm",
+        timestamp: new Date().toISOString(),
+      });
 
-    // 添加 NPC 反应
-    addMessage({
-      id: `msg-ev-${Date.now() + 1}`,
-      role: "npc",
-      character_id: charId,
-      text: result.text,
-      emotion: result.emotion,
-      timestamp: new Date().toISOString(),
-    });
+      if (result.text) {
+        addMessage({
+          id: `msg-ev-reaction-${Date.now()}`,
+          role: "npc",
+          character_id: result.character_id ?? charId,
+          text: result.text,
+          emotion: result.emotion ?? "normal",
+          timestamp: new Date().toISOString(),
+        });
+      }
 
-    setShowNpcList(false);
-    toast.success("证物已出示");
+      const shown = Array.from(new Set([...(selected.shown_to_characters ?? []), charId]));
+      updateEvidence(selected.id, { shown_to_characters: shown });
+      setShowNpcList(false);
+      toast.success("证物已出示");
+    } catch (error) {
+      console.error("[EvidenceBackpack] 出示证物失败:", error);
+      toast.error("当前无法出示这件证物");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -80,16 +121,25 @@ export function EvidenceBackpack() {
                 exit={{ opacity: 0, scale: 0.95 }}
                 className="rounded-xl border border-[var(--border)] overflow-hidden"
               >
-                {/* 证物图片占位 */}
-                <div className="aspect-[4/3] bg-gradient-to-br from-[var(--theme-primary)]/20 to-[var(--theme-accent)]/10 flex items-center justify-center">
-                  <Eye className="h-12 w-12 text-[var(--muted-foreground)]/30" />
+                {/* 证物图片 */}
+                <div className="aspect-[4/3] bg-gradient-to-br from-[var(--theme-primary)]/20 to-[var(--theme-accent)]/10 flex items-center justify-center overflow-hidden">
+                  {selectedImageUrl && !selectedImageUrl.startsWith("storage://") ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedImageUrl}
+                      alt={selected.name}
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <Eye className="h-12 w-12 text-[var(--muted-foreground)]/30" />
+                  )}
                 </div>
 
                 {/* 证物信息 */}
                 <div className="p-4">
                   <h3 className="text-lg font-bold mb-1">{selected?.name}</h3>
                   <p className="text-sm text-[var(--muted-foreground)] leading-relaxed">
-                    {selected?.description_surface}
+                    {selected?.description ?? selected?.description_surface}
                   </p>
 
                   {/* 状态 */}
@@ -112,14 +162,11 @@ export function EvidenceBackpack() {
           <div className="flex gap-2 px-4 py-3">
             <button
               onClick={() => setShowNpcList(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-4 py-2 text-xs font-bold transition-colors hover:bg-[var(--theme-primary)]/80"
+              disabled={submitting || selected?.can_show_to_npc === false}
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-4 py-2 text-xs font-bold transition-colors hover:bg-[var(--theme-primary)]/80 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Share2 className="h-3.5 w-3.5" />
-              出示
-            </button>
-            <button className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-4 py-2 text-xs transition-colors hover:bg-[var(--accent)]">
-              <Crosshair className="h-3.5 w-3.5" />
-              用于推理
+              {submitting ? "出示中…" : "出示"}
             </button>
           </div>
 
@@ -127,16 +174,21 @@ export function EvidenceBackpack() {
           {showNpcList && (
             <div className="px-4 pb-3">
               <p className="text-xs text-[var(--muted-foreground)] mb-2">选择出示对象：</p>
-              <div className="flex gap-2">
-                {characterList.map((char) => (
-                  <button
-                    key={char.id}
-                    onClick={() => handleShowEvidence(char.id)}
-                    className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs transition-colors hover:border-[var(--theme-primary)] hover:bg-[var(--accent)]"
-                  >
-                    {char.name}
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {characterList.length === 0 ? (
+                  <p className="text-xs text-[var(--muted-foreground)]">当前场景没有可出示对象</p>
+                ) : (
+                  characterList.map((char) => (
+                    <button
+                      key={char.id}
+                      onClick={() => void handleShowEvidence(char.id)}
+                      disabled={submitting}
+                      className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs transition-colors hover:border-[var(--theme-primary)] hover:bg-[var(--accent)] disabled:opacity-40"
+                    >
+                      {char.name}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           )}

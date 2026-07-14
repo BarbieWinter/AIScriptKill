@@ -1,0 +1,12 @@
+round_id: "back-door-first-set"
+name: "后门第一组材料"
+stage_visible: "investigate_back_alley"
+clues:
+  - id: "clue-back-alley-note"
+    name: "后巷便签"
+    stage_visible: "investigate_back_alley"
+    description: "老王：腊肉不用留。旧账本要是还在后屋，明早前拿走。别让孩子们看见。"
+    key_clue: true
+    importance: 4
+    related_scene: "back-alley"
+    related_characters: ["wangdada"]

@@ -18,6 +18,22 @@ from engine.tests.package_loader_fixtures import (
 )
 
 
+def valid_character_chapter() -> str:
+    return """---
+chapter_id: chapter-01
+character_id: player
+order: 1
+title: 第一章
+visibility: character_only
+release:
+  type: game_start
+stage_min: prologue
+---
+
+章节正文。
+"""
+
+
 def test_load_package_archive_rejects_missing_stage_entry_conditions() -> None:
     # 给定：某个阶段缺少已发布剧本包 schema 要求的字段。
     files = _strict_package_files()
@@ -380,6 +396,7 @@ def test_validate_condition_parses_deep_tree_once(monkeypatch: pytest.MonkeyPatc
         stage_ids=frozenset(),
         act_ids=frozenset(),
         character_ids=frozenset(),
+        chapter_ids=frozenset(),
         clue_ids=frozenset(),
         evidence_ids=frozenset(),
         scene_ids=frozenset(),
@@ -643,6 +660,211 @@ def test_load_package_archive_rejects_unix_special_member(file_type: int) -> Non
         load_package_archive(archive_bytes)
 
     assert exc_info.value.code == "PACKAGE_ARCHIVE_MEMBER_TYPE_UNSUPPORTED"
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "character_scripts/player.md",
+        "character_scripts/player/nested/chapter-01.md",
+        "character_scripts/player/chapter-01.yml",
+        "character_scripts/player/.md",
+    ),
+)
+def test_load_package_archive_rejects_invalid_character_chapter_path(path: str) -> None:
+    files: dict[str, str | bytes] = dict(_strict_package_files())
+    files[path] = valid_character_chapter()
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_PATH_UNSUPPORTED"
+
+
+@pytest.mark.parametrize(
+    "frontmatter_change",
+    (
+        ("chapter_id: chapter-01", "chapter_id: chapter-02"),
+        ("character_id: player", "character_id: npc"),
+    ),
+)
+def test_load_package_archive_rejects_character_chapter_path_id_mismatch(
+    frontmatter_change: tuple[str, str],
+) -> None:
+    files = _strict_package_files()
+    files["character_scripts/player/chapter-01.md"] = valid_character_chapter().replace(
+        *frontmatter_change,
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_PATH_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("chapter", "expected_code"),
+    (
+        ("正文没有 frontmatter", "PACKAGE_CHARACTER_CHAPTER_FRONTMATTER_INVALID"),
+        (
+            "---\nchapter_id: chapter-01\n正文没有闭合分隔符",
+            "PACKAGE_CHARACTER_CHAPTER_FRONTMATTER_INVALID",
+        ),
+        (
+            valid_character_chapter().replace("\n章节正文。\n", "\n   \n"),
+            "PACKAGE_CHARACTER_CHAPTER_BODY_REQUIRED",
+        ),
+        (
+            valid_character_chapter().replace("title: 第一章", "title: 第一章\ntitle: 重复"),
+            "PACKAGE_YAML_DUPLICATE_KEY",
+        ),
+        (
+            valid_character_chapter().replace(
+                "release:\n  type: game_start",
+                "release: &release\n  type: game_start\nextra: *release",
+            ),
+            "PACKAGE_YAML_ALIAS_UNSUPPORTED",
+        ),
+        (
+            valid_character_chapter().replace("order: 1", 'order: "1"'),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+        (
+            valid_character_chapter().replace("visibility: character_only", "visibility: public"),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+        (
+            valid_character_chapter().replace(
+                "release:\n  type: game_start",
+                "release: game_start",
+            ),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+        (
+            valid_character_chapter().replace(
+                "release:\n  type: game_start",
+                "release:\n  type: scheduled",
+            ),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+        (
+            valid_character_chapter().replace(
+                "release:\n  type: game_start",
+                "release:\n  type: rule",
+            ),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+        (
+            valid_character_chapter().replace("title: 第一章", "title: 第一章\nunknown: true"),
+            "INVALID_PACKAGE_SCHEMA",
+        ),
+    ),
+)
+def test_load_package_archive_rejects_invalid_character_chapter(
+    chapter: str,
+    expected_code: str,
+) -> None:
+    files = _strict_package_files()
+    files["character_scripts/player/chapter-01.md"] = chapter
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == expected_code
+
+
+def test_load_package_archive_rejects_invalid_character_chapter_encoding() -> None:
+    files: dict[str, str | bytes] = dict(_strict_package_files())
+    files["character_scripts/player/chapter-01.md"] = b"\xff"
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_ENCODING_INVALID"
+
+
+def test_load_package_archive_rejects_duplicate_character_chapter_id() -> None:
+    files = _strict_package_files()
+    files["character_scripts/player/chapter-01.md"] = valid_character_chapter()
+    files["character_scripts/npc/chapter-01.md"] = valid_character_chapter().replace(
+        "character_id: player",
+        "character_id: npc",
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_DUPLICATE_ID"
+    assert "character chapter" in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        ("character_id: player", "character_id: ghost"),
+        ("stage_min: prologue", "stage_min: ghost"),
+    ),
+)
+def test_load_package_archive_rejects_unknown_character_chapter_reference(
+    change: tuple[str, str],
+) -> None:
+    files = _strict_package_files()
+    files["character_scripts/ghost/chapter-01.md"] = valid_character_chapter().replace(*change)
+    if change[0] == "stage_min: prologue":
+        files["character_scripts/player/chapter-01.md"] = files.pop(
+            "character_scripts/ghost/chapter-01.md",
+        )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_REFERENCE_INVALID"
+    assert "ghost" in exc_info.value.message
+
+
+def test_load_package_archive_requires_matching_rule_chapter_event() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = valid_character_chapter().replace(
+        "release:\n  type: game_start",
+        "release:\n  type: rule\n  rule_id: chapter-rule",
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_RELEASE_INVALID"
+
+
+def test_load_package_archive_accepts_matching_rule_chapter_event() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = valid_character_chapter().replace(
+        "release:\n  type: game_start",
+        "release:\n  type: rule\n  rule_id: chapter-rule",
+    )
+    prologue = files["stages/prologue.yml"]
+    assert isinstance(prologue, str)
+    files["stages/prologue.yml"] = (
+        prologue
+        + '\non_stage_entry:\n  - action: "unlock_character_chapter"\n'
+        + '    event_id: "chapter-rule"\n    chapter_id: "chapter-01"\n'
+    )
+
+    package = load_package_archive(package_archive(files))
+
+    assert package.chapters[0].release == {"type": "rule", "rule_id": "chapter-rule"}
+
+
+def test_load_package_archive_rejects_oversized_character_chapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _strict_package_files()
+    files["character_scripts/player/chapter-01.md"] = valid_character_chapter()
+    monkeypatch.setattr(package_archive_module, "MAX_PACKAGE_CHARACTER_CHAPTER_BYTES", 1)
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_TOO_LARGE"
 
 
 def test_load_package_archive_rejects_invalid_yaml_encoding() -> None:

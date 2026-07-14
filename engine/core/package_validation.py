@@ -12,6 +12,7 @@ from engine.core.package_asset_validation import (
 )
 from engine.core.package_dm_guide import dm_guide_chain_ids, validate_dm_guide
 from engine.core.package_reference_validation import (
+    validate_character_chapter_references,
     validate_character_references,
     validate_clue_references,
     validate_ending_references,
@@ -49,6 +50,7 @@ def validate_package_import(
 
     validate_stage_references(package.stages, context)
     validate_character_references(package, context)
+    validate_character_chapter_references(package, context)
     validate_scene_references(package, context)
     validate_clue_references(package, context)
     validate_evidence_references(package, context)
@@ -63,10 +65,15 @@ def _validation_context(
     available_files: frozenset[str],
 ) -> PackageValidationContext:
     stage_index = stage_index_from_mapping(package.stage_index)
+    chapter_ids = _unique_ids(
+        "character chapter",
+        (chapter.id for chapter in package.chapters),
+    )
     return PackageValidationContext(
         stage_ids=_unique_ids("stage", (stage.id for stage in package.stages)),
         act_ids=_unique_ids("act", (act.id for act in stage_index.acts)),
         character_ids=_unique_ids("character", (character.id for character in package.characters)),
+        chapter_ids=chapter_ids,
         clue_ids=_unique_ids("clue", (clue.id for clue in package.clues)),
         evidence_ids=_unique_ids("evidence", (evidence.id for evidence in package.evidences)),
         scene_ids=_unique_ids("scene", (scene.id for scene in package.scenes)),

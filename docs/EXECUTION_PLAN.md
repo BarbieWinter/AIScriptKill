@@ -70,7 +70,7 @@ Phase 1: 地基         Phase 2: 引擎核心      Phase 3: 前端核心
       game_sessions, session_checkpoints, chat_messages,
       session_discoveries, final_submissions, reviews
   - 003_vector_tables.sql:
-      script_knowledge (pgvector, 1536维)
+      script_knowledge (pgvector, 1024维)
       + ivfflat 索引
   - 004_rls_policies.sql:
       玩家只读已解锁内容 / 管理员全读写 / 服务端service_role
@@ -247,7 +247,9 @@ Phase 1: 地基         Phase 2: 引擎核心      Phase 3: 前端核心
 输出:
   engine/rag/ 下:
   - chunker.py:
-      角色知识/线索文本/剧本背景 → 语义切片
+      角色正向知识/已解锁线索/剧本背景 → 语义切片
+      人物章节走会话授权读取，不进入普通 script_knowledge；证物图片/描述不进入普通 RAG
+      doesnt_know/deny_facts/forbidden_facts 仅作 Guard 约束，不得成为召回候选
       每片注入metadata: script_id/type/character_id/stage_visible/visibility
   - indexer.py:
       切片 → embedding → script_knowledge表
@@ -256,8 +258,10 @@ Phase 1: 地基         Phase 2: 引擎核心      Phase 3: 前端核心
       检索入口: retrieve(query, session_context) → list[Chunk]
       硬性权限过滤(SQL WHERE, 不依赖LLM):
         script_id匹配 + stage_visible <= 当前stage
-        + (visibility=public OR character_id=当前角色)
+        + (visibility=public OR character_id=viewer_character_id)
+        + NPC知识仅限speaker_character_id
         + 已解锁检查
+      已读人物章节从私有章节表+session_discoveries单独装配，不写入普通向量索引
       混合检索: 向量相似度(0.7) + 关键词BM25(0.5) 加权
   - reranker.py: 简单重排序(相似度+重要性+新近度)
 

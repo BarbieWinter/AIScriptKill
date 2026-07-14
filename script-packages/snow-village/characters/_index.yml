@@ -1,0 +1,11 @@
+characters:
+  - id: "zhuosiyuan"
+    name: "卓司元"
+    playable: true
+    order: 1
+  - id: "wangdada"
+    name: "王大达"
+    playable: false
+    order: 2
+npc_rules:
+  fact_authority: "package_and_state_only"

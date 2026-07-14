@@ -11,7 +11,9 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { api, isMockMode } from "@/lib/api";
 import { getMockEngine } from "@/lib/mock-data";
+import { toast } from "sonner";
 import { useGameStore } from "@/stores/gameStore";
 import { Search } from "lucide-react";
 
@@ -27,44 +29,79 @@ interface Hotspot {
 interface SceneHotspotsProps {
   sceneId: string;
   hotspots: Hotspot[];
+  discovered?: string[];
 }
 
-export function SceneHotspots({ sceneId, hotspots }: SceneHotspotsProps) {
+export function SceneHotspots({
+  sceneId,
+  hotspots,
+  discovered = [],
+}: SceneHotspotsProps) {
+  const sessionId = useGameStore((s) => s.sessionId);
   const addMessage = useGameStore((s) => s.addMessage);
   const addClue = useGameStore((s) => s.addClue);
   const addEvidence = useGameStore((s) => s.addEvidence);
+  const setClues = useGameStore((s) => s.setClues);
+  const setEvidences = useGameStore((s) => s.setEvidences);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [discoveredIds, setDiscoveredIds] = useState<Set<string>>(new Set());
+  const [discoveredIds, setDiscoveredIds] = useState<Set<string>>(
+    () => new Set(discovered)
+  );
 
-  const handleClick = (hotspot: Hotspot) => {
-    if (discoveredIds.has(hotspot.id)) return;
+  const handleClick = async (hotspot: Hotspot) => {
+    if (!sessionId || discoveredIds.has(hotspot.id) || activeId) return;
     setActiveId(hotspot.id);
 
-    const engine = getMockEngine();
-    const result = engine.examineScene(sceneId, hotspot.id);
+    try {
+      if (isMockMode()) {
+        const result = getMockEngine().examineScene(sceneId, hotspot.id);
 
-    addMessage({
-      id: `scene-${Date.now()}`,
-      role: "npc",
-      character_id: "dm",
-      text: result.dm_narration,
-      emotion: "calm",
-      timestamp: new Date().toISOString(),
-    });
+        addMessage({
+          id: `scene-${Date.now()}`,
+          role: "npc",
+          character_id: "dm",
+          text: result.dm_narration,
+          emotion: "calm",
+          timestamp: new Date().toISOString(),
+        });
 
-    const hasContent = result.discovered_clues?.length > 0 || result.discovered_evidences?.length > 0;
-    if (hasContent) {
-      setDiscoveredIds((prev) => new Set(prev).add(hotspot.id));
+        result.discovered_clues?.forEach((clue: any, i: number) => {
+          setTimeout(() => addClue(clue), 400 + i * 200);
+        });
+        result.discovered_evidences?.forEach((evidence: any, i: number) => {
+          setTimeout(() => addEvidence(evidence), 600 + i * 200);
+        });
+      } else {
+        const result = await api.performAction(sessionId, "examine_scene", {
+          scene_id: sceneId,
+          hotspot_id: hotspot.id,
+        });
+        if (result.type === "scene_result" && result.dm_narration) {
+          addMessage({
+            id: `scene-${Date.now()}`,
+            role: "npc",
+            character_id: "dm",
+            text: result.dm_narration,
+            emotion: "calm",
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        const [clueResult, evidenceResult] = await Promise.all([
+          api.getClues(sessionId),
+          api.getEvidences(sessionId),
+        ]);
+        setClues(clueResult.clues);
+        setEvidences(evidenceResult.evidences);
+      }
+
+      setDiscoveredIds((previous) => new Set(previous).add(hotspot.id));
+    } catch (error) {
+      console.error("[SceneHotspots] 调查场景失败:", error);
+      toast.error("调查失败，请稍后重试");
+    } finally {
+      setTimeout(() => setActiveId(null), 800);
     }
-
-    result.discovered_clues?.forEach((clue: any, i: number) => {
-      setTimeout(() => addClue(clue), 400 + i * 200);
-    });
-    result.discovered_evidences?.forEach((ev: any, i: number) => {
-      setTimeout(() => addEvidence(ev), 600 + i * 200);
-    });
-
-    setTimeout(() => setActiveId(null), 800);
   };
 
   return (

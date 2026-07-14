@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from engine.core.event_bus import EventActionError, EventBus
-from engine.core.package_schema import JsonMapping
+from engine.core.package_schema import CharacterChapterRecord, JsonMapping
 from engine.tests.stategraph_fixtures import composite_event_package, initial_state
 
 
@@ -103,6 +103,94 @@ async def test_multiple_matching_clue_triggers_do_not_share_automatic_event_id()
         "stage:prologue:clue:clue_1:trigger:0:0",
         "stage:prologue:clue:clue_1:trigger:1:0",
     ]
+
+
+async def test_character_chapter_unlock_enforces_player_ownership_before_sink() -> None:
+    package = replace(
+        composite_event_package(),
+        chapters=(
+            CharacterChapterRecord(
+                id="player-chapter",
+                character_id="player",
+                sort_order=1,
+                title="玩家章节",
+                visibility="character_only",
+                release={"type": "rule", "rule_id": "unlock-player"},
+                stage_min=None,
+                content="玩家正文",
+            ),
+            CharacterChapterRecord(
+                id="npc-chapter",
+                character_id="npc",
+                sort_order=1,
+                title="NPC 章节",
+                visibility="character_only",
+                release={"type": "rule", "rule_id": "unlock-npc"},
+                stage_min=None,
+                content="NPC 正文",
+            ),
+        ),
+    )
+    state = initial_state(package)
+    sink = RecordingEventSink()
+    event_bus = EventBus(package, sink)
+
+    result = await event_bus.process_actions(
+        state,
+        "unlock-rules",
+        [
+            {
+                "action": "unlock_character_chapter",
+                "event_id": "unlock-player",
+                "chapter_id": "player-chapter",
+            },
+            {
+                "action": "unlock_character_chapter",
+                "event_id": "unlock-npc",
+                "chapter_id": "npc-chapter",
+            },
+        ],
+    )
+
+    assert result["unlocked_character_chapters"] == ["player-chapter"]
+    assert result["completed_events"] == ["unlock-player", "unlock-npc"]
+    assert sink.actions == ["unlock_character_chapter"]
+
+
+async def test_game_start_chapters_unlock_only_for_selected_character_once() -> None:
+    package = replace(
+        composite_event_package(),
+        chapters=(
+            CharacterChapterRecord(
+                id="player-start",
+                character_id="player",
+                sort_order=1,
+                title="开局章节",
+                visibility="character_only",
+                release={"type": "game_start"},
+                stage_min=None,
+                content="玩家正文",
+            ),
+            CharacterChapterRecord(
+                id="npc-start",
+                character_id="npc",
+                sort_order=1,
+                title="NPC 开局章节",
+                visibility="character_only",
+                release={"type": "game_start"},
+                stage_min=None,
+                content="NPC 正文",
+            ),
+        ),
+    )
+    state = initial_state(package)
+    event_bus = EventBus(package)
+
+    first = await event_bus.unlock_game_start_chapters(state)
+    replayed = await event_bus.unlock_game_start_chapters(first)
+
+    assert replayed["unlocked_character_chapters"] == ["player-start"]
+    assert replayed["completed_events"] == ["character-chapter:player-start:game-start"]
 
 
 class RecordingEventSink:

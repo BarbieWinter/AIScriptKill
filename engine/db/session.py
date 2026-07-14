@@ -87,6 +87,7 @@ REQUIRED_PUBLIC_TABLES: Final[tuple[str, ...]] = (
     "script_packages",
     "script_stages",
     "script_characters",
+    "script_character_chapters",
     "script_clues",
     "script_evidences",
     "script_scenes",

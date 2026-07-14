@@ -1,0 +1,11 @@
+id: "restaurant-hall"
+name: "王氏杀猪菜前厅"
+description: "已经打烊的饭馆前厅，炉火尚未完全熄灭。"
+visual:
+  background: "assets/scenes/restaurant-hall.svg"
+  ambient_color: "#3b2a22"
+available_in_stages:
+  - return_to_snow_village
+  - confront_wangdada
+  - back_door_judgement
+hotspots: []

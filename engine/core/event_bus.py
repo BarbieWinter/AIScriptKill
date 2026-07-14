@@ -13,12 +13,14 @@ from engine.core.script_runtime import PackageRuntimeIndex
 type RuntimeEventAction = Literal[
     "clue_discover",
     "dm_narrate",
+    "evidence_discover",
     "npc_emotion",
     "npc_enter_scene",
     "play_audio",
     "save_checkpoint",
     "show_truth_summary",
     "transition_to",
+    "unlock_character_chapter",
     "unlock_clue_round",
     "unlock_scenes",
 ]
@@ -55,6 +57,35 @@ class EventBus:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_runtime", PackageRuntimeIndex(self.package))
+
+    async def unlock_game_start_chapters(self, state: GameState) -> GameState:
+        """为当前玩家角色幂等授权声明为 game_start 的章节。"""
+
+        next_state = clone_game_state(state)
+        chapters = sorted(
+            self.package.chapters,
+            key=lambda chapter: (chapter.sort_order, chapter.id),
+        )
+        for chapter in chapters:
+            if (
+                chapter.character_id != next_state["player_character_id"]
+                or chapter.release.get("type") != "game_start"
+            ):
+                continue
+            event_id = f"character-chapter:{chapter.id}:game-start"
+            next_state = await self.process_actions(
+                next_state,
+                event_id,
+                [
+                    {
+                        "action": "unlock_character_chapter",
+                        "event_id": event_id,
+                        "chapter_id": chapter.id,
+                    }
+                ],
+                source="game_start",
+            )
+        return next_state
 
     async def on_stage_entry(self, state: GameState, stage: StageRecord) -> GameState:
         """按声明顺序应用阶段进入动作。"""
@@ -158,6 +189,12 @@ class EventBus:
         if event_id in next_state["completed_events"]:
             return next_state
         runtime_action = _runtime_event_action(action)
+        if runtime_action == "unlock_character_chapter" and not self._chapter_belongs_to_player(
+            next_state,
+            metadata_text(payload.get("chapter_id")),
+        ):
+            self._record_event(next_state, event_id, source, runtime_action, payload)
+            return next_state
         if self.sink is not None:
             # 外部效果成功而状态尚未持久化时仍可能崩溃，因此接收器必须按稳定键幂等。
             await self.sink.execute(
@@ -176,8 +213,18 @@ class EventBus:
                 self._unlock_scenes(next_state, metadata_texts(payload.get("scene_ids")))
             case "unlock_clue_round":
                 await self._unlock_clue_round(next_state, metadata_text(payload.get("round_id")))
+            case "unlock_character_chapter":
+                self._unlock_character_chapter(
+                    next_state,
+                    metadata_text(payload.get("chapter_id")),
+                )
             case "clue_discover":
                 await self._unlock_clue(next_state, metadata_text(payload.get("clue_id")))
+            case "evidence_discover":
+                self._discover_evidence(
+                    next_state,
+                    metadata_text(payload.get("evidence_id")),
+                )
             case "npc_enter_scene":
                 self._update_npc_scene(
                     next_state,
@@ -226,6 +273,25 @@ class EventBus:
             if scene_id not in state["unlocked_scenes"]:
                 state["unlocked_scenes"].append(scene_id)
 
+    def _chapter_belongs_to_player(
+        self,
+        state: GameState,
+        chapter_id: str | None,
+    ) -> bool:
+        if chapter_id is None:
+            return False
+        chapter = self._runtime.chapter_by_id(chapter_id)
+        return chapter.character_id == state["player_character_id"]
+
+    def _unlock_character_chapter(
+        self,
+        state: GameState,
+        chapter_id: str | None,
+    ) -> None:
+        if chapter_id is None or chapter_id in state["unlocked_character_chapters"]:
+            return
+        state["unlocked_character_chapters"].append(chapter_id)
+
     async def _unlock_clue_round(self, state: GameState, round_id: str | None) -> None:
         if round_id is None:
             return
@@ -247,6 +313,13 @@ class EventBus:
             },
         )
         state.update(await self.on_clue_discovered(state, clue.id))
+
+    def _discover_evidence(self, state: GameState, evidence_id: str | None) -> None:
+        if evidence_id is None or evidence_id in state["discovered_evidences"]:
+            return
+        if not any(evidence.id == evidence_id for evidence in self.package.evidences):
+            return
+        state["discovered_evidences"].append(evidence_id)
 
     def _update_npc_scene(
         self,
@@ -317,12 +390,14 @@ def _runtime_event_action(action: str) -> RuntimeEventAction:
         case (
             "clue_discover"
             | "dm_narrate"
+            | "evidence_discover"
             | "npc_emotion"
             | "npc_enter_scene"
             | "play_audio"
             | "save_checkpoint"
             | "show_truth_summary"
             | "transition_to"
+            | "unlock_character_chapter"
             | "unlock_clue_round"
             | "unlock_scenes"
         ):

@@ -11,6 +11,7 @@ from engine.core.package_schema import ScriptPackageImport
 from engine.db.protocols import WriteSession
 from engine.db.tables import script_knowledge
 from engine.rag.chunker import chunk_package
+from engine.rag.embeddings import EMBEDDING_DIMENSIONS
 from engine.rag.metadata import json_mapping, metadata_text
 from engine.rag.models import (
     EmbeddingProvider,
@@ -63,6 +64,8 @@ def build_index_records(
     )
     if len(embedded) != len(chunks):
         raise ValueError("embedding provider returned a different number of vectors")
+    if any(len(vector) != EMBEDDING_DIMENSIONS for vector in embedded):
+        raise ValueError(f"embedding provider must return {EMBEDDING_DIMENSIONS}-dimension vectors")
     return tuple(
         RagIndexRecord(chunk=chunk, embedding=embedded[index]) for index, chunk in enumerate(chunks)
     )

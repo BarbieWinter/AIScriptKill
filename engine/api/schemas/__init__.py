@@ -2,6 +2,7 @@ from engine.api.schemas.actions import (
     ActionRequest,
     ActionResponse,
     AdvanceDenied,
+    AdvanceRequirement,
     CardResult,
     EvidenceReaction,
     FinalSubmissionRequest,
@@ -18,10 +19,13 @@ from engine.api.schemas.packages import (
 )
 from engine.api.schemas.queries import (
     CardListResponse,
+    CharacterChapterListResponse,
+    CharacterChapterResponse,
     CharacterListResponse,
     ChatHistoryResponse,
     ClueListResponse,
     EvidenceListResponse,
+    EvidenceViewedResponse,
 )
 from engine.api.schemas.reviews import ReviewResponse
 from engine.api.schemas.sessions import (
@@ -38,14 +42,18 @@ __all__ = [
     "ActionRequest",
     "ActionResponse",
     "AdvanceDenied",
+    "AdvanceRequirement",
     "CardListResponse",
     "CardResult",
+    "CharacterChapterListResponse",
+    "CharacterChapterResponse",
     "CharacterListResponse",
     "ChatHistoryResponse",
     "ClueListResponse",
     "CreateSessionRequest",
     "CreateSessionResponse",
     "EvidenceListResponse",
+    "EvidenceViewedResponse",
     "EvidenceReaction",
     "FinalSubmissionRequest",
     "NpcResponse",

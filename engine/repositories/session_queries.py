@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from engine.db.tables import (
     chat_messages,
     reviews,
+    script_character_chapters,
     script_characters,
     script_clues,
     script_evidences,
@@ -15,6 +16,7 @@ from engine.db.tables import (
     session_discoveries,
 )
 from engine.repositories.session_models import (
+    CharacterChapterAccess,
     SessionCheckpoint,
     SessionRuntimeState,
     StoredSession,
@@ -142,6 +144,131 @@ async def list_characters(db: AsyncSession, session: StoredSession) -> list[RowM
         .order_by(script_characters.c.character_id),
     )
     return list(result.mappings().all())
+
+
+async def get_character_chapter(
+    db: AsyncSession,
+    session: StoredSession,
+    chapter_id: str,
+) -> CharacterChapterAccess | None:
+    result = await db.execute(
+        select(
+            script_character_chapters.c.chapter_id,
+            script_character_chapters.c.character_id,
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.title,
+            script_character_chapters.c.content,
+            session_discoveries.c.status,
+        )
+        .join(
+            session_discoveries,
+            and_(
+                session_discoveries.c.entity_id == script_character_chapters.c.chapter_id,
+                session_discoveries.c.entity_type == "character_chapter",
+                session_discoveries.c.session_id == session.id,
+                session_discoveries.c.status.in_(("unlocked", "viewed")),
+            ),
+        )
+        .where(
+            and_(
+                script_character_chapters.c.script_id == session.script_id,
+                script_character_chapters.c.character_id == session.player_character_id,
+                script_character_chapters.c.chapter_id == chapter_id,
+            ),
+        )
+    )
+    row = result.mappings().one_or_none()
+    if row is None:
+        return None
+    return CharacterChapterAccess(
+        chapter_id=row["chapter_id"],
+        character_id=row["character_id"],
+        sort_order=row["sort_order"],
+        title=row["title"],
+        content=row["content"],
+        status=row["status"],
+    )
+
+
+async def list_character_chapters(
+    db: AsyncSession,
+    session: StoredSession,
+) -> list[RowMapping]:
+    result = await db.execute(
+        select(
+            script_character_chapters.c.chapter_id,
+            script_character_chapters.c.character_id,
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.title,
+            session_discoveries.c.status,
+        )
+        .join(
+            session_discoveries,
+            and_(
+                session_discoveries.c.entity_id == script_character_chapters.c.chapter_id,
+                session_discoveries.c.entity_type == "character_chapter",
+                session_discoveries.c.session_id == session.id,
+                session_discoveries.c.status.in_(("unlocked", "viewed")),
+            ),
+        )
+        .where(
+            and_(
+                script_character_chapters.c.script_id == session.script_id,
+                script_character_chapters.c.character_id == session.player_character_id,
+            ),
+        )
+        .order_by(
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.chapter_id,
+        )
+    )
+    return list(result.mappings().all())
+
+
+async def list_read_character_chapters(
+    db: AsyncSession,
+    session: StoredSession,
+) -> tuple[CharacterChapterAccess, ...]:
+    result = await db.execute(
+        select(
+            script_character_chapters.c.chapter_id,
+            script_character_chapters.c.character_id,
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.title,
+            script_character_chapters.c.content,
+            session_discoveries.c.status,
+        )
+        .join(
+            session_discoveries,
+            and_(
+                session_discoveries.c.entity_id == script_character_chapters.c.chapter_id,
+                session_discoveries.c.entity_type == "character_chapter",
+                session_discoveries.c.session_id == session.id,
+                session_discoveries.c.status == "viewed",
+            ),
+        )
+        .where(
+            and_(
+                script_character_chapters.c.script_id == session.script_id,
+                script_character_chapters.c.character_id == session.player_character_id,
+            ),
+        )
+        .order_by(
+            script_character_chapters.c.sort_order,
+            script_character_chapters.c.chapter_id,
+        )
+    )
+    return tuple(
+        CharacterChapterAccess(
+            chapter_id=row["chapter_id"],
+            character_id=row["character_id"],
+            sort_order=row["sort_order"],
+            title=row["title"],
+            content=row["content"],
+            status=row["status"],
+        )
+        for row in result.mappings().all()
+    )
 
 
 async def list_cards(db: AsyncSession, session: StoredSession) -> list[RowMapping]:

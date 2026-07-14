@@ -2,15 +2,25 @@ from sqlalchemy.engine import RowMapping
 
 from engine.api.schemas import (
     CardListResponse,
+    CharacterChapterListResponse,
+    CharacterChapterResponse,
     CharacterListResponse,
     ChatHistoryResponse,
     ClueListResponse,
     EvidenceListResponse,
     ReviewResponse,
 )
-from engine.api.schemas.queries import Card, CharacterSummary, ChatMessage, Clue, Evidence
-from engine.api.schemas.reviews import MissedKeyClue, ReviewBreakdown
-from engine.repositories.session_repository import StoredSession
+from engine.api.schemas.queries import (
+    Card,
+    CharacterChapterSummary,
+    CharacterSummary,
+    ChatMessage,
+    Clue,
+    Evidence,
+)
+from engine.api.schemas.reviews import ReviewBreakdown
+from engine.core.game_state import EvidencePresentation
+from engine.repositories.session_repository import CharacterChapterAccess, StoredSession
 from engine.services.mapper_utils import definition_value, timestamp
 
 # ── 资料列表响应映射 ──
@@ -34,7 +44,10 @@ def clues_response(rows: list[RowMapping]) -> ClueListResponse:
     )
 
 
-def evidences_response(rows: list[RowMapping]) -> EvidenceListResponse:
+def evidences_response(
+    rows: list[RowMapping],
+    evidences_shown_to_npcs: list[EvidencePresentation],
+) -> EvidenceListResponse:
     return EvidenceListResponse(
         evidences=[
             Evidence(
@@ -44,10 +57,53 @@ def evidences_response(rows: list[RowMapping]) -> EvidenceListResponse:
                 description=row["description_surface"],
                 status=row["status"],
                 can_show_to_npc=True,
-                shown_to_characters=[],
+                shown_to_characters=_shown_character_ids(
+                    row["evidence_id"],
+                    evidences_shown_to_npcs,
+                ),
             )
             for row in rows
         ],
+    )
+
+
+def _shown_character_ids(
+    evidence_id: str,
+    presentations: list[EvidencePresentation],
+) -> list[str]:
+    result: list[str] = []
+    for item in presentations:
+        if item.get("evidence_id") != evidence_id:
+            continue
+        character_id = item.get("character_id")
+        if character_id and character_id not in result:
+            result.append(character_id)
+    return result
+
+
+def character_chapters_response(rows: list[RowMapping]) -> CharacterChapterListResponse:
+    return CharacterChapterListResponse(
+        chapters=[
+            CharacterChapterSummary(
+                id=row["chapter_id"],
+                character_id=row["character_id"],
+                order=row["sort_order"],
+                title=row["title"],
+                status=row["status"],
+            )
+            for row in rows
+        ],
+    )
+
+
+def character_chapter_response(chapter: CharacterChapterAccess) -> CharacterChapterResponse:
+    return CharacterChapterResponse(
+        id=chapter.chapter_id,
+        character_id=chapter.character_id,
+        order=chapter.sort_order,
+        title=chapter.title,
+        status=chapter.status,
+        content=chapter.content,
     )
 
 
@@ -145,6 +201,12 @@ def review_response(session: StoredSession, row: RowMapping | None) -> ReviewRes
         )
 
     # ── 已完成复盘响应 ──
+    breakdown = row["breakdown"]
+    selected_option = breakdown.get("selected_option")
+    correct_option = breakdown.get("correct_option")
+    judgment_correct = selected_option == correct_option
+    total_clues_found = len(session.state.unlocked_clues)
+    total_clues_available = 1 if session.script_id == "snow-village" else 0
     return ReviewResponse(
         session_id=str(session.id),
         script_id=session.script_id,
@@ -153,19 +215,24 @@ def review_response(session: StoredSession, row: RowMapping | None) -> ReviewRes
         rating=row["rating"] or "N/A",
         duration_minutes=0,
         breakdown=ReviewBreakdown(
-            suspect_correct=True,
-            motive_correct=True,
-            key_evidence_hit_rate=str(row["breakdown"].get("key_evidence_hit_rate", "0/5")),
-            wrong_accusations=0,
-            total_clues_found=len(session.state.unlocked_clues),
-            total_clues_available=0,
-            clue_coverage="0%",
+            suspect_correct=judgment_correct,
+            motive_correct=judgment_correct,
+            key_evidence_hit_rate="1/1" if judgment_correct else "0/1",
+            wrong_accusations=0 if judgment_correct else 1,
+            total_clues_found=total_clues_found,
+            total_clues_available=total_clues_available,
+            clue_coverage=(
+                "100%"
+                if total_clues_available and total_clues_found >= total_clues_available
+                else "0%"
+            ),
             hints_used=0,
         ),
-        missed_key_clues=[
-            MissedKeyClue(id="hidden_letter", name="藏起的信", description="待剧本导入补全。"),
+        missed_key_clues=[],
+        optimal_path=["clue-back-alley-note", "evidence-back-door-image"],
+        player_path=[
+            *session.state.unlocked_clues,
+            *session.state.discovered_evidences,
         ],
-        optimal_path=[],
-        player_path=session.state.unlocked_clues,
         truth_summary=row["truth_summary"] or "",
     )

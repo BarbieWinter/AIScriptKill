@@ -126,7 +126,7 @@ export function Sheet({
             </div>
 
             {/* 内容 */}
-            <div className="overflow-y-auto" style={{ height: "calc(100% - 52px)" }}>
+            <div className="min-h-0 overflow-y-auto" style={{ height: "calc(100% - 52px)" }}>
               {children}
             </div>
           </motion.div>

@@ -1,0 +1,25 @@
+id: "back_door_judgement"
+name: "后门判断"
+sort_order: 30
+entry_conditions:
+  - type: "stage_completed"
+    stage_id: "confront_wangdada"
+exit_conditions: []
+available_actions:
+  - open_clue_board
+available_characters:
+  - wangdada
+available_scenes:
+  - restaurant-hall
+on_stage_entry:
+  - action: "dm_narrate"
+    text: "根据当前材料选择最符合已证实事实的判断。"
+special_rules:
+  judgement:
+    question: "根据当前材料，哪项最符合已证实事实？"
+    correct_option: "C"
+    options:
+      A: "陈吉在21:13从后门进入，目的是偷走旧账本。"
+      B: "王大达伪造便签，试图掩盖自己与旧案的关系。"
+      C: "王大达关于没人来过的说法不完整；至少可确认后门在21:13半开，但不能确认开门者和目的。"
+      D: "后门异常证明饭馆当晚发生过犯罪。"

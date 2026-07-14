@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from engine.api.schemas.common import ActionType, JsonValue
+from engine.core.game_state import EvidencePresentation
 
 # ── 运行时状态快照 ──
 
@@ -22,6 +23,10 @@ class SessionRuntimeState(BaseModel):
     available_characters: list[str] = Field(default_factory=list)
     unlocked_clues: list[str] = Field(default_factory=list)
     discovered_evidences: list[str] = Field(default_factory=list)
+    viewed_evidences: list[str] = Field(default_factory=list)
+    unlocked_character_chapters: list[str] = Field(default_factory=list)
+    read_character_chapters: list[str] = Field(default_factory=list)
+    evidences_shown_to_npcs: list[EvidencePresentation] = Field(default_factory=list)
     current_scene: str = Field(default="start")
     pending_media: list[dict[str, str]] = Field(default_factory=list)
     final_submission: dict[str, str | list[str]] | None = Field(default=None)
@@ -58,6 +63,22 @@ class SessionActionEffect:
     discoveries: tuple["DiscoveryDraft", ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterChapterAccess:
+    chapter_id: str
+    character_id: str
+    sort_order: int
+    title: str
+    content: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContentProgress:
+    entity_id: str
+    status: str
+
+
 # ── 写入草稿对象 ──
 
 
@@ -67,6 +88,7 @@ class ChatMessageDraft:
     text: str
     character_id: str | None = None
     emotion: str | None = None
+    message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

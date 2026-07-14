@@ -7,7 +7,9 @@ from engine.api.schemas import CreateSessionRequest, FinalSubmissionRequest
 from engine.api.schemas.common import JsonValue
 from engine.repositories.session_context import apply_session_context
 from engine.repositories.session_models import (
+    CharacterChapterAccess,
     ChatMessageDraft,
+    ContentProgress,
     DiscoveryDraft,
     SessionActionEffect,
     SessionCheckpoint,
@@ -24,10 +26,19 @@ from engine.repositories.session_mutations import (
     create_session as persist_session,
 )
 from engine.repositories.session_mutations import (
+    mark_content_viewed as persist_content_viewed,
+)
+from engine.repositories.session_mutations import (
+    project_runtime_action as persist_runtime_action,
+)
+from engine.repositories.session_mutations import (
     restore_checkpoint as persist_restore,
 )
 from engine.repositories.session_mutations import (
     save_final_submission as persist_submission,
+)
+from engine.repositories.session_queries import (
+    get_character_chapter as fetch_character_chapter,
 )
 from engine.repositories.session_queries import (
     get_checkpoint as fetch_checkpoint,
@@ -42,6 +53,9 @@ from engine.repositories.session_queries import (
     list_cards as fetch_cards,
 )
 from engine.repositories.session_queries import (
+    list_character_chapters as fetch_character_chapters,
+)
+from engine.repositories.session_queries import (
     list_characters as fetch_characters,
 )
 from engine.repositories.session_queries import (
@@ -52,6 +66,9 @@ from engine.repositories.session_queries import (
 )
 from engine.repositories.session_queries import (
     list_evidences as fetch_evidences,
+)
+from engine.repositories.session_queries import (
+    list_read_character_chapters as fetch_read_character_chapters,
 )
 from engine.repositories.session_queries import (
     stage_name as fetch_stage_name,
@@ -88,6 +105,14 @@ class SessionRepository:
         effect: SessionActionEffect,
     ) -> StoredSession:
         return await persist_action(self._db, session, effect)
+
+    async def project_runtime_action(
+        self,
+        session: StoredSession,
+        state: SessionRuntimeState,
+        effect: SessionActionEffect,
+    ) -> StoredSession:
+        return await persist_runtime_action(self._db, session, state, effect)
 
     # 最终提交与复盘写入
     async def save_final_submission(
@@ -132,6 +157,53 @@ class SessionRepository:
         await apply_session_context(self._db, session)
         return await fetch_characters(self._db, session)
 
+    async def list_character_chapters(self, session: StoredSession) -> list[RowMapping]:
+        await apply_session_context(self._db, session)
+        return await fetch_character_chapters(self._db, session)
+
+    async def list_read_character_chapters(
+        self,
+        session: StoredSession,
+    ) -> tuple[CharacterChapterAccess, ...]:
+        await apply_session_context(self._db, session)
+        return await fetch_read_character_chapters(self._db, session)
+
+    async def get_character_chapter(
+        self,
+        session: StoredSession,
+        chapter_id: str,
+    ) -> CharacterChapterAccess | None:
+        await apply_session_context(self._db, session)
+        return await fetch_character_chapter(self._db, session, chapter_id)
+
+    async def mark_evidence_viewed(
+        self,
+        session: StoredSession,
+        evidence_id: str,
+    ) -> ContentProgress | None:
+        await apply_session_context(self._db, session)
+        return await persist_content_viewed(
+            self._db,
+            session,
+            "evidence",
+            evidence_id,
+            "viewed_evidences",
+        )
+
+    async def mark_character_chapter_read(
+        self,
+        session: StoredSession,
+        chapter_id: str,
+    ) -> ContentProgress | None:
+        await apply_session_context(self._db, session)
+        return await persist_content_viewed(
+            self._db,
+            session,
+            "character_chapter",
+            chapter_id,
+            "read_character_chapters",
+        )
+
     async def list_cards(self, session: StoredSession) -> list[RowMapping]:
         await apply_session_context(self._db, session)
         return await fetch_cards(self._db, session)
@@ -144,7 +216,9 @@ class SessionRepository:
 
 
 __all__ = [
+    "CharacterChapterAccess",
     "ChatMessageDraft",
+    "ContentProgress",
     "DiscoveryDraft",
     "SessionActionEffect",
     "SessionCheckpoint",

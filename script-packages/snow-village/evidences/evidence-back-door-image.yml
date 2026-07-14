@@ -1,0 +1,19 @@
+id: "evidence-back-door-image"
+name: "21:13 后门截图"
+type: "key_evidence"
+visual:
+  image: "assets/evidences/back-door-2113.svg"
+  thumbnail: "assets/evidences/back-door-2113.svg"
+description:
+  surface: "21:13 的固定摄像头画面：王氏杀猪菜后门半开，门内透出暖黄色灯光，画面边缘有无法辨认身份的深色影子。"
+  deep: "已证实的观察仅限时间、半开的后门、灯光和不可辨认的影子；不能推断身份、进出方向、开门者或犯罪。"
+discovery:
+  scene_id: "back-alley"
+  hotspot_id: "back-door-traces"
+  stage_visible: "investigate_back_alley"
+interactions:
+  view: true
+  show_to_npc: true
+npc_reactions:
+  - character_id: "wangdada"
+    text: "后门当时确实开着，但我没看见是谁开的。"

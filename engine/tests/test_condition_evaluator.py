@@ -441,6 +441,26 @@ def test_evaluate_condition_handles_logic_nodes_and_short_circuit_trace() -> Non
     assert [node.label for node in result.trace.children] == ["never"]
 
 
+def test_viewed_and_read_conditions_require_the_stronger_state() -> None:
+    state = rich_state()
+    state["viewed_evidences"] = []
+    state["read_character_chapters"] = []
+
+    assert evaluate_condition(
+        {"type": "evidence_found", "evidence_id": "bloody_knife"},
+        state,
+    ) is True
+    assert evaluate_condition(
+        {"type": "evidence_viewed", "evidence_id": "bloody_knife"},
+        state,
+    ) is False
+    assert "detective-chapter-01" in state["unlocked_character_chapters"]
+    assert evaluate_condition(
+        {"type": "character_chapter_read", "chapter_id": "detective-chapter-01"},
+        state,
+    ) is False
+
+
 def test_clue_discovered_requires_discovery_record_instead_of_unlock() -> None:
     # 给定：线索已解锁，但玩家尚未发现该线索。
     state = rich_state()

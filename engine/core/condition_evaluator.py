@@ -97,6 +97,8 @@ def _evaluate(
             | ConditionType.CLUES_DISCOVERED
             | ConditionType.CLUE_DISCOVERED
             | ConditionType.EVIDENCE_FOUND
+            | ConditionType.EVIDENCE_VIEWED
+            | ConditionType.CHARACTER_CHAPTER_READ
             | ConditionType.EVIDENCE_SHOWN_TO_NPC
             | ConditionType.CHARACTER_TALKED_TO
             | ConditionType.DIALOG_TRIGGERED

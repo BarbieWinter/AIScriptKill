@@ -31,6 +31,10 @@ def evaluate_leaf(condition: ConditionNode, state: GameState) -> LeafEvaluation:
             return leaves.clue_discovered(condition, state)
         case ConditionType.EVIDENCE_FOUND:
             return leaves.evidence_found(condition, state)
+        case ConditionType.EVIDENCE_VIEWED:
+            return leaves.evidence_viewed(condition, state)
+        case ConditionType.CHARACTER_CHAPTER_READ:
+            return leaves.character_chapter_read(condition, state)
         case ConditionType.EVIDENCE_SHOWN_TO_NPC:
             return leaves.evidence_shown_to_npc(condition, state)
         case ConditionType.CHARACTER_TALKED_TO:
@@ -113,6 +117,9 @@ def state_cache_snapshot(state: GameState) -> JsonMapping:
         "unlocked_clues": list(state["unlocked_clues"]),
         "discovered_clues": discovered_clues,
         "discovered_evidences": list(state["discovered_evidences"]),
+        "viewed_evidences": list(state["viewed_evidences"]),
+        "unlocked_character_chapters": list(state["unlocked_character_chapters"]),
+        "read_character_chapters": list(state["read_character_chapters"]),
         "evidences_shown_to_npcs": evidence_presentations,
         "completed_events": list(state["completed_events"]),
         "character_dialog_counts": dict(state["character_dialog_counts"]),

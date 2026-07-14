@@ -1,0 +1,40 @@
+id: "confront_wangdada"
+name: "没有打开的门"
+sort_order: 20
+entry_conditions:
+  - type: "all"
+    conditions:
+      - type: "clue_discovered"
+        clue_id: "clue-back-alley-note"
+      - type: "evidence_viewed"
+        evidence_id: "evidence-back-door-image"
+      - type: "character_chapter_read"
+        chapter_id: "zhuosiyuan-chapter-01"
+      - type: "character_talked_to"
+        character_id: "wangdada"
+        min_count: 1
+exit_conditions:
+  - type: "all"
+    conditions:
+      - type: "character_chapter_read"
+        chapter_id: "zhuosiyuan-chapter-02"
+      - type: "evidence_shown_to_npc"
+        evidence_id: "evidence-back-door-image"
+        character_id: "wangdada"
+      - type: "player_requested"
+        dialog_id: "request_advance"
+available_actions:
+  - talk_to_npc
+  - show_evidence
+  - request_advance
+  - open_clue_board
+available_characters:
+  - wangdada
+available_scenes:
+  - restaurant-hall
+on_stage_entry:
+  - action: "unlock_character_chapter"
+    event_id: "first_evidence_set_completed"
+    chapter_id: "zhuosiyuan-chapter-02"
+  - action: "dm_narrate"
+    text: "卓司元的第二章已解锁。阅读后，把后门截图出示给王大达。"

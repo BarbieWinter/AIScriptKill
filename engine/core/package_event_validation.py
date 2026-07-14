@@ -45,6 +45,14 @@ class _UnlockClueRoundEvent(_EventPayload):
     round_id: str = Field(description="Clue-round ID to unlock.")
 
 
+class _UnlockCharacterChapterEvent(PackageYamlModel):
+    action: Literal["unlock_character_chapter"] = Field(
+        description="Event action discriminator.",
+    )
+    event_id: str = Field(description="Stable rule ID matching the chapter release declaration.")
+    chapter_id: str = Field(description="Character chapter ID to unlock.")
+
+
 class _NpcEnterSceneEvent(_EventPayload):
     action: Literal["npc_enter_scene"] = Field(description="Event action discriminator.")
     character_id: str = Field(description="Character ID entering the scene.")
@@ -70,6 +78,11 @@ class _ClueDiscoverEvent(_EventPayload):
     clue_id: str = Field(description="Clue ID to discover.")
 
 
+class _EvidenceDiscoverEvent(_EventPayload):
+    action: Literal["evidence_discover"] = Field(description="Event action discriminator.")
+    evidence_id: str = Field(description="Evidence ID to discover.")
+
+
 class _TransitionEvent(_EventPayload):
     action: Literal["transition_to"] = Field(description="Event action discriminator.")
     stage_id: str = Field(description="Requested target stage ID.")
@@ -86,9 +99,11 @@ _TypedEventPayload: TypeAlias = Annotated[
     | _PlayAudioEvent
     | _UnlockScenesEvent
     | _UnlockClueRoundEvent
+    | _UnlockCharacterChapterEvent
     | _NpcEnterSceneEvent
     | _NpcEmotionEvent
     | _ClueDiscoverEvent
+    | _EvidenceDiscoverEvent
     | _TransitionEvent
     | _NoPayloadEvent,
     Field(discriminator="action"),
@@ -142,6 +157,12 @@ def _validate_event_references(
                 ensure_reference(owner, scene_id, context.scene_ids)
         case "unlock_clue_round":
             ensure_reference(owner, required_text(owner, event, "round_id"), context.clue_round_ids)
+        case "unlock_character_chapter":
+            ensure_reference(
+                owner,
+                required_text(owner, event, "chapter_id"),
+                context.chapter_ids,
+            )
         case "npc_enter_scene":
             ensure_reference(
                 owner,
@@ -157,6 +178,12 @@ def _validate_event_references(
             )
         case "clue_discover":
             ensure_reference(owner, required_text(owner, event, "clue_id"), context.clue_ids)
+        case "evidence_discover":
+            ensure_reference(
+                owner,
+                required_text(owner, event, "evidence_id"),
+                context.evidence_ids,
+            )
         case "transition_to":
             ensure_reference(owner, required_text(owner, event, "stage_id"), context.stage_ids)
         case "dm_narrate" | "save_checkpoint" | "show_truth_summary":

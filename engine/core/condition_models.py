@@ -24,6 +24,8 @@ class ConditionType(StrEnum):
     CLUES_DISCOVERED = "clues_discovered"
     CLUE_DISCOVERED = "clue_discovered"
     EVIDENCE_FOUND = "evidence_found"
+    EVIDENCE_VIEWED = "evidence_viewed"
+    CHARACTER_CHAPTER_READ = "character_chapter_read"
     EVIDENCE_SHOWN_TO_NPC = "evidence_shown_to_npc"
     CHARACTER_TALKED_TO = "character_talked_to"
     DIALOG_TRIGGERED = "dialog_triggered"
@@ -66,6 +68,8 @@ CONDITION_PARAMETER_KEYS: Final[dict[ConditionType, frozenset[str]]] = {
     ),
     ConditionType.CLUE_DISCOVERED: frozenset(("clue_id",)),
     ConditionType.EVIDENCE_FOUND: frozenset(("evidence_id",)),
+    ConditionType.EVIDENCE_VIEWED: frozenset(("evidence_id",)),
+    ConditionType.CHARACTER_CHAPTER_READ: frozenset(("chapter_id",)),
     ConditionType.EVIDENCE_SHOWN_TO_NPC: frozenset(("evidence_id", "character_id")),
     ConditionType.CHARACTER_TALKED_TO: frozenset(("character_id", "min_count")),
     ConditionType.DIALOG_TRIGGERED: frozenset(("dialog_id",)),
@@ -280,8 +284,10 @@ def validate_condition_parameters(condition: ConditionNode) -> None:
             condition.boolean("key_only", False)
         case ConditionType.CLUE_DISCOVERED:
             condition.required_text("clue_id")
-        case ConditionType.EVIDENCE_FOUND:
+        case ConditionType.EVIDENCE_FOUND | ConditionType.EVIDENCE_VIEWED:
             condition.required_text("evidence_id")
+        case ConditionType.CHARACTER_CHAPTER_READ:
+            condition.required_text("chapter_id")
         case ConditionType.EVIDENCE_SHOWN_TO_NPC:
             condition.required_text("evidence_id")
             condition.required_text("character_id")

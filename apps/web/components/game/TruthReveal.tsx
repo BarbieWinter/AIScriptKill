@@ -1,6 +1,6 @@
 /**
- * TruthReveal - 真相揭示动画
- * 全屏覆盖，打字机效果展示真相
+ * TruthReveal - 阶段判断结果动画
+ * 全屏覆盖，打字机效果展示证据边界复盘
  */
 
 "use client";
@@ -81,14 +81,14 @@ export function TruthReveal({
           <div className="absolute inset-0 bg-gradient-to-b from-[var(--theme-primary)]/10 via-transparent to-transparent" />
 
           <div className="relative max-w-2xl w-full px-6 text-center">
-            {/* "真相" 大字 */}
+            {/* 阶段判断标题 */}
             <motion.h1
               initial={{ opacity: 0, scale: 0.5 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.8, ease: "easeOut" }}
               className="text-5xl md:text-7xl font-bold mb-8 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-accent)] bg-clip-text text-transparent"
             >
-              真相时刻
+              判断结果
             </motion.h1>
 
             {/* 打字机真相文本 */}

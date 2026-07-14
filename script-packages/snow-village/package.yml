@@ -1,0 +1,12 @@
+metadata:
+  id: "snow-village"
+  title: "雪落之前：后门的脚印"
+  version: "0.1.0"
+info:
+  description: "卓司元调查王氏杀猪菜后门异常的首个单人垂直切片。"
+  genre: ["悬疑", "互动小说"]
+  difficulty: 1
+  duration_minutes: 30
+  max_players: 1
+engine:
+  entry_stage: "return_to_snow_village"

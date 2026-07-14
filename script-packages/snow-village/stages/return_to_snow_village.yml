@@ -1,0 +1,25 @@
+id: "return_to_snow_village"
+name: "炉火未熄"
+sort_order: 0
+entry_conditions: []
+exit_conditions:
+  - type: "all"
+    conditions:
+      - type: "character_chapter_read"
+        chapter_id: "zhuosiyuan-chapter-01"
+      - type: "character_talked_to"
+        character_id: "wangdada"
+        min_count: 1
+      - type: "player_requested"
+        dialog_id: "request_advance"
+available_actions:
+  - talk_to_npc
+  - request_advance
+  - open_clue_board
+available_characters:
+  - wangdada
+available_scenes:
+  - restaurant-hall
+on_stage_entry:
+  - action: "dm_narrate"
+    text: "王氏杀猪菜已经打烊。先阅读卓司元的第一章，再问王大达当晚发生了什么。"

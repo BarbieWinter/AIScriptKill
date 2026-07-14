@@ -25,7 +25,9 @@
 
 - `001_script_tables.sql`：剧本包结构表：packages、stages、characters、clues、evidences、scenes、media。
 - `002_runtime_tables.sql`：运行期表：sessions、checkpoints、chat messages、discoveries、final submissions、reviews。
-- `003_vector_tables.sql`：未来 RAG 使用的 `script_knowledge` pgvector 表，带 1536 维 embedding 列和 IVFFlat 索引。
+- `003_vector_tables.sql`：历史 RAG `script_knowledge` pgvector 表；后续
+  `20260713020000_rag_embedding_v4_1024.sql` 清理派生索引行并迁移为 DashScope
+  `text-embedding-v4` 使用的 1024 维 embedding 列，重建 IVFFlat 索引。
 - `004_rls_policies.sql`：启用 RLS，并为 service-role 访问、认证玩家自有会话数据、阶段/角色过滤的剧本内容定义策略。
 - `005_runtime_persistence_indexes.sql`：会话/剧本包/状态/复盘/检查点/卡牌查询的补充索引。
 - `006_api_role_privileges.sql`：anon/authenticated/service_role 授权，以及已发布剧本包的公开策略。

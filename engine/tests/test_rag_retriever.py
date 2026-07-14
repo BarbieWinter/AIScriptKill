@@ -18,7 +18,8 @@ async def test_retrieve_truth_visible_to_dm_but_not_npc() -> None:
             script_id="minimal-case",
             current_stage="prologue",
             current_stage_order=0,
-            character_id="dm",
+            viewer_character_id="player",
+            speaker_character_id="dm",
             is_dm=True,
         ),
     )
@@ -28,7 +29,8 @@ async def test_retrieve_truth_visible_to_dm_but_not_npc() -> None:
             script_id="minimal-case",
             current_stage="prologue",
             current_stage_order=0,
-            character_id="npc",
+            viewer_character_id="player",
+            speaker_character_id="npc",
         ),
     )
 
@@ -45,7 +47,7 @@ async def test_retrieve_keeps_locked_clues_out_of_player_results() -> None:
             script_id="minimal-case",
             current_stage="act1",
             current_stage_order=10,
-            character_id="player",
+            viewer_character_id="player",
         ),
     )
     unlocked_results = await retriever.retrieve(
@@ -54,13 +56,31 @@ async def test_retrieve_keeps_locked_clues_out_of_player_results() -> None:
             script_id="minimal-case",
             current_stage="act1",
             current_stage_order=10,
-            character_id="player",
+            viewer_character_id="player",
             unlocked_clue_ids=("clue_1",),
         ),
     )
 
     assert all(result.chunk.source_id != "clue_1" for result in locked_results)
     assert any(result.chunk.source_id == "clue_1" for result in unlocked_results)
+
+
+async def test_speaker_scope_does_not_grant_viewer_private_content() -> None:
+    retriever = _rag_retriever()
+
+    results = await retriever.retrieve(
+        "知道部分现场信息",
+        RagSessionContext(
+            script_id="minimal-case",
+            current_stage="act1",
+            current_stage_order=10,
+            viewer_character_id="player",
+            speaker_character_id="npc",
+        ),
+    )
+
+    assert any(result.chunk.source_id == "npc:act1" for result in results)
+    assert all(result.chunk.source_id != "player:act1" for result in results)
 
 
 async def test_retrieve_orders_allowed_candidates_by_bm25_keyword_score() -> None:
@@ -78,7 +98,7 @@ async def test_retrieve_orders_allowed_candidates_by_bm25_keyword_score() -> Non
         script_id="minimal-case",
         current_stage="act1",
         current_stage_order=10,
-        character_id="player",
+        viewer_character_id="player",
     )
 
     # When: retrieval combines equal vectors with keyword relevance.
@@ -95,7 +115,7 @@ async def test_in_memory_retrieval_stays_under_latency_budget() -> None:
         script_id="minimal-case",
         current_stage="act1",
         current_stage_order=10,
-        character_id="player",
+        viewer_character_id="player",
         unlocked_clue_ids=("clue_1", "clue_2", "clue_3", "clue_4"),
     )
 
@@ -115,7 +135,9 @@ def test_retrieval_sql_contains_hard_permission_filters() -> None:
     assert "script_id = :script_id" in sql
     assert "metadata ->> 'stage_order'" in sql
     assert "metadata ->> 'visibility' = 'public'" in sql
-    assert "metadata ->> 'character_id' = :character_id" in sql
+    assert "source_type <> 'evidence'" in sql
+    assert "metadata ->> 'character_id' = :viewer_character_id" in sql
+    assert "metadata ->> 'character_id' = :speaker_character_id" in sql
     assert "source_type <> 'clue'" in sql
     assert "source_id = ANY(CAST(:unlocked_clue_ids AS text[]))" in sql
 

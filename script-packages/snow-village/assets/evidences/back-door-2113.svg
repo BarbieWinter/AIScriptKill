@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">21点13分后门截图占位证物</title>
+  <desc id="desc">固定摄像头画面，后门半开，门内有暖黄灯光，边缘存在无法辨认身份的深色影子。</desc>
+  <rect width="1600" height="900" fill="#0d1420"/>
+  <rect x="70" y="70" width="1460" height="760" fill="#243040" stroke="#8ea0ad" stroke-width="10"/>
+  <rect x="800" y="190" width="380" height="520" fill="#17191b" stroke="#66717a" stroke-width="18"/>
+  <polygon points="820,210 1070,245 1070,690 820,710" fill="#d99946" opacity=".68"/>
+  <path d="M1330 360 C1440 390 1480 550 1420 700 L1540 700 L1540 250 Z" fill="#10141a" opacity=".94"/>
+  <text x="110" y="140" fill="#d6e1e8" font-size="46" font-family="monospace">21:13</text>
+  <text x="800" y="790" text-anchor="middle" fill="#d6e1e8" font-size="34" font-family="sans-serif">占位图：只允许使用人工定义观察，不作身份推断</text>
+</svg>

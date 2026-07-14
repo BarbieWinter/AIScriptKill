@@ -117,6 +117,13 @@ class StageTransition(ApiModel):
     new_state: StageTransitionState = Field(description="Updated state summary.")
 
 
+class AdvanceRequirement(ApiModel):
+    """公开一个确定性阶段推进条件的当前完成状态。"""
+
+    label: str = Field(description="Human-readable requirement label.")
+    met: bool = Field(description="Whether the requirement is currently met.")
+
+
 class AdvanceDenied(ApiModel):
     """说明当前阶段暂时无法推进的原因。"""
 
@@ -125,33 +132,41 @@ class AdvanceDenied(ApiModel):
     hint: str = Field(description="Lightweight next-step hint.")
     suggested_action: ActionType = Field(description="Suggested action.")
     suggested_target: str = Field(description="Suggested target ID.")
+    requirements: list[AdvanceRequirement] = Field(
+        default_factory=list,
+        description="Current deterministic advancement checklist.",
+    )
 
 
 # ── 最终推理提交 ──
 
 
 class FinalSubmissionRequest(ApiModel):
-    """记录玩家最终选择的嫌疑人及支撑推理。"""
+    """记录首个垂直切片中玩家提交的确定性阶段判断。"""
 
-    suspect: str = Field(min_length=1, max_length=128, description="Accused suspect ID.")
-    motive: str = Field(min_length=1, max_length=2000, description="Submitted motive.")
-    key_evidences: list[str] = Field(max_length=128, description="Submitted evidence IDs.")
-    deduction: str = Field(
-        min_length=1, max_length=20_000, description="Free-form deduction chain."
+    option: Literal["A", "B", "C", "D"] = Field(
+        description="Selected judgment option."
     )
 
 
 class SubmissionDetail(ApiModel):
-    """拆分最终提交中判断正确的组成部分。"""
+    """公开判断选项及其被证据支持的边界说明。"""
 
-    correct_suspect: bool = Field(description="Whether suspect is correct.")
-    correct_motive: bool = Field(description="Whether motive is correct.")
-    key_evidence_hit_rate: str = Field(description="Hit count string.")
-    missed_key_evidences: list[str] = Field(description="Missed evidence IDs.")
+    selected_option: Literal["A", "B", "C", "D"] = Field(
+        description="Submitted judgment option."
+    )
+    correct_option: Literal["C"] = Field(description="Deterministic correct option.")
+    evidence_boundary: str = Field(
+        description="Why the evidence supports or rejects the option."
+    )
+    npc_disclosure: str | None = Field(
+        default=None,
+        description="Authorized NPC disclosure emitted only for the correct judgment.",
+    )
 
 
 class SubmissionResult(ApiModel):
-    """返回已评分的最终提交和选定结局。"""
+    """返回已评分的阶段判断和稳定结果标识。"""
 
     type: Literal["submission_result"] = Field(description="Response discriminator.")
     correct: bool = Field(description="Overall correctness.")

@@ -34,6 +34,10 @@ class CharacterKnowledgeEntry(PackageYamlModel):
         default_factory=list,
         description="Knowledge statements explicitly unavailable during the stage.",
     )
+    deny_facts: list[str] = Field(
+        default_factory=list,
+        description="Forbidden facts passed only to deterministic generation guards.",
+    )
 
 
 class CharacterEvidenceReaction(PackageYamlModel):

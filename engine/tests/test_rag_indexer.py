@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+import pytest
+
 from engine.rag.chunker import chunk_package
 from engine.rag.embeddings import DeterministicEmbeddingProvider
 from engine.rag.indexer import build_index_records, index_package
@@ -19,9 +21,16 @@ def test_build_index_records_embeds_chunks_for_script_knowledge_rows() -> None:
     records = build_index_records(chunks, provider)
 
     assert tuple(record.chunk for record in records) == chunks
-    assert all(len(record.embedding) == 1536 for record in records)
+    assert all(len(record.embedding) == 1024 for record in records)
     assert all(record.chunk.metadata["source_id"] == record.chunk.source_id for record in records)
     assert all(isinstance(record.chunk.metadata["content_hash"], str) for record in records)
+
+
+def test_build_index_records_rejects_wrong_embedding_dimensions() -> None:
+    chunks = chunk_package(rag_package())[:1]
+
+    with pytest.raises(ValueError, match="1024-dimension"):
+        build_index_records(chunks, WrongDimensionEmbeddingProvider())
 
 
 async def test_index_package_skips_embedding_when_chunk_hashes_are_unchanged() -> None:
@@ -64,16 +73,24 @@ async def test_index_package_only_reindexes_changed_and_removed_chunks() -> None
     assert result.removed_count == 1
 
 
+class WrongDimensionEmbeddingProvider:
+    def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        return tuple((1.0, 0.0) for _ in texts)
+
+    def embed_query(self, text: str) -> Sequence[float]:
+        return (1.0, 0.0)
+
+
 class RecordingEmbeddingProvider:
     def __init__(self) -> None:
         self.embedded_texts: tuple[str, ...] = ()
 
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         self.embedded_texts = tuple(texts)
-        return tuple((1.0, *([0.0] * 1535)) for _text in texts)
+        return tuple((1.0, *([0.0] * 1023)) for _text in texts)
 
     def embed_query(self, text: str) -> Sequence[float]:
-        return (1.0, *([0.0] * 1535))
+        return (1.0, *([0.0] * 1023))
 
 
 class RecordingRagIndexRepository:

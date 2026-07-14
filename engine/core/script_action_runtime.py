@@ -11,6 +11,38 @@ def validate_player_action(state: GameState, action: PlayerActionInput) -> str |
     return _validated_target(state, action)
 
 
+def examine_scene_target(scene_id: str, hotspot_id: str) -> str:
+    """将 REST 场景与热点字段编码为图内规范化目标。"""
+
+    return f"{scene_id}:{hotspot_id}"
+
+
+def parse_examine_scene_target(target: str | None) -> tuple[str, str | None]:
+    """解析 scene_id[:hotspot_id]，兼容仅切换场景的旧调用。"""
+
+    value = _required_target(target, "scene")
+    scene_id, separator, hotspot_id = value.partition(":")
+    if scene_id == "" or ":" in hotspot_id:
+        raise ScriptEngineActionError(
+            "ACTION_TARGET_INVALID",
+            "examine_scene target 必须为 scene_id 或 scene_id:hotspot_id",
+        )
+    if separator == "":
+        return scene_id, None
+    if hotspot_id == "":
+        raise ScriptEngineActionError(
+            "ACTION_TARGET_INVALID",
+            "examine_scene hotspot_id 不能为空",
+        )
+    return scene_id, hotspot_id
+
+
+def parse_evidence_target(target: str | None) -> tuple[str, str]:
+    """解析已校验的 evidence_id:character_id。"""
+
+    return _evidence_target(target)
+
+
 def apply_player_action(state: GameState, action: PlayerActionInput) -> None:
     """记录已校验动作并更新条件可见状态字段。"""
 
@@ -24,7 +56,8 @@ def apply_player_action(state: GameState, action: PlayerActionInput) -> None:
         case "talk_to_npc":
             record_dialog(state, target, action["text"])
         case "examine_scene":
-            state["current_scene"] = _required_target(target, "scene")
+            scene_id, _ = parse_examine_scene_target(target)
+            state["current_scene"] = scene_id
         case "show_evidence":
             record_evidence_presentation(state, target)
         case "use_card":
@@ -47,7 +80,11 @@ def _validated_target(state: GameState, action: PlayerActionInput) -> str | None
         case "talk_to_npc":
             return _available_target(target, state["available_characters"], "character")
         case "examine_scene":
-            return _available_target(target, state["available_scenes"], "scene")
+            scene_id, hotspot_id = parse_examine_scene_target(target)
+            _available_target(scene_id, state["available_scenes"], "scene")
+            if hotspot_id is None:
+                return scene_id
+            return examine_scene_target(scene_id, hotspot_id)
         case "show_evidence":
             # T-2.6 映射器会在进入核心图之前，
             # 将证物和角色字段编码为 evidence_id:character_id。
@@ -98,7 +135,12 @@ def _available_target(target: str | None, available: list[str], target_kind: str
 def _evidence_target(target: str | None) -> tuple[str, str]:
     value = _required_target(target, "evidence")
     evidence_id, separator, character_id = value.partition(":")
-    if separator == "" or evidence_id == "" or character_id == "" or ":" in character_id:
+    if (
+        separator == ""
+        or evidence_id == ""
+        or character_id == ""
+        or ":" in character_id
+    ):
         raise ScriptEngineActionError(
             "ACTION_TARGET_INVALID",
             "show_evidence target 必须为 evidence_id:character_id",
