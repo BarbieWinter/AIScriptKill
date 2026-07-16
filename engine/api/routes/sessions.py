@@ -15,6 +15,7 @@ from engine.api.schemas import (
     EvidenceListResponse,
     EvidenceViewedResponse,
     ReviewResponse,
+    SessionPresentationResponse,
     SessionStateResponse,
     UpdateSessionRequest,
     UpdateSessionResponse,
@@ -27,6 +28,7 @@ from engine.services.session_service import (
     get_chat_history,
     get_clues,
     get_evidences,
+    get_session_presentation,
     read_character_chapter,
     restore_session,
     start_session,
@@ -91,6 +93,34 @@ async def get_session(
             `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
     """
     return await get_session_state(session_id, current_user, db)
+
+
+@router.get(
+    "/{session_id}/presentation",
+    response_model=SessionPresentationResponse,
+)
+async def get_presentation(
+    session_id: str,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+) -> SessionPresentationResponse:
+    """返回可访问会话当前阶段和场景的防剧透展示投影。
+
+    Args:
+        session_id: 待展示会话的 UUID 字符串。
+        current_user: 用于所有权检查的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        已发布运行时包中的当前阶段、当前场景、公开热点和可选判断题。
+
+    Raises:
+        ApiError: 认证、会话、已发布剧本包、当前阶段或当前场景不可用时抛出
+            `INVALID_TOKEN`、`INVALID_SESSION_ID`、`INVALID_USER_ID`、
+            `SESSION_NOT_FOUND`、`SCRIPT_PACKAGE_NOT_FOUND` 或
+            `SESSION_PRESENTATION_NOT_FOUND`。
+    """
+    return await get_session_presentation(session_id, current_user, db)
 
 
 @router.patch("/{session_id}", response_model=UpdateSessionResponse)

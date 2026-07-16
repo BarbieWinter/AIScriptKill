@@ -55,6 +55,68 @@ class SessionStateResponse(ApiModel):
     pending_media: list[PendingMedia] = Field(description="Active media queue.")
 
 
+# ── 会话展示投影 ──
+
+
+class SessionPresentationStage(ApiModel):
+    """只公开当前阶段可供玩家使用的展示字段。"""
+
+    id: str = Field(description="Current stage ID.")
+    name: str = Field(description="Current stage display name.")
+    available_actions: list[ActionType] = Field(description="Player actions enabled now.")
+    available_characters: list[str] = Field(description="Character IDs available now.")
+
+
+class SessionPresentationHotspot(ApiModel):
+    """公开一个可渲染热点，但不携带其服务端执行规则。"""
+
+    id: str = Field(description="Hotspot ID.")
+    label: str = Field(description="Hotspot display label.")
+    x: float = Field(description="Horizontal scene coordinate.")
+    y: float = Field(description="Vertical scene coordinate.")
+    width: float | None = Field(default=None, description="Optional hotspot width.")
+    height: float | None = Field(default=None, description="Optional hotspot height.")
+
+
+class SessionPresentationScene(ApiModel):
+    """公开当前场景的安全视觉投影。"""
+
+    id: str = Field(description="Current scene ID.")
+    name: str = Field(description="Current scene display name.")
+    description: str | None = Field(default=None, description="Optional public description.")
+    ambient_color: str | None = Field(default=None, description="Optional ambient CSS color.")
+    background_url: str | None = Field(
+        default=None,
+        description="Optional browser-safe HTTP(S) or same-origin background URL.",
+    )
+    hotspots: list[SessionPresentationHotspot] = Field(description="Ordered public hotspots.")
+
+
+class SessionPresentationJudgementOption(ApiModel):
+    """公开一个有序判断选项。"""
+
+    id: str = Field(description="Judgement option ID.")
+    text: str = Field(description="Judgement option display text.")
+
+
+class SessionPresentationJudgement(ApiModel):
+    """公开当前阶段可作答的问题，绝不包含正确答案。"""
+
+    title: str | None = Field(default=None, description="Optional judgement title.")
+    question: str = Field(description="Judgement question.")
+    options: list[SessionPresentationJudgementOption] = Field(
+        description="Options in package-declared order."
+    )
+
+
+class SessionPresentationResponse(ApiModel):
+    """返回从已发布运行时包投影出的当前玩家展示。"""
+
+    stage: SessionPresentationStage
+    scene: SessionPresentationScene
+    judgement: SessionPresentationJudgement | None = None
+
+
 # ── 会话恢复/维护 ──
 
 

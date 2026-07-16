@@ -11,17 +11,42 @@ import { Sheet } from "@/components/ui/Sheet";
 import { useGameStore } from "@/stores/gameStore";
 import { Eye, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, isMockMode } from "@/lib/api";
-import { getMockEngine } from "@/lib/mock-data";
+import { api } from "@/lib/api";
+import type { AvailableCharacter, Evidence } from "@/lib/game/types";
 import { toast } from "sonner";
 
-export function EvidenceBackpack() {
-  const open = useGameStore((s) => s.activePanel === "evidence");
-  const onClose = () => useGameStore.getState().closePanel();
-  const sessionId = useGameStore((s) => s.sessionId);
-  const evidences = useGameStore((s) => s.discoveredEvidences);
-  const characters = useGameStore((s) => s.availableCharacters);
-  const addMessage = useGameStore((s) => s.addMessage);
+interface EvidenceBackpackProps {
+  open?: boolean;
+  onClose?: () => void;
+  sessionId?: string | null;
+  playerCharacterId?: string | null;
+  evidences?: Evidence[];
+  characters?: AvailableCharacter[];
+  onViewEvidence?: (evidenceId: string) => Promise<{ evidence_id: string; status: string }>;
+  onShowEvidence?: (characterId: string, evidenceId: string) => Promise<unknown>;
+}
+
+export function EvidenceBackpack({
+  open: controlledOpen,
+  onClose: controlledOnClose,
+  sessionId: controlledSessionId,
+  playerCharacterId: controlledPlayerCharacterId,
+  evidences: controlledEvidences,
+  characters: controlledCharacters,
+  onViewEvidence,
+  onShowEvidence,
+}: EvidenceBackpackProps = {}) {
+  const storeOpen = useGameStore((s) => s.activePanel === "evidence");
+  const storeSessionId = useGameStore((s) => s.sessionId);
+  const storePlayerCharacterId = useGameStore((s) => s.playerCharacterId);
+  const storeEvidences = useGameStore((s) => s.discoveredEvidences);
+  const storeCharacters = useGameStore((s) => s.availableCharacters);
+  const open = controlledOpen ?? storeOpen;
+  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
+  const sessionId = controlledSessionId ?? storeSessionId;
+  const playerCharacterId = controlledPlayerCharacterId ?? storePlayerCharacterId;
+  const evidences = controlledEvidences ?? storeEvidences;
+  const characters = controlledCharacters ?? storeCharacters;
   const updateEvidence = useGameStore((s) => s.updateEvidence);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -29,11 +54,10 @@ export function EvidenceBackpack() {
   const [submitting, setSubmitting] = useState(false);
 
   const selected = evidences[selectedIndex];
-  const selectedImageUrl =
-    selected?.id === "evidence-back-door-image"
-      ? "/snow-village/evidences/back-door-2113.svg"
-      : selected?.image_url;
-  const characterList = characters.filter((character) => character.id !== "zhuosiyuan");
+  const selectedImageUrl = selected?.image_url;
+  const characterList = characters.filter(
+    (character) => character.id !== playerCharacterId,
+  );
 
   useEffect(() => {
     if (selectedIndex >= evidences.length) setSelectedIndex(0);
@@ -45,7 +69,9 @@ export function EvidenceBackpack() {
     let cancelled = false;
     const markViewed = async () => {
       try {
-        const result = await api.viewEvidence(sessionId, selected.id);
+        const result = onViewEvidence
+          ? await onViewEvidence(selected.id)
+          : await api.viewEvidence(sessionId, selected.id);
         if (!cancelled) updateEvidence(selected.id, { status: result.status });
       } catch (error) {
         console.error("[EvidenceBackpack] 标记证物已查看失败:", error);
@@ -55,45 +81,31 @@ export function EvidenceBackpack() {
     return () => {
       cancelled = true;
     };
-  }, [open, selected, sessionId, updateEvidence]);
+  }, [onViewEvidence, open, selected, sessionId, updateEvidence]);
 
   /** 出示证物给角色 */
   const handleShowEvidence = async (charId: string) => {
     if (!sessionId || !selected || submitting) return;
     setSubmitting(true);
     try {
-      const result = isMockMode()
-        ? getMockEngine().showEvidence(charId, selected.id)
+      const result = onShowEvidence
+        ? await onShowEvidence(charId, selected.id)
         : await api.performAction(sessionId, "show_evidence", {
             character_id: charId,
             evidence_id: selected.id,
           });
 
       const characterName = characterList.find((character) => character.id === charId)?.name ?? charId;
-      addMessage({
-        id: `msg-ev-${Date.now()}`,
-        role: "npc",
-        character_id: "dm",
-        text: `你向${characterName}出示了「${selected.name}」。`,
-        emotion: "calm",
-        timestamp: new Date().toISOString(),
+      const reaction = result as { text?: string };
+      toast.success("证物已出示", {
+        description: reaction.text ?? `你向${characterName}出示了「${selected.name}」。`,
       });
 
-      if (result.text) {
-        addMessage({
-          id: `msg-ev-reaction-${Date.now()}`,
-          role: "npc",
-          character_id: result.character_id ?? charId,
-          text: result.text,
-          emotion: result.emotion ?? "normal",
-          timestamp: new Date().toISOString(),
-        });
+      if (!onShowEvidence) {
+        const shown = Array.from(new Set([...(selected.shown_to_characters ?? []), charId]));
+        updateEvidence(selected.id, { shown_to_characters: shown });
       }
-
-      const shown = Array.from(new Set([...(selected.shown_to_characters ?? []), charId]));
-      updateEvidence(selected.id, { shown_to_characters: shown });
       setShowNpcList(false);
-      toast.success("证物已出示");
     } catch (error) {
       console.error("[EvidenceBackpack] 出示证物失败:", error);
       toast.error("当前无法出示这件证物");
@@ -197,7 +209,7 @@ export function EvidenceBackpack() {
           <div className="px-4 pb-4">
             <p className="text-xs text-[var(--muted-foreground)] mb-2">证物列表：</p>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {evidences.map((ev: any, idx: number) => (
+              {evidences.map((ev, idx) => (
                 <button
                   key={ev.id}
                   onClick={() => setSelectedIndex(idx)}

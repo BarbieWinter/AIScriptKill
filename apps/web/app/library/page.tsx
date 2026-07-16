@@ -149,14 +149,14 @@ export default function LibraryPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 1.0 }}
-            href={`/library/${pkg.id}`}
-            className="group relative inline-flex items-center gap-2 rounded-xl bg-[var(--theme-primary)] px-8 py-3.5 text-sm font-bold text-white transition-all hover:bg-[var(--theme-primary)]/80 shadow-xl shadow-[var(--theme-primary)]/20"
+            href="/demo"
+            className="group relative inline-flex items-center gap-2 rounded-sm border border-[#c7aa6b]/30 bg-[#121513]/75 px-8 py-3.5 text-sm font-bold tracking-[0.12em] text-[#e7ddc3] transition-all hover:border-[#d4b978]/60 hover:bg-[#1b1e1a] shadow-xl shadow-black/30"
           >
-            <Sparkles className="h-4 w-4" />
-            进入雪乡
+            <Sparkles className="h-4 w-4 text-[#c7aa6b]" />
+            体验可走动地图 Demo
             <span className="absolute -top-1 -right-1 flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--theme-primary)] opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--theme-primary)]" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#c7aa6b] opacity-60" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-[#c7aa6b]" />
             </span>
           </motion.a>
         </div>

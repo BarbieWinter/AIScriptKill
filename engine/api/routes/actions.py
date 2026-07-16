@@ -65,7 +65,7 @@ async def submit_final(
 
     Args:
         session_id: 接收提交的会话 UUID 字符串。
-        payload: A、B、C、D 中的一项确定性判断。
+        payload: 当前阶段剧本包声明的判断选项 ID。
         current_user: 用于所有权检查的可选 Supabase 身份。
         db: 请求作用域的异步数据库会话。
 

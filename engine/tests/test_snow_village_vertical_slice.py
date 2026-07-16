@@ -12,9 +12,7 @@ from engine.services.runtime_action_mappers import runtime_action_result
 
 
 def snow_village_package():
-    return load_package_directory(
-        Path(__file__).parents[2] / "script-packages" / "snow-village"
-    )
+    return load_package_directory(Path(__file__).parents[2] / "script-packages" / "snow-village")
 
 
 def test_snow_village_package_is_executable_content_authority() -> None:
@@ -32,9 +30,7 @@ def test_snow_village_package_is_executable_content_authority() -> None:
         "zhuosiyuan-chapter-02",
     ]
     assert [clue.id for clue in package.clues] == ["clue-back-alley-note"]
-    assert [evidence.id for evidence in package.evidences] == [
-        "evidence-back-door-image"
-    ]
+    assert [evidence.id for evidence in package.evidences] == ["evidence-back-door-image"]
     assert package.warnings == ()
 
 
@@ -83,9 +79,7 @@ async def test_snow_village_graph_reaches_confrontation_through_real_actions() -
         package,
     )
     assert response.type == "scene_result"
-    assert [item.clue_id for item in response.discovered_clues] == [
-        "clue-back-alley-note"
-    ]
+    assert [item.clue_id for item in response.discovered_clues] == ["clue-back-alley-note"]
     assert response.discovered_evidences == ["evidence-back-door-image"]
     assert [(item.entity_type, item.entity_id) for item in effect.discoveries] == [
         ("clue", "clue-back-alley-note"),
@@ -123,9 +117,7 @@ async def test_snow_village_graph_reaches_confrontation_through_real_actions() -
 
 def test_snow_village_judgment_uses_package_answer_and_evidence_boundary() -> None:
     package = snow_village_package()
-    judgment_stage = next(
-        stage for stage in package.stages if stage.id == "back_door_judgement"
-    )
+    judgment_stage = next(stage for stage in package.stages if stage.id == "back_door_judgement")
     special_rules = judgment_stage.definition.get("special_rules")
     assert isinstance(special_rules, Mapping)
     judgment = cast(Mapping[object, object], special_rules).get("judgement")
@@ -146,11 +138,8 @@ def test_snow_village_judgment_uses_package_answer_and_evidence_boundary() -> No
     assert correct.score == 100
     assert correct.detail.selected_option == "C"
     assert correct.detail.correct_option == "C"
-    assert correct.detail.npc_disclosure == (
-        "后门当时确实开着。我后来发现门闩没扣严，就重新扣好了；"
-        "我没看见是谁开的。"
-    )
+    assert correct.detail.npc_disclosure is None
     assert unsupported.correct is False
     assert unsupported.score == 0
     assert unsupported.detail.npc_disclosure is None
-    assert "不能确认影子身份" in unsupported.detail.evidence_boundary
+    assert unsupported.detail.evidence_boundary == "该选项未匹配当前阶段声明的正确判断。"

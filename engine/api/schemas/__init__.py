@@ -31,6 +31,7 @@ from engine.api.schemas.reviews import ReviewResponse
 from engine.api.schemas.sessions import (
     CreateSessionRequest,
     CreateSessionResponse,
+    SessionPresentationResponse,
     SessionStateResponse,
     UpdateSessionRequest,
     UpdateSessionResponse,
@@ -63,6 +64,7 @@ __all__ = [
     "PackageUpdateResponse",
     "ReviewResponse",
     "SceneResult",
+    "SessionPresentationResponse",
     "SessionStateResponse",
     "StageTransition",
     "SubmissionResult",

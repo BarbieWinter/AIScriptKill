@@ -142,23 +142,21 @@ class AdvanceDenied(ApiModel):
 
 
 class FinalSubmissionRequest(ApiModel):
-    """记录首个垂直切片中玩家提交的确定性阶段判断。"""
+    """记录玩家对当前剧本包阶段判断的选择。"""
 
-    option: Literal["A", "B", "C", "D"] = Field(
-        description="Selected judgment option."
+    option: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Package-declared judgement option ID.",
     )
 
 
 class SubmissionDetail(ApiModel):
-    """公开判断选项及其被证据支持的边界说明。"""
+    """公开提交结果以及剧本包声明的正确选项。"""
 
-    selected_option: Literal["A", "B", "C", "D"] = Field(
-        description="Submitted judgment option."
-    )
-    correct_option: Literal["C"] = Field(description="Deterministic correct option.")
-    evidence_boundary: str = Field(
-        description="Why the evidence supports or rejects the option."
-    )
+    selected_option: str = Field(description="Submitted judgement option ID.")
+    correct_option: str = Field(description="Package-declared correct option ID.")
+    evidence_boundary: str = Field(description="Why the evidence supports or rejects the option.")
     npc_disclosure: str | None = Field(
         default=None,
         description="Authorized NPC disclosure emitted only for the correct judgment.",

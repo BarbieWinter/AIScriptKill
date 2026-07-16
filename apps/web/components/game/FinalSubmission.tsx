@@ -10,35 +10,24 @@ import { AlertTriangle, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import type { JudgementPresentation, SubmissionResult } from "@/lib/game/types";
 import { useGameStore } from "@/stores/gameStore";
 
-type JudgmentOption = "A" | "B" | "C" | "D";
+const legacyJudgement: JudgementPresentation = {
+  title: "后门判断",
+  question: "根据当前材料，哪项最符合已证实事实？",
+  options: [
+    { id: "A", text: "陈吉在21:13从后门进入，目的是偷走旧账本。" },
+    { id: "B", text: "王大达伪造便签，试图掩盖自己与旧案的关系。" },
+    { id: "C", text: "王大达关于没人来过的说法不完整；至少可确认后门在21:13半开，但不能确认开门者和目的。" },
+    { id: "D", text: "后门异常证明饭馆当晚发生过犯罪。" },
+  ],
+};
 
-const options: Array<{ id: JudgmentOption; text: string }> = [
-  {
-    id: "A",
-    text: "陈吉在21:13从后门进入，目的是偷走旧账本。",
-  },
-  {
-    id: "B",
-    text: "王大达伪造便签，试图掩盖自己与旧案的关系。",
-  },
-  {
-    id: "C",
-    text: "王大达关于没人来过的说法不完整；至少可确认后门在21:13半开，但不能确认开门者和目的。",
-  },
-  {
-    id: "D",
-    text: "后门异常证明饭馆当晚发生过犯罪。",
-  },
-];
-
-interface JudgmentResult {
-  correct: boolean;
-  score: number;
-  detail: {
-    evidence_boundary: string;
-    npc_disclosure: string | null;
+interface JudgmentResult extends SubmissionResult {
+  detail: SubmissionResult["detail"] & {
+    evidence_boundary?: string;
+    npc_disclosure?: string | null;
   };
 }
 
@@ -46,30 +35,41 @@ interface FinalSubmissionProps {
   open: boolean;
   onClose: () => void;
   onComplete?: (result: JudgmentResult) => void;
+  judgement?: JudgementPresentation | null;
+  onSubmit?: (optionId: string) => Promise<SubmissionResult>;
 }
 
 export function FinalSubmission({
   open,
   onClose,
   onComplete,
+  judgement,
+  onSubmit,
 }: FinalSubmissionProps) {
+  const activeJudgement = judgement ?? (onSubmit ? null : legacyJudgement);
   const sessionId = useGameStore((state) => state.sessionId);
-  const [option, setOption] = useState<JudgmentOption | null>(null);
+  const [option, setOption] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
   const handleSubmit = async () => {
-    if (!sessionId || !option || submitting) return;
+    if ((!onSubmit && !sessionId) || !option || submitting) return;
 
     setShowConfirm(false);
     setSubmitting(true);
     try {
-      const result = await api.submitFinal(sessionId, { option });
-      toast(result.correct ? "判断成立" : "判断超出证据边界", {
-        description: result.detail.evidence_boundary,
-        icon: result.correct ? "✓" : "⚠️",
+      const result = onSubmit
+        ? await onSubmit(option)
+        : await api.submitFinal(sessionId!, { option });
+      const completed = result as JudgmentResult;
+      const boundary = typeof completed.detail.evidence_boundary === "string"
+        ? completed.detail.evidence_boundary
+        : undefined;
+      toast(completed.correct ? "判断成立" : "判断超出证据边界", {
+        description: boundary,
+        icon: completed.correct ? "✓" : "⚠️",
       });
-      onComplete?.(result);
+      onComplete?.(completed);
     } catch (error) {
       console.error("[FinalSubmission] 提交判断失败:", error);
       toast.error("判断提交失败");
@@ -100,14 +100,14 @@ export function FinalSubmission({
             className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] p-6"
           >
             <div className="mb-6 text-center">
-              <h2 className="mb-1 text-2xl font-bold">后门判断</h2>
+              <h2 className="mb-1 text-2xl font-bold">{activeJudgement?.title ?? "阶段判断"}</h2>
               <p className="text-sm text-[var(--muted-foreground)]">
-                根据当前材料，哪项最符合已证实事实？
+                {activeJudgement?.question ?? "当前阶段没有可提交的判断。"}
               </p>
             </div>
 
             <div className="space-y-3">
-              {options.map((item) => (
+              {(activeJudgement?.options ?? []).map((item) => (
                 <button
                   key={item.id}
                   onClick={() => setOption(item.id)}

@@ -240,14 +240,14 @@ export const api = {
   /** 提交雪乡首个切片的确定性阶段判断。 */
   submitFinal: async (
     sessionId: string,
-    submission: { option: "A" | "B" | "C" | "D" }
+    submission: { option: string }
   ): Promise<{
     type: "submission_result";
     correct: boolean;
     score: number;
     detail: {
-      selected_option: "A" | "B" | "C" | "D";
-      correct_option: "C";
+      selected_option: string;
+      correct_option: string;
       evidence_boundary: string;
       npc_disclosure: string | null;
     };

@@ -15,6 +15,8 @@ from engine.services.query_mappers import (
 )
 from engine.services.session_response_mappers import (
     create_response,
+    judgement_definition,
+    presentation_response,
     restore_response,
     state_response,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "create_response",
     "evidences_response",
     "final_submission_result",
+    "judgement_definition",
+    "presentation_response",
     "restore_response",
     "review_response",
     "state_response",

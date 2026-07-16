@@ -18,20 +18,38 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export function ClueBoard() {
-  const open = useGameStore((s) => s.activePanel === "clue");
-  const onClose = () => useGameStore.getState().closePanel();
-  const clues = useGameStore((s) => s.unlockedClues);
-  const totalCluesInRound = useGameStore((s) => s.totalCluesInRound);
+import type { Clue } from "@/lib/game/types";
+
+interface ClueBoardProps {
+  open?: boolean;
+  onClose?: () => void;
+  clues?: Clue[];
+  totalCluesInRound?: number;
+}
+
+export function ClueBoard({
+  open: controlledOpen,
+  onClose: controlledOnClose,
+  clues: controlledClues,
+  totalCluesInRound: controlledTotal,
+}: ClueBoardProps = {}) {
+  const storeOpen = useGameStore((s) => s.activePanel === "clue");
+  const storeClues = useGameStore((s) => s.unlockedClues);
+  const storeTotal = useGameStore((s) => s.totalCluesInRound);
+  const open = controlledOpen ?? storeOpen;
+  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
+  const clues = controlledClues ?? storeClues;
+  const totalCluesInRound = controlledTotal ?? storeTotal;
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedClue, setSelectedClue] = useState<any>(null);
+  const [selectedClue, setSelectedClue] = useState<Clue | null>(null);
 
   // 过滤线索
-  const filteredClues = clues.filter((clue: any) => {
+  const filteredClues = clues.filter((clue) => {
+    const description = clue.description ?? "";
     if (filter === "key" && !clue.is_key) return false;
     if (filter === "normal" && clue.is_key) return false;
-    if (searchQuery && !clue.name.includes(searchQuery) && !clue.description.includes(searchQuery)) return false;
+    if (searchQuery && !clue.name.includes(searchQuery) && !description.includes(searchQuery)) return false;
     return true;
   });
 
@@ -118,7 +136,7 @@ export function ClueBoard() {
               }}
               className="grid grid-cols-2 gap-3"
             >
-              {filteredClues.map((clue: any) => (
+              {filteredClues.map((clue) => (
                 <motion.button
                   key={clue.id}
                   variants={{
@@ -201,7 +219,7 @@ export function ClueBoard() {
                 )}
               </div>
               <p className="text-sm leading-relaxed text-[var(--muted-foreground)]">
-                {selectedClue.description}
+                {selectedClue.description || "这条线索暂时没有补充说明。"}
               </p>
               <button
                 onClick={() => setSelectedClue(null)}

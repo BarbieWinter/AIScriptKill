@@ -46,7 +46,7 @@ function ChapterArticle({ content }: { content: string }) {
   return (
     <div className="space-y-5 text-[15px] leading-8 text-[var(--foreground)]/85">
       {blocks.map((block, index) => {
-        const quote = block.match(/^>\s?(.*)$/s);
+        const quote = block.match(/^>\s?([\s\S]*)$/);
         if (quote) {
           return (
             <blockquote
@@ -67,9 +67,28 @@ function ChapterArticle({ content }: { content: string }) {
   );
 }
 
-export function CharacterChapters() {
-  const open = useGameStore((state) => state.activePanel === "chapter");
-  const sessionId = useGameStore((state) => state.sessionId);
+interface CharacterChaptersProps {
+  open?: boolean;
+  onClose?: () => void;
+  sessionId?: string | null;
+  playerCharacterName?: string;
+  onListChapters?: () => Promise<{ chapters: ChapterSummary[] }>;
+  onReadChapter?: (chapterId: string) => Promise<ChapterContent>;
+}
+
+export function CharacterChapters({
+  open: controlledOpen,
+  onClose: controlledOnClose,
+  sessionId: controlledSessionId,
+  playerCharacterName = "当前角色",
+  onListChapters,
+  onReadChapter,
+}: CharacterChaptersProps = {}) {
+  const storeOpen = useGameStore((state) => state.activePanel === "chapter");
+  const storeSessionId = useGameStore((state) => state.sessionId);
+  const open = controlledOpen ?? storeOpen;
+  const sessionId = controlledSessionId ?? storeSessionId;
+  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
   const [selected, setSelected] = useState<ChapterContent | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,7 +96,9 @@ export function CharacterChapters() {
   const loadChapters = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const result = await api.getCharacterChapters(sessionId);
+      const result = onListChapters
+        ? await onListChapters()
+        : await api.getCharacterChapters(sessionId);
       setChapters(result.chapters);
       setSelected((current) => {
         if (!current) return null;
@@ -88,7 +109,7 @@ export function CharacterChapters() {
       console.error("[CharacterChapters] 加载章节目录失败:", error);
       toast.error("无法加载人物章节");
     }
-  }, [sessionId]);
+  }, [onListChapters, sessionId]);
 
   useEffect(() => {
     if (open) void loadChapters();
@@ -98,7 +119,9 @@ export function CharacterChapters() {
     if (!sessionId || loading) return;
     setLoading(true);
     try {
-      const chapter = await api.readCharacterChapter(sessionId, chapterId);
+      const chapter = onReadChapter
+        ? await onReadChapter(chapterId)
+        : await api.readCharacterChapter(sessionId, chapterId);
       setSelected(chapter);
       await loadChapters();
     } catch (error) {
@@ -112,8 +135,8 @@ export function CharacterChapters() {
   return (
     <Sheet
       open={open}
-      onClose={() => useGameStore.getState().closePanel()}
-      title="卓司元的人物章节"
+      onClose={onClose}
+      title={`${playerCharacterName}的人物章节`}
       className="md:w-[min(760px,72vw)]"
     >
       <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)]">

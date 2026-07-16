@@ -409,7 +409,7 @@ export default function GamePage() {
             setTruthSummary(review.truth_summary);
           } catch (error) {
             console.error("[GamePage] 加载判断复盘失败:", error);
-            setTruthSummary(result.detail.evidence_boundary);
+            setTruthSummary(result.detail.evidence_boundary ?? "判断已提交，复盘暂时不可用。");
           }
           setShowTruth(true);
         }}

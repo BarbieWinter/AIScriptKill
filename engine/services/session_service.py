@@ -1,5 +1,3 @@
-from collections.abc import Mapping
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +19,7 @@ from engine.api.schemas import (
     EvidenceViewedResponse,
     FinalSubmissionRequest,
     ReviewResponse,
+    SessionPresentationResponse,
     SessionStateResponse,
     SubmissionResult,
     UpdateSessionRequest,
@@ -43,6 +42,8 @@ from engine.services.session_mappers import (
     create_response,
     evidences_response,
     final_submission_result,
+    judgement_definition,
+    presentation_response,
     restore_response,
     review_response,
     state_response,
@@ -73,6 +74,32 @@ async def get_session(
     session = await _load_session(repository, session_id, current_user)
     stage_name = await repository.stage_name(session.script_id, session.state.current_stage)
     return state_response(session, stage_name)
+
+
+async def get_session_presentation(
+    session_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession,
+) -> SessionPresentationResponse:
+    repository = SessionRepository(db)
+    session = await _load_session(repository, session_id, current_user)
+    package = await get_runtime_package(db, session.script_id)
+    if package is None:
+        raise not_found("SCRIPT_PACKAGE_NOT_FOUND", "未找到会话对应的已发布剧本包")
+    stage = next(
+        (item for item in package.stages if item.id == session.state.current_stage),
+        None,
+    )
+    scene = next(
+        (item for item in package.scenes if item.id == session.state.current_scene),
+        None,
+    )
+    if stage is None or scene is None:
+        raise not_found(
+            "SESSION_PRESENTATION_NOT_FOUND",
+            "未找到当前会话阶段或场景的已发布展示内容",
+        )
+    return presentation_response(session, stage, scene)
 
 
 async def restore_session(
@@ -111,16 +138,6 @@ async def submit_final(
 ) -> SubmissionResult:
     repository = SessionRepository(db)
     session = await _load_session(repository, session_id, current_user)
-    if session.script_id != "snow-village":
-        raise bad_request(
-            "JUDGMENT_UNAVAILABLE",
-            "当前剧本包尚未提供阶段判断。",
-        )
-    if session.state.current_stage != "back_door_judgement":
-        raise bad_request(
-            "JUDGMENT_NOT_AVAILABLE",
-            "只有进入后门判断阶段后才能提交判断。",
-        )
     package = await get_runtime_package(db, session.script_id)
     if package is None:
         raise not_found("SCRIPT_PACKAGE_NOT_FOUND", "未找到会话对应的已发布剧本包")
@@ -130,10 +147,18 @@ async def submit_final(
     )
     if stage is None:
         raise bad_request("JUDGMENT_UNAVAILABLE", "当前阶段没有可提交的判断。")
-    correct_option = _judgment_correct_option(stage.definition)
-    if correct_option is None:
+    judgement = judgement_definition(stage.definition)
+    if judgement is None:
         raise bad_request("JUDGMENT_UNAVAILABLE", "当前阶段没有可提交的判断。")
-    result = final_submission_result(payload, correct_option=correct_option)
+    if payload.option not in judgement.option_ids:
+        raise bad_request(
+            "INVALID_JUDGMENT_OPTION",
+            "option 必须是当前阶段声明的判断选项 ID",
+        )
+    result = final_submission_result(
+        payload,
+        correct_option=judgement.correct_option,
+    )
     await repository.save_final_submission(
         session,
         payload,
@@ -259,21 +284,6 @@ async def get_review(
 
 
 # ── 标识解析与加载辅助 ──
-
-
-def _judgment_correct_option(definition: Mapping[str, object]) -> str | None:
-    special_rules = definition.get("special_rules")
-    if not isinstance(special_rules, Mapping):
-        return None
-    special_rules_mapping = cast(Mapping[object, object], special_rules)
-    judgement = special_rules_mapping.get("judgement")
-    if not isinstance(judgement, Mapping):
-        return None
-    judgement_mapping = cast(Mapping[object, object], judgement)
-    correct_option = judgement_mapping.get("correct_option")
-    if correct_option not in ("A", "B", "C", "D"):
-        return None
-    return str(correct_option)
 
 
 async def _load_session(
