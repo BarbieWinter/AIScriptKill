@@ -1,160 +1,241 @@
-/**
- * CharacterSelectPage — 首个垂直切片的固定玩家身份
- *
- * 真人玩家直接扮演卓司元。确认身份时由后端创建真实 Session，
- * Mock 模式则继续通过同一 API 客户端创建隔离的 Mock Session。
- */
-
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
-import { api } from "@/lib/api";
+import { api, type PlayableCharacter } from "@/lib/api";
 
-const character = {
-  id: "zhuosiyuan",
-  name: "卓司元",
-  tag: "「我记得的，和王大达说的并不完全一样。」",
-  personality: "克制 · 谨慎 · 熟悉雪乡",
-  background:
-    "你以卓司元的身份回到雪乡。旧日记忆并不完整，但饭馆后门留下的细节，让你开始重新审视熟人们共同保持的沉默。",
-  color: "#22c55e",
-  gradient: "from-emerald-900/40 via-emerald-800/20 to-transparent",
-};
+const characterColors = [
+  "#8fae98",
+  "#b59b68",
+  "#8b9fba",
+  "#b18484",
+  "#9e91b2",
+  "#7fa6a1",
+];
 
 export default function CharacterSelectPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const params = useParams<{ sessionId: string }>();
+  const scriptId = params.sessionId;
+  const [characters, setCharacters] = useState<PlayableCharacter[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loadingCharacters, setLoadingCharacters] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [creatingCharacterId, setCreatingCharacterId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    setLoadingCharacters(true);
+    setLoadError(null);
+
+    api
+      .getPlayableCharacters(scriptId)
+      .then(({ characters: playableCharacters }) => {
+        if (!current) return;
+        setCharacters(playableCharacters);
+        setSelectedId(playableCharacters[0]?.id ?? null);
+      })
+      .catch((error) => {
+        if (!current) return;
+        console.error("[CharacterSelectPage] 加载可玩角色失败:", error);
+        setLoadError("无法读取这个剧本的可选角色");
+      })
+      .finally(() => {
+        if (current) setLoadingCharacters(false);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [scriptId]);
+
+  const selectedCharacter = useMemo(
+    () => characters.find((character) => character.id === selectedId) ?? null,
+    [characters, selectedId],
+  );
+  const selectedIndex = Math.max(
+    0,
+    characters.findIndex((character) => character.id === selectedId),
+  );
+  const selectedColor = characterColors[selectedIndex % characterColors.length];
 
   const handleSelect = async () => {
-    if (loading) return;
+    if (!selectedCharacter || creatingCharacterId) return;
 
-    setLoading(true);
+    setCreatingCharacterId(selectedCharacter.id);
     try {
       const session = await api.createSession(
-        "snow-village",
-        character.id,
-        character.name
+        scriptId,
+        selectedCharacter.id,
+        selectedCharacter.name,
       );
       toast("身份已确认", {
-        description: `你将以${character.name}的身份进入雪乡`,
-        icon: "🎭",
+        description: `你将以${selectedCharacter.name}的身份进入剧本`,
       });
-      router.push(`/play/${session.session_id}`);
+      router.replace(
+        `/play/${encodeURIComponent(session.script_id)}/${encodeURIComponent(session.session_id)}`,
+      );
     } catch (error) {
       console.error("[CharacterSelectPage] 创建会话失败:", error);
       toast.error("无法创建游戏会话", {
-        description: "请确认后端服务与雪乡剧本包已经就绪。",
+        description: "请确认后端服务与当前剧本包已经就绪。",
       });
-      setLoading(false);
+      setCreatingCharacterId(null);
     }
   };
 
+  if (loadingCharacters) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[var(--background)]">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--theme-primary)] border-t-transparent" />
+          <p className="text-sm text-[var(--muted-foreground)]">正在读取可选角色</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (loadError || characters.length === 0 || !selectedCharacter) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[var(--background)] px-6">
+        <div className="max-w-sm text-center">
+          <h1 className="mb-2 text-xl font-semibold">暂无可选角色</h1>
+          <p className="mb-6 text-sm text-[var(--muted-foreground)]">
+            {loadError ?? "这个剧本尚未声明可由玩家扮演的角色。"}
+          </p>
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="rounded border border-white/10 px-5 py-2 text-sm text-white/70 hover:text-white"
+          >
+            返回剧本
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="relative h-screen w-full overflow-hidden bg-[var(--background)]">
+    <main className="relative min-h-screen overflow-x-hidden bg-[var(--background)] text-white">
       <div
-        className={`absolute inset-0 bg-gradient-to-b ${character.gradient}`}
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-[var(--background)] via-transparent to-[var(--background)]/50" />
-      <div
-        className="absolute inset-0"
+        className="pointer-events-none absolute inset-0 opacity-70"
         style={{
-          backgroundImage: `radial-gradient(ellipse at 50% 0%, ${character.color}11, transparent 60%)`,
+          background: `radial-gradient(circle at 50% 0%, ${selectedColor}24, transparent 46%)`,
         }}
       />
 
       <button
+        type="button"
         onClick={() => router.back()}
-        className="absolute top-4 left-4 z-20 flex h-9 w-9 items-center justify-center rounded-lg border border-white/5 bg-black/40 text-white/60 backdrop-blur-sm transition-all hover:text-white/90"
-        aria-label="返回"
+        className="fixed left-4 top-4 z-20 grid h-9 w-9 place-items-center border border-white/10 bg-black/55 text-white/60 transition-colors hover:text-white"
+        aria-label="返回剧本"
       >
         <ArrowLeft className="h-4 w-4" />
       </button>
 
-      <div className="relative z-10 flex h-full flex-col items-center justify-center px-6 pb-24">
-        <motion.p
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-2 text-xs uppercase tracking-[0.2em] text-white/30"
-        >
-          你的身份
-        </motion.p>
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 pb-10 pt-16 md:px-8 md:pt-20">
+        <header className="mb-7 text-center">
+          <p className="mb-2 text-xs text-white/35">选择你的身份</p>
+          <h1 className="text-2xl font-semibold md:text-3xl">可扮演角色</h1>
+          <p className="mt-2 text-sm text-white/40">{characters.length} 个身份</p>
+        </header>
 
-        <div className="relative mx-auto mb-8 w-full max-w-md">
-          <div className="mb-6 flex justify-center">
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", damping: 15, stiffness: 200 }}
-              className="relative"
-            >
-              <div
-                className="flex h-32 w-32 items-center justify-center rounded-full border-4 text-4xl md:h-40 md:w-40 md:text-5xl"
-                style={{
-                  borderColor: `${character.color}40`,
-                  backgroundColor: `${character.color}10`,
-                  boxShadow: `0 0 40px ${character.color}20`,
-                }}
+        <section
+          className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
+          aria-label="可扮演角色列表"
+        >
+          {characters.map((character, index) => {
+            const active = character.id === selectedCharacter.id;
+            const color = characterColors[index % characterColors.length];
+            return (
+              <motion.button
+                type="button"
+                key={character.id}
+                onClick={() => setSelectedId(character.id)}
+                whileHover={{ y: -3 }}
+                whileTap={{ scale: 0.98 }}
+                className={`relative flex min-h-40 flex-col items-center justify-center border px-3 py-5 text-center transition-colors ${
+                  active
+                    ? "border-white/30 bg-white/10"
+                    : "border-white/8 bg-white/[0.025] hover:border-white/18 hover:bg-white/[0.05]"
+                }`}
+                aria-pressed={active}
               >
-                🔍
-              </div>
-              <div
-                className="absolute inset-0 animate-ping rounded-full opacity-20"
-                style={{ boxShadow: `0 0 30px ${character.color}` }}
-              />
-            </motion.div>
-          </div>
+                {active && (
+                  <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-white text-black">
+                    <Check className="h-3 w-3" />
+                  </span>
+                )}
+                <span
+                  className="mb-3 grid h-16 w-16 place-items-center rounded-full border"
+                  style={{
+                    borderColor: `${color}66`,
+                    backgroundColor: `${color}18`,
+                    color,
+                  }}
+                >
+                  <UserRound className="h-7 w-7" />
+                </span>
+                <strong className="text-sm font-medium">{character.name}</strong>
+                <span className="mt-1 line-clamp-2 min-h-8 text-xs leading-4 text-white/35">
+                  {character.personality || "等待进入剧本"}
+                </span>
+              </motion.button>
+            );
+          })}
+        </section>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="text-center"
-          >
-            <h2 className="mb-2 text-3xl font-bold text-white">
-              {character.name}
-            </h2>
-            <p className="mb-4 text-sm italic text-white/50">
-              {character.tag}
-            </p>
-            <div
-              className="mb-4 inline-block rounded-full px-3 py-1 text-xs"
-              style={{
-                backgroundColor: `${character.color}15`,
-                color: character.color,
-              }}
-            >
-              {character.personality}
-            </div>
-            <p className="mx-auto max-w-md px-4 text-sm leading-relaxed text-white/40">
-              {character.background}
-            </p>
-          </motion.div>
-        </div>
-
-        <motion.button
-          onClick={handleSelect}
-          disabled={loading}
-          whileHover={{ scale: loading ? 1 : 1.02 }}
-          whileTap={{ scale: loading ? 1 : 0.98 }}
-          className="relative flex items-center gap-3 rounded-xl bg-[var(--theme-primary)] px-10 py-3.5 text-sm font-bold text-white shadow-xl shadow-[var(--theme-primary)]/20 transition-all hover:bg-[var(--theme-primary)]/80 disabled:opacity-60"
+        <motion.section
+          key={selectedCharacter.id}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mx-auto grid w-full max-w-4xl gap-6 border-y border-white/10 py-7 md:grid-cols-[180px_1fr] md:items-center md:gap-10"
         >
-          {loading ? (
-            <>
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              创建会话中…
-            </>
-          ) : (
-            <>
-              <Check className="h-4 w-4" />
-              以卓司元的身份开始
-            </>
-          )}
-        </motion.button>
+          <div className="mx-auto grid h-36 w-36 place-items-center rounded-full border md:h-40 md:w-40" style={{ borderColor: `${selectedColor}55`, backgroundColor: `${selectedColor}12`, color: selectedColor }}>
+            <UserRound className="h-14 w-14" />
+          </div>
+          <div className="text-center md:text-left">
+            <h2 className="text-3xl font-semibold">{selectedCharacter.name}</h2>
+            {selectedCharacter.tagline && (
+              <p className="mt-2 text-sm italic text-white/55">“{selectedCharacter.tagline}”</p>
+            )}
+            {selectedCharacter.personality && (
+              <p className="mt-4 text-sm" style={{ color: selectedColor }}>
+                {selectedCharacter.personality}
+              </p>
+            )}
+            {selectedCharacter.background && (
+              <p className="mt-3 text-sm leading-7 text-white/45">
+                {selectedCharacter.background}
+              </p>
+            )}
+          </div>
+        </motion.section>
+
+        <div className="mt-8 flex justify-center">
+          <button
+            type="button"
+            onClick={() => void handleSelect()}
+            disabled={creatingCharacterId !== null}
+            className="inline-flex min-w-56 items-center justify-center gap-2 bg-[var(--theme-primary)] px-8 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--theme-primary)]/80 disabled:opacity-55"
+          >
+            {creatingCharacterId ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                正在进入剧本
+              </>
+            ) : (
+              <>
+                <Check className="h-4 w-4" />
+                以{selectedCharacter.name}的身份开始
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </main>
   );

@@ -14,8 +14,10 @@ from engine.api.schemas.actions import (
 from engine.api.schemas.packages import (
     PackageImportResponse,
     PackageListResponse,
+    PackagePlayableCharactersResponse,
     PackageUpdateRequest,
     PackageUpdateResponse,
+    PlayableCharacterSummary,
 )
 from engine.api.schemas.queries import (
     CardListResponse,
@@ -60,8 +62,10 @@ __all__ = [
     "NpcResponse",
     "PackageImportResponse",
     "PackageListResponse",
+    "PackagePlayableCharactersResponse",
     "PackageUpdateRequest",
     "PackageUpdateResponse",
+    "PlayableCharacterSummary",
     "ReviewResponse",
     "SceneResult",
     "SessionPresentationResponse",

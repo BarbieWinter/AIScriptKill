@@ -164,6 +164,10 @@ class SessionRuntime implements GameSessionRuntime {
         sessionId: session.session_id,
         scriptId: session.script_id,
         playerCharacterId: session.player_character_id,
+        playerCharacterName:
+          characters.characters.find(
+            (character) => character.id === session.player_character_id
+          )?.name ?? session.player_character_id,
         status: session.status,
         currentStage: session.current_stage,
         stageName: session.stage_name,
@@ -216,6 +220,10 @@ class SessionRuntime implements GameSessionRuntime {
           session.available_characters,
           characters.characters
         ),
+        playerCharacterName:
+          characters.characters.find(
+            (character) => character.id === session.player_character_id
+          )?.name ?? session.player_character_id,
         availableScenes: availableScenes(presentation),
         totalCluesInRound: session.total_clues_in_round,
         unlockedClues: clues.clues,

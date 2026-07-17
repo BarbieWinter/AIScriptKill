@@ -148,6 +148,7 @@ export interface GameSessionSnapshot {
   sessionId: string;
   scriptId: string;
   playerCharacterId: string;
+  playerCharacterName: string;
   status: string;
   currentStage: string;
   stageName: string;

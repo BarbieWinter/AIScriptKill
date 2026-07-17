@@ -51,7 +51,7 @@ const PLAYER_RADIUS = 17;
 const MOVE_SPEED = 270;
 const INTERACT_DISTANCE = 118;
 const SCENE_Z_BASE = 1000;
-const UI_SNAPSHOT_INTERVAL = 90;
+const UI_SNAPSHOT_INTERVAL = 250;
 const ROOM_HYSTERESIS = 30;
 const MOVEMENT_CODES = new Set([
   "KeyW",
@@ -74,6 +74,7 @@ export interface MansionDemoProps {
   interactionPending?: boolean;
   onInvestigate?: (sceneId: string, hotspotId: string) => void | Promise<void>;
   overlay?: ReactNode;
+  playerName?: string;
   stageName?: string;
   statusLabel?: string;
 }
@@ -137,7 +138,9 @@ function findRoom(point: DemoPoint, previousId?: DemoRoom["id"]) {
   return (
     demoRooms
       .filter((room) => contains(room.bounds, point))
-      .sort((a, b) => b.priority - a.priority)[0] ?? demoRooms[1]
+      .sort((a, b) => b.priority - a.priority)[0]
+      ?? demoRooms.find((room) => room.id === "hall")
+      ?? demoRooms[0]
   );
 }
 
@@ -171,21 +174,17 @@ interface CharacterSpriteProps {
   character: DemoCharacter;
   player?: boolean;
   elementRef?: React.RefObject<HTMLDivElement | null>;
-  moving?: boolean;
-  facing?: "left" | "right";
 }
 
 const CharacterSprite = memo(function CharacterSprite({
   character,
   player = false,
   elementRef,
-  moving = false,
-  facing = character.initialFacing,
 }: CharacterSpriteProps) {
   return (
     <div
       ref={elementRef}
-      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} ${moving ? "is-moving" : ""} is-facing-${facing}`}
+      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} is-facing-${character.initialFacing}`}
       data-character-id={character.id}
       data-outfit={character.outfit}
       data-accessory={character.accessory}
@@ -213,16 +212,15 @@ const CharacterSprite = memo(function CharacterSprite({
 });
 
 function wallSlices(wall: DemoWall) {
-  if (wall.axis === "horizontal") return [{ ...wall, sliceId: wall.id }];
-  const sliceSize = 48;
-  const count = Math.ceil(wall.height / sliceSize);
-  return Array.from({ length: count }, (_, index) => ({
-    ...wall,
-    y: wall.y + index * sliceSize,
-    height: Math.min(sliceSize, wall.height - index * sliceSize),
-    sliceId: `${wall.id}-${index}`,
-  }));
+  return [{ ...wall, sliceId: wall.id }];
 }
+
+const doorLabels: Record<string, string> = {
+  "kitchen-door": "厨房",
+  "study-door": "书房",
+  "private-door": "私聊室",
+  "archive-door": "档案室",
+};
 
 const StaticScene = memo(function StaticScene({
   activeHotspotId,
@@ -243,7 +241,6 @@ const StaticScene = memo(function StaticScene({
         <div className="demo-window-light demo-window-light-one" />
         <div className="demo-window-light demo-window-light-two" />
         <div className="demo-carpet" />
-        <div className="demo-stage-door-recess"><span /></div>
         {demoRooms.map((room) => (
           <span key={room.id} className="demo-room-label" style={{ left: room.label.x, top: room.label.y }}>
             {room.name}
@@ -269,6 +266,13 @@ const StaticScene = memo(function StaticScene({
       </div>
 
       <div className="demo-depth-layer">
+        <div className="demo-hall-window" aria-label="窗外正在下雪" style={{ zIndex: sceneZ(320) }}>
+          <span className="demo-hall-window-snow">
+            {Array.from({ length: 7 }, (_, index) => <i key={index} />)}
+          </span>
+          <b /><b />
+        </div>
+
         {demoWalls.flatMap(wallSlices).map((wall) => (
           <div
             key={wall.sliceId}
@@ -300,6 +304,7 @@ const StaticScene = memo(function StaticScene({
               key={door.id}
               className="demo-door-frame"
               data-orientation={door.orientation}
+              data-door-id={door.id}
               style={{
                 left: door.x,
                 top: door.y,
@@ -311,6 +316,8 @@ const StaticScene = memo(function StaticScene({
               <span className="demo-door-jamb demo-door-jamb-a" />
               <span className="demo-door-jamb demo-door-jamb-b" />
               <span className="demo-door-lintel" />
+              <span className="demo-door-leaf" />
+              <em>{doorLabels[door.id]}</em>
             </div>
           );
         })}
@@ -377,6 +384,7 @@ export function MansionDemo({
   interactionPending = false,
   onInvestigate,
   overlay,
+  playerName,
   stageName,
   statusLabel,
 }: MansionDemoProps = {}) {
@@ -391,6 +399,7 @@ export function MansionDemo({
   const activeHotspotRef = useRef<string | null>(null);
   const reducedMotionRef = useRef(false);
   const lastSnapshotRef = useRef(0);
+  const cameraNeedsUpdateRef = useRef(true);
   const cameraRef = useRef<CameraState>({
     x: demoCharacters[0].x,
     y: demoCharacters[0].y,
@@ -400,16 +409,14 @@ export function MansionDemo({
     targetZoom: 1,
     lookX: 0,
     lookY: 0,
-    roomId: "south",
+    roomId: "hall",
     initialized: false,
   });
 
   const shouldReduceMotion = useReducedMotion();
   const [playerSnapshot, setPlayerSnapshot] = useState(playerRef.current);
-  const [facing, setFacing] = useState<"left" | "right">(demoCharacters[0].initialFacing);
-  const [moving, setMoving] = useState(false);
   const [activeHotspotId, setActiveHotspotId] = useState<string | null>(null);
-  const [activeRoomId, setActiveRoomId] = useState<DemoRoom["id"]>("south");
+  const [activeRoomId, setActiveRoomId] = useState<DemoRoom["id"]>("hall");
   const [selectedArticle, setSelectedArticle] = useState<DemoArticle | null>(null);
   const [showJournal, setShowJournal] = useState(false);
   const [showMap, setShowMap] = useState(false);
@@ -424,6 +431,10 @@ export function MansionDemo({
     [sessionHotspots],
   );
   const worldHotspotsRef = useRef(worldHotspots);
+  const playerCharacter = useMemo(
+    () => ({ ...demoCharacters[0], name: playerName || demoCharacters[0].name }),
+    [playerName],
+  );
 
   useEffect(() => {
     worldHotspotsRef.current = worldHotspots;
@@ -478,6 +489,7 @@ export function MansionDemo({
         width: entry.contentRect.width,
         height: entry.contentRect.height,
       };
+      cameraNeedsUpdateRef.current = true;
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -526,6 +538,7 @@ export function MansionDemo({
     let last = performance.now();
     let lastMoving = false;
     let lastFacing: "left" | "right" = demoCharacters[0].initialFacing;
+    let lastRenderedFacing = lastFacing;
     let lastFadeUpdate = 0;
 
     const updateCamera = (delta: number, dx: number, dy: number) => {
@@ -662,15 +675,18 @@ export function MansionDemo({
         playerRef.current = collides(nextY) ? afterX : nextY;
       }
 
-      if (isMoving !== lastMoving) {
-        lastMoving = isMoving;
-        setMoving(isMoving);
-      }
-      setFacing((current) => (current === lastFacing ? current : lastFacing));
-
       const player = playerRef.current;
       const playerElement = playerElementRef.current;
       if (playerElement) {
+        if (isMoving !== lastMoving) {
+          lastMoving = isMoving;
+          playerElement.classList.toggle("is-moving", isMoving);
+        }
+        if (lastFacing !== lastRenderedFacing) {
+          lastRenderedFacing = lastFacing;
+          playerElement.classList.toggle("is-facing-left", lastFacing === "left");
+          playerElement.classList.toggle("is-facing-right", lastFacing === "right");
+        }
         playerElement.style.transform = `translate3d(${player.x}px, ${player.y}px, 0) translate(-50%, -100%)`;
         playerElement.style.zIndex = String(sceneZ(player.y));
       }
@@ -690,9 +706,12 @@ export function MansionDemo({
         setActiveHotspotId(nearestId);
       }
 
-      updateCamera(delta, isMoving ? dx : 0, isMoving ? dy : 0);
-      updateForegroundFade(now);
-      if (now - lastSnapshotRef.current >= UI_SNAPSHOT_INTERVAL) {
+      if (isMoving || cameraNeedsUpdateRef.current) {
+        updateCamera(delta, isMoving ? dx : 0, isMoving ? dy : 0);
+        cameraNeedsUpdateRef.current = false;
+      }
+      if (isMoving) updateForegroundFade(now);
+      if (isMoving && now - lastSnapshotRef.current >= UI_SNAPSHOT_INTERVAL) {
         lastSnapshotRef.current = now;
         setPlayerSnapshot({ ...player });
       }
@@ -706,7 +725,9 @@ export function MansionDemo({
   const nearestHotspot = activeHotspotId
     ? worldHotspots.find((hotspot) => hotspot.id === activeHotspotId) ?? null
     : null;
-  const activeRoom = demoRooms.find((room) => room.id === activeRoomId) ?? demoRooms[1];
+  const activeRoom = demoRooms.find((room) => room.id === activeRoomId)
+    ?? demoRooms.find((room) => room.id === "hall")
+    ?? demoRooms[0];
 
   const setTouchDirection = (event: ReactPointerEvent<HTMLButtonElement>, x: number, y: number) => {
     if (blockedRef.current) return;
@@ -734,18 +755,64 @@ export function MansionDemo({
               onInteract={interactWithHotspot}
             />
             <CharacterSprite
-              character={demoCharacters[0]}
+              character={playerCharacter}
               player
               elementRef={playerElementRef}
-              moving={moving}
-              facing={facing}
             />
           </div>
         </div>
 
         <div className="demo-vignette" />
-        <div className="demo-film-grain" />
         <div className="demo-dust" aria-hidden="true" />
+
+        <aside className="demo-corner-map" aria-label="场景小地图">
+          <header><MapIcon /><strong>方位图</strong><span>{activeRoom.name}</span></header>
+          <div className="demo-corner-map-canvas">
+            {demoRooms.map((room) => (
+              <div
+                key={room.id}
+                className={`demo-corner-room ${room.id === activeRoomId ? "is-current" : ""}`}
+                style={{
+                  left: `${(room.bounds.x / DEMO_WORLD_WIDTH) * 100}%`,
+                  top: `${(room.bounds.y / DEMO_WORLD_HEIGHT) * 100}%`,
+                  width: `${(room.bounds.width / DEMO_WORLD_WIDTH) * 100}%`,
+                  height: `${(room.bounds.height / DEMO_WORLD_HEIGHT) * 100}%`,
+                }}
+              >
+                <span>{room.name}</span>
+              </div>
+            ))}
+            {demoDoorFrames.map((door) => (
+              <i
+                key={door.id}
+                className="demo-corner-door"
+                style={{
+                  left: `${(door.x / DEMO_WORLD_WIDTH) * 100}%`,
+                  top: `${(door.y / DEMO_WORLD_HEIGHT) * 100}%`,
+                  width: `${Math.max(1.5, (door.width / DEMO_WORLD_WIDTH) * 100)}%`,
+                  height: `${Math.max(4, (door.height / DEMO_WORLD_HEIGHT) * 100)}%`,
+                }}
+              />
+            ))}
+            {demoCharacters.slice(1).map((character) => (
+              <i
+                key={character.id}
+                className="demo-corner-person"
+                style={{
+                  left: `${(character.x / DEMO_WORLD_WIDTH) * 100}%`,
+                  top: `${(character.y / DEMO_WORLD_HEIGHT) * 100}%`,
+                }}
+              />
+            ))}
+            <i
+              className="demo-corner-person is-player"
+              style={{
+                left: `${(playerSnapshot.x / DEMO_WORLD_WIDTH) * 100}%`,
+                top: `${(playerSnapshot.y / DEMO_WORLD_HEIGHT) * 100}%`,
+              }}
+            />
+          </div>
+        </aside>
 
         <header className="demo-hud-top">
           <div className="demo-location-card">
@@ -860,7 +927,7 @@ export function MansionDemo({
                         height: `${(room.bounds.height / DEMO_WORLD_HEIGHT) * 100}%`,
                       }}
                     >
-                      {room.name.replace("西侧", "").replace("中央", "").replace("与幕间", "")}
+                      {room.name}
                     </div>
                   ))}
                   <span style={{ left: `${(playerSnapshot.x / DEMO_WORLD_WIDTH) * 100}%`, top: `${(playerSnapshot.y / DEMO_WORLD_HEIGHT) * 100}%` }} />

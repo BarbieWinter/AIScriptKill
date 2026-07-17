@@ -3,6 +3,7 @@ import {
   mockCharacters,
   mockClues,
 } from "@/lib/mock-data";
+import { getMockSessionIdentity } from "@/lib/mock-session-registry";
 
 import type {
   ActionResponse,
@@ -296,15 +297,16 @@ export class MockSessionClient implements GameSessionClient {
   async getSession(options?: RequestOptions): Promise<SessionState> {
     throwIfAborted(options);
     const engine = getMockEngine();
+    const identity = getMockSessionIdentity(this.sessionId);
     const stage = engine.getStage();
     const scene = engine.getCurrentScene();
     return {
       session_id: this.sessionId,
-      script_id: "snow-village",
+      script_id: identity?.scriptId ?? "snow-village",
       status: "in_progress",
       current_stage: stage.id,
       stage_name: stage.name,
-      player_character_id: "zhuosiyuan",
+      player_character_id: identity?.characterId ?? "zhuosiyuan",
       available_actions: stage.available_actions as ActionType[],
       available_characters: stage.available_characters,
       unlocked_clues_count: engine.getUnlockedClues().length,

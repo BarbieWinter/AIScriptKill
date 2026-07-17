@@ -170,10 +170,10 @@ button { font: inherit; }
 .demo-stage-glow {
   position: absolute;
   z-index: 2;
-  left: 1190px;
-  top: 62px;
-  width: 430px;
-  height: 500px;
+  left: 1760px;
+  top: 40px;
+  width: 600px;
+  height: 620px;
   background: radial-gradient(ellipse at 60% 34%, rgba(190, 151, 78, 0.18), rgba(67, 37, 29, 0.07) 46%, transparent 72%);
 }
 
@@ -189,16 +189,16 @@ button { font: inherit; }
   clip-path: polygon(32% 0, 70% 0, 100% 100%, 0 100%);
 }
 
-.demo-window-light-one { left: 238px; top: 40px; }
-.demo-window-light-two { left: 1370px; top: 40px; opacity: 0.55; }
+.demo-window-light-one { left: 1136px; top: 286px; }
+.demo-window-light-two { display: none; }
 
 .demo-carpet {
   position: absolute;
   z-index: 3;
-  left: 680px;
-  top: 252px;
-  width: 468px;
-  height: 448px;
+  left: 900px;
+  top: 510px;
+  width: 600px;
+  height: 600px;
   border: 1px solid rgba(172, 125, 85, 0.12);
   border-radius: 46% 46% 12px 12px;
   background:
@@ -259,6 +259,82 @@ button { font: inherit; }
   height: 24px;
   clip-path: polygon(4% 35%, 94% 0, 100% 65%, 8% 100%);
 }
+
+.demo-door-leaf {
+  position: absolute;
+  left: 12px;
+  top: 18px;
+  width: 15px;
+  height: calc(100% - 36px);
+  rotate: -55deg;
+  transform-origin: 50% 0;
+  border: 1px solid rgba(202, 188, 148, 0.12);
+  background: linear-gradient(100deg, #5b5749, #292b26 65%, #171a18);
+  box-shadow: 8px 10px 16px rgba(0, 0, 0, 0.45);
+}
+
+.demo-door-frame[data-door-id="private-door"] .demo-door-leaf,
+.demo-door-frame[data-door-id="archive-door"] .demo-door-leaf {
+  left: auto;
+  right: 12px;
+  rotate: 55deg;
+}
+
+.demo-door-frame > em {
+  position: absolute;
+  left: 48px;
+  top: 50%;
+  translate: 0 -50%;
+  width: max-content;
+  color: rgba(224, 215, 188, 0.24);
+  font: 9px/1 "Songti SC", serif;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.demo-door-frame[data-door-id="private-door"] > em,
+.demo-door-frame[data-door-id="archive-door"] > em {
+  left: auto;
+  right: 48px;
+}
+
+.demo-hall-window {
+  position: absolute;
+  left: 1080px;
+  top: 244px;
+  width: 240px;
+  height: 72px;
+  overflow: hidden;
+  border: 10px solid #2d2d27;
+  border-bottom-width: 14px;
+  background: #111513;
+  box-shadow: 9px 13px 20px rgba(0, 0, 0, 0.52), inset 0 0 18px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+
+.demo-hall-window::before,
+.demo-hall-window::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  background: #3b3b32;
+}
+
+.demo-hall-window::before { left: 50%; top: 0; bottom: 0; width: 5px; translate: -50% 0; }
+.demo-hall-window::after { left: 0; right: 0; top: 50%; height: 4px; }
+.demo-hall-window > b { position: absolute; z-index: 2; top: 0; bottom: 0; width: 30px; background: #311c20; }
+.demo-hall-window > b:first-of-type { left: 0; }
+.demo-hall-window > b:last-of-type { right: 0; }
+.demo-hall-window-snow { position: absolute; inset: 0; overflow: hidden; background: #171c1b; }
+.demo-hall-window-snow i { position: absolute; top: -8px; width: 3px; height: 5px; border-radius: 50%; background: rgba(216, 216, 199, .52); animation: demo-window-snow 4.6s linear infinite; animation-play-state: paused; }
+.demo-hall-window-snow i:nth-child(1) { left: 12%; animation-delay: -.7s; }
+.demo-hall-window-snow i:nth-child(2) { left: 26%; animation-delay: -2.1s; }
+.demo-hall-window-snow i:nth-child(3) { left: 39%; animation-delay: -3.4s; }
+.demo-hall-window-snow i:nth-child(4) { left: 53%; animation-delay: -1.4s; }
+.demo-hall-window-snow i:nth-child(5) { left: 68%; animation-delay: -2.8s; }
+.demo-hall-window-snow i:nth-child(6) { left: 81%; animation-delay: -.2s; }
+.demo-hall-window-snow i:nth-child(7) { left: 91%; animation-delay: -3.8s; }
+.mansion-demo[data-room="hall"] .demo-hall-window-snow i { animation-play-state: running; }
 
 .demo-door-frame[data-orientation="horizontal"] .demo-door-jamb {
   left: 0;
@@ -395,6 +471,27 @@ button { font: inherit; }
 .demo-furniture[data-kind="seats"] .demo-furniture-front {
   height: 24px;
   background: repeating-linear-gradient(90deg, #271c1c 0 31px, #111413 32px 47px);
+}
+
+.demo-furniture[data-kind="seats"][data-variant="chair"] .demo-furniture-body {
+  opacity: 1;
+  border: 6px solid #292a25;
+  border-radius: 9px 9px 18px 18px;
+  background: #4a4035;
+}
+
+.demo-furniture[data-kind="seats"][data-variant="chair"] .demo-furniture-top {
+  border-radius: 8px;
+  background: linear-gradient(150deg, #6b5d49, #34342c);
+  clip-path: polygon(5% 38%, 92% 0, 100% 62%, 11% 100%);
+}
+
+.demo-furniture[data-kind="seats"][data-variant="chair"] .demo-furniture-front {
+  left: 10%;
+  right: 10%;
+  height: 12px;
+  border-radius: 0 0 9px 9px;
+  background: #25251f;
 }
 
 .demo-furniture[data-kind="curtain"] .demo-furniture-body {
@@ -665,6 +762,51 @@ button { font: inherit; }
 .demo-character.is-moving .demo-character-accessory { animation: demo-accessory-sway var(--walk-duration) ease-in-out infinite alternate; }
 .demo-character.is-moving .demo-character-shadow { width: calc(var(--character-width) * .82); opacity: .76; }
 
+.demo-corner-map {
+  position: absolute;
+  z-index: 37;
+  top: 82px;
+  right: 28px;
+  width: 228px;
+  padding: 9px;
+  border: 1px solid rgba(208, 190, 145, .15);
+  border-radius: 5px;
+  color: var(--demo-ink);
+  background: rgba(11, 14, 12, .92);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .46);
+  pointer-events: none;
+}
+
+.demo-corner-map > header {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 3px 6px;
+  border-bottom: 1px solid rgba(208, 190, 145, .11);
+}
+
+.demo-corner-map > header svg { width: 14px; color: var(--demo-brass); }
+.demo-corner-map > header strong { font-size: 10px; }
+.demo-corner-map > header span { color: var(--demo-muted); font-size: 8px; }
+.demo-corner-map-canvas { position: relative; height: 136px; margin-top: 6px; overflow: hidden; background: #0c0f0d; }
+
+.demo-corner-room {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(210, 191, 146, .18);
+  background: rgba(141, 121, 78, .055);
+}
+
+.demo-corner-room.is-current { border-color: rgba(225, 201, 135, .62); background: rgba(141, 121, 78, .14); }
+.demo-corner-room span { max-width: 100%; overflow: hidden; color: rgba(218, 207, 178, .48); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.demo-corner-door { position: absolute; z-index: 2; display: block; min-width: 3px; border-radius: 2px; background: var(--demo-brass); translate: -50% 0; }
+.demo-corner-person { position: absolute; z-index: 3; display: block; width: 5px; height: 5px; translate: -50% -50%; border-radius: 50%; background: var(--demo-muted); }
+.demo-corner-person.is-player { width: 7px; height: 7px; border: 1px solid #302a1e; background: #e1c987; }
+.mansion-demo .demo-session-dock { top: 270px; }
+
 .demo-hotspot {
   position: absolute;
   z-index: 11;
@@ -886,6 +1028,7 @@ button { font: inherit; }
 .demo-map-panel > p { margin: 20px 0 0; color: rgba(216,209,190,.42); font: 12px/1.8 "Songti SC", serif; }
 
 @keyframes demo-hotspot-pulse { 0% { scale: .72; opacity: .75; } 70%,100% { scale: 1.5; opacity: 0; } }
+@keyframes demo-window-snow { 0% { translate: 0 -5px; opacity: 0; } 18% { opacity: .6; } 100% { translate: 9px 80px; opacity: 0; } }
 @keyframes demo-idle { 0%,100% { translate: 0 0; rotate: -.35deg; } 50% { translate: 0 -1px; rotate: .4deg; } }
 @keyframes demo-grounded-walk { from { translate: 0 0; rotate: -.45deg; } to { translate: 0 -1px; rotate: .45deg; } }
 @keyframes demo-step-left { 0%,100% { transform: translate(0,0) rotate(3deg); } 50% { transform: translate(3px,-3px) rotate(-9deg); } }
@@ -921,6 +1064,11 @@ button { font: inherit; }
   .demo-session-launcher { left: 14px; right: 14px; bottom: 56px; width: auto; }
   .demo-session-launch-actions { flex-direction: column; }
   .demo-mock-warning { top: 66px; }
+  .demo-corner-map { top: 72px; right: 14px; width: 150px; padding: 6px; }
+  .demo-corner-map > header { grid-template-columns: 15px 1fr; height: 20px; }
+  .demo-corner-map > header span { display: none; }
+  .demo-corner-map-canvas { height: 88px; margin-top: 4px; }
+  .mansion-demo .demo-session-dock { top: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -932,7 +1080,8 @@ button { font: inherit; }
   .demo-character-leg,
   .demo-character-arm,
   .demo-character-torso,
-  .demo-character-accessory { animation: none !important; }
+  .demo-character-accessory,
+  .demo-hall-window-snow i { animation: none !important; }
   .demo-character-facing,
   .demo-elevated-faces { transition: none !important; }
 }

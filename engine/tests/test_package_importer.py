@@ -11,8 +11,15 @@ from engine.core.package_schema import JsonMapping, PackageAssetRecord
 from engine.core.package_storage import SupabasePackageAssetStorage
 from engine.rag.embeddings import DeterministicEmbeddingProvider
 from engine.rag.metadata import json_mapping, json_mapping_list
-from engine.repositories.package_repository import StoredPackage, StoredPackageConfig
-from engine.services.package_service import package_summary_from_package
+from engine.repositories.package_repository import (
+    StoredPackage,
+    StoredPackageConfig,
+    StoredPlayableCharacter,
+)
+from engine.services.package_service import (
+    package_summary_from_package,
+    playable_character_summary,
+)
 from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
 from engine.tests.rag_fixtures import rag_package
 from supabase import Client
@@ -174,6 +181,37 @@ def test_loaded_manifest_fields_reach_catalogue_projection() -> None:
     assert summary.duration_minutes == 60
     assert summary.genre == ["test"]
     assert summary.player_count == 1
+
+
+def test_playable_character_projection_excludes_private_character_rules() -> None:
+    character = StoredPlayableCharacter(
+        id="player",
+        name="公开角色",
+        definition={
+            "portrait": "storage://portraits/player.png",
+            "identity": {
+                "public": "公开身份背景",
+                "private": "不能在选角前公开的秘密",
+            },
+            "personality": {
+                "summary": "谨慎而敏锐",
+                "traits": ["谨慎", "敏锐"],
+            },
+            "knowledge": {"ending": {"knows": ["最终真相"]}},
+            "dialogue_strategy": {"forbidden_terms": ["凶手身份"]},
+        },
+    )
+
+    summary = playable_character_summary(character)
+
+    assert summary.model_dump() == {
+        "id": "player",
+        "name": "公开角色",
+        "portrait_url": "storage://portraits/player.png",
+        "tagline": "公开身份背景",
+        "personality": "谨慎而敏锐",
+        "background": "公开身份背景",
+    }
 
 
 async def test_import_to_db_persists_endings_and_privileged_dm_guide() -> None:

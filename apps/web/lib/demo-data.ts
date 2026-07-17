@@ -36,7 +36,7 @@ export interface DemoSessionHotspot extends DemoPoint {
 }
 
 export interface DemoRoom {
-  id: "west" | "hall" | "stage" | "south";
+  id: "hall" | "kitchen" | "study" | "private" | "archive";
   name: string;
   bounds: DemoRect;
   label: DemoPoint;
@@ -106,8 +106,8 @@ export interface DemoCharacter extends DemoPoint {
   };
 }
 
-export const DEMO_WORLD_WIDTH = 1680;
-export const DEMO_WORLD_HEIGHT = 960;
+export const DEMO_WORLD_WIDTH = 2400;
+export const DEMO_WORLD_HEIGHT = 1600;
 
 export const demoArticles: DemoArticle[] = [
   {
@@ -182,113 +182,167 @@ export const demoArticles: DemoArticle[] = [
 ];
 
 export const demoHotspots: DemoHotspot[] = [
-  { id: "desk-letter", x: 428, y: 254, label: "潮湿的信件", articleId: "arrival" },
-  { id: "stage-script", x: 1038, y: 446, label: "场务记录", articleId: "stage-note" },
-  { id: "portrait-wall", x: 1362, y: 240, label: "褪色的肖像", articleId: "portrait" },
+  { id: "desk-letter", x: 350, y: 330, label: "潮湿的信件", articleId: "arrival" },
+  { id: "stage-script", x: 350, y: 1240, label: "场务记录", articleId: "stage-note" },
+  { id: "portrait-wall", x: 2050, y: 1190, label: "褪色的肖像", articleId: "portrait" },
 ];
 
 export const demoRooms: DemoRoom[] = [
   {
-    id: "west",
-    name: "西侧阅览室",
-    bounds: { x: 74, y: 72, width: 536, height: 404 },
-    label: { x: 232, y: 154 },
-    priority: 2,
-    camera: {
-      padding: 82,
-      zoomBias: 0.96,
-      focus: { x: 350, y: 270 },
-      focusWeight: 0.12,
-      lookAheadX: 82,
-      lookAheadY: 46,
-    },
-  },
-  {
     id: "hall",
-    name: "中央观众厅",
-    bounds: { x: 664, y: 72, width: 504, height: 802 },
-    label: { x: 836, y: 284 },
+    name: "圆桌大厅",
+    bounds: { x: 720, y: 320, width: 960, height: 980 },
+    label: { x: 1120, y: 390 },
     priority: 1,
     camera: {
-      padding: 90,
+      padding: 96,
       zoomBias: 0.98,
-      focus: { x: 916, y: 430 },
-      focusWeight: 0.08,
-      lookAheadX: 96,
-      lookAheadY: 54,
+      focus: { x: 1200, y: 800 },
+      focusWeight: 0.06,
+      lookAheadX: 116,
+      lookAheadY: 70,
     },
   },
   {
-    id: "stage",
-    name: "舞台与幕间",
-    bounds: { x: 1222, y: 72, width: 384, height: 404 },
-    label: { x: 1320, y: 154 },
-    priority: 3,
+    id: "kitchen",
+    name: "厨房",
+    bounds: { x: 60, y: 60, width: 560, height: 560 },
+    label: { x: 150, y: 132 },
+    priority: 2,
     camera: {
-      padding: 72,
-      zoomBias: 1.03,
-      focus: { x: 1436, y: 280 },
-      focusWeight: 0.18,
-      lookAheadX: 72,
-      lookAheadY: 40,
+      padding: 80,
+      zoomBias: 1,
+      focus: { x: 340, y: 340 },
+      focusWeight: 0.12,
+      lookAheadX: 84,
+      lookAheadY: 58,
     },
   },
   {
-    id: "south",
-    name: "南侧回廊",
-    bounds: { x: 74, y: 520, width: 1532, height: 354 },
-    label: { x: 748, y: 814 },
-    priority: 4,
+    id: "study",
+    name: "书房",
+    bounds: { x: 60, y: 980, width: 560, height: 560 },
+    label: { x: 150, y: 1052 },
+    priority: 2,
     camera: {
-      padding: 86,
-      zoomBias: 0.95,
-      focusWeight: 0,
-      lookAheadX: 112,
-      lookAheadY: 40,
+      padding: 80,
+      zoomBias: 1,
+      focus: { x: 340, y: 1260 },
+      focusWeight: 0.12,
+      lookAheadX: 84,
+      lookAheadY: 58,
+    },
+  },
+  {
+    id: "private",
+    name: "私聊室",
+    bounds: { x: 1780, y: 60, width: 560, height: 560 },
+    label: { x: 1870, y: 132 },
+    priority: 2,
+    camera: {
+      padding: 80,
+      zoomBias: 1,
+      focus: { x: 2060, y: 340 },
+      focusWeight: 0.12,
+      lookAheadX: 84,
+      lookAheadY: 58,
+    },
+  },
+  {
+    id: "archive",
+    name: "档案室",
+    bounds: { x: 1780, y: 980, width: 560, height: 560 },
+    label: { x: 1870, y: 1052 },
+    priority: 2,
+    camera: {
+      padding: 80,
+      zoomBias: 1,
+      focus: { x: 2060, y: 1260 },
+      focusWeight: 0.12,
+      lookAheadX: 84,
+      lookAheadY: 58,
     },
   },
 ];
 
 export const demoWalls: DemoWall[] = [
-  { id: "north", x: 0, y: 0, width: DEMO_WORLD_WIDTH, height: 72, axis: "horizontal", elevation: 52 },
-  { id: "south", x: 0, y: DEMO_WORLD_HEIGHT - 86, width: DEMO_WORLD_WIDTH, height: 86, axis: "horizontal", elevation: 44 },
-  { id: "west", x: 0, y: 0, width: 74, height: DEMO_WORLD_HEIGHT, axis: "vertical", elevation: 44 },
-  { id: "east", x: DEMO_WORLD_WIDTH - 74, y: 0, width: 74, height: DEMO_WORLD_HEIGHT, axis: "vertical", elevation: 44 },
-  { id: "west-upper", x: 610, y: 72, width: 54, height: 280, axis: "vertical", elevation: 46, fadeDistance: 105 },
-  { id: "west-lower", x: 610, y: 540, width: 54, height: 334, axis: "vertical", elevation: 46, fadeDistance: 105 },
-  { id: "stage-upper", x: 1168, y: 72, width: 54, height: 256, axis: "vertical", elevation: 46, fadeDistance: 105 },
-  { id: "stage-lower", x: 1168, y: 530, width: 54, height: 344, axis: "vertical", elevation: 46, fadeDistance: 105 },
-  { id: "west-divider-a", x: 74, y: 476, width: 284, height: 44, axis: "horizontal", elevation: 42, fadeDistance: 98 },
-  { id: "west-divider-b", x: 500, y: 476, width: 110, height: 44, axis: "horizontal", elevation: 42, fadeDistance: 98 },
-  { id: "stage-divider-a", x: 1222, y: 476, width: 104, height: 44, axis: "horizontal", elevation: 42, fadeDistance: 98 },
-  { id: "stage-divider-b", x: 1460, y: 476, width: 146, height: 44, axis: "horizontal", elevation: 42, fadeDistance: 98 },
+  { id: "world-north", x: 0, y: 0, width: DEMO_WORLD_WIDTH, height: 40, axis: "horizontal", elevation: 48 },
+  { id: "world-south", x: 0, y: 1560, width: DEMO_WORLD_WIDTH, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "world-west", x: 0, y: 0, width: 40, height: DEMO_WORLD_HEIGHT, axis: "vertical", elevation: 42 },
+  { id: "world-east", x: 2360, y: 0, width: 40, height: DEMO_WORLD_HEIGHT, axis: "vertical", elevation: 42 },
+  { id: "hall-north", x: 680, y: 280, width: 1040, height: 40, axis: "horizontal", elevation: 50 },
+  { id: "hall-south", x: 680, y: 1300, width: 1040, height: 40, axis: "horizontal", elevation: 44 },
+  { id: "hall-west-a", x: 680, y: 320, width: 40, height: 110, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "hall-west-b", x: 680, y: 550, width: 40, height: 550, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "hall-west-c", x: 680, y: 1220, width: 40, height: 80, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "hall-east-a", x: 1680, y: 320, width: 40, height: 110, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "hall-east-b", x: 1680, y: 550, width: 40, height: 550, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "hall-east-c", x: 1680, y: 1220, width: 40, height: 80, axis: "vertical", elevation: 46, fadeDistance: 105 },
+  { id: "kitchen-north", x: 40, y: 40, width: 600, height: 40, axis: "horizontal", elevation: 44 },
+  { id: "kitchen-south", x: 40, y: 620, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "kitchen-west", x: 40, y: 80, width: 40, height: 540, axis: "vertical", elevation: 42 },
+  { id: "kitchen-east-a", x: 600, y: 80, width: 40, height: 350, axis: "vertical", elevation: 42 },
+  { id: "kitchen-east-b", x: 600, y: 550, width: 40, height: 70, axis: "vertical", elevation: 42 },
+  { id: "kitchen-corridor-north", x: 640, y: 390, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "kitchen-corridor-south", x: 640, y: 550, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "study-north", x: 40, y: 960, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "study-south", x: 40, y: 1540, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "study-west", x: 40, y: 1000, width: 40, height: 540, axis: "vertical", elevation: 42 },
+  { id: "study-east-a", x: 600, y: 1000, width: 40, height: 100, axis: "vertical", elevation: 42 },
+  { id: "study-east-b", x: 600, y: 1220, width: 40, height: 320, axis: "vertical", elevation: 42 },
+  { id: "study-corridor-north", x: 640, y: 1060, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "study-corridor-south", x: 640, y: 1220, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "private-north", x: 1760, y: 40, width: 600, height: 40, axis: "horizontal", elevation: 44 },
+  { id: "private-south", x: 1760, y: 620, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "private-east", x: 2320, y: 80, width: 40, height: 540, axis: "vertical", elevation: 42 },
+  { id: "private-west-a", x: 1760, y: 80, width: 40, height: 350, axis: "vertical", elevation: 42 },
+  { id: "private-west-b", x: 1760, y: 550, width: 40, height: 70, axis: "vertical", elevation: 42 },
+  { id: "private-corridor-north", x: 1680, y: 390, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "private-corridor-south", x: 1680, y: 550, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "archive-north", x: 1760, y: 960, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "archive-south", x: 1760, y: 1540, width: 600, height: 40, axis: "horizontal", elevation: 42 },
+  { id: "archive-east", x: 2320, y: 1000, width: 40, height: 540, axis: "vertical", elevation: 42 },
+  { id: "archive-west-a", x: 1760, y: 1000, width: 40, height: 100, axis: "vertical", elevation: 42 },
+  { id: "archive-west-b", x: 1760, y: 1220, width: 40, height: 320, axis: "vertical", elevation: 42 },
+  { id: "archive-corridor-north", x: 1680, y: 1060, width: 80, height: 40, axis: "horizontal", elevation: 38 },
+  { id: "archive-corridor-south", x: 1680, y: 1220, width: 80, height: 40, axis: "horizontal", elevation: 38 },
 ];
 
 export const demoFurniture: DemoFurniture[] = [
-  { id: "reading-table", kind: "table", x: 350, y: 222, width: 162, height: 84, elevation: 34, sortY: 306, variant: "reading" },
-  { id: "south-table", kind: "table", x: 904, y: 616, width: 170, height: 92, elevation: 36, sortY: 708, variant: "south", collision: { x: 904, y: 616, width: 170, height: 92 } },
-  { id: "piano", kind: "piano", x: 126, y: 650, width: 210, height: 88, elevation: 48, sortY: 738, rotation: -5 },
-  { id: "clock", kind: "clock", x: 1432, y: 604, width: 64, height: 154, elevation: 72, sortY: 758 },
-  { id: "statue", kind: "statue", x: 700, y: 114, width: 70, height: 148, elevation: 72, sortY: 262 },
-  { id: "seats", kind: "seats", x: 760, y: 330, width: 306, height: 166, elevation: 32, sortY: 496, rotation: -1 },
-  { id: "gallery-console", kind: "console", x: 870, y: 148, width: 218, height: 68, elevation: 30, sortY: 216, collision: { x: 870, y: 148, width: 218, height: 68 } },
-  { id: "curtain-left", kind: "curtain", x: 1222, y: 72, width: 154, height: 418, elevation: 70, sortY: 490, variant: "left", fadeDistance: 120 },
-  { id: "curtain-right", kind: "curtain", x: 1452, y: 72, width: 154, height: 418, elevation: 70, sortY: 490, variant: "right", fadeDistance: 120 },
+  { id: "round-table", kind: "table", x: 1080, y: 700, width: 240, height: 170, elevation: 42, sortY: 870, variant: "round", collision: { x: 1080, y: 700, width: 240, height: 170 } },
+  { id: "chair-n", kind: "seats", x: 1160, y: 570, width: 80, height: 54, elevation: 28, sortY: 624, variant: "chair", rotation: 1 },
+  { id: "chair-ne", kind: "seats", x: 1370, y: 660, width: 80, height: 54, elevation: 28, sortY: 714, variant: "chair", rotation: -5 },
+  { id: "chair-se", kind: "seats", x: 1370, y: 930, width: 80, height: 54, elevation: 28, sortY: 984, variant: "chair", rotation: 4 },
+  { id: "chair-s", kind: "seats", x: 1160, y: 1030, width: 80, height: 54, elevation: 28, sortY: 1084, variant: "chair", rotation: -2 },
+  { id: "chair-sw", kind: "seats", x: 950, y: 930, width: 80, height: 54, elevation: 28, sortY: 984, variant: "chair", rotation: -4 },
+  { id: "chair-nw", kind: "seats", x: 950, y: 660, width: 80, height: 54, elevation: 28, sortY: 714, variant: "chair", rotation: 5 },
+  { id: "hall-console", kind: "console", x: 1450, y: 1150, width: 170, height: 64, elevation: 30, sortY: 1214, rotation: 3 },
+  { id: "kitchen-counter", kind: "console", x: 120, y: 150, width: 340, height: 82, elevation: 34, sortY: 232, collision: { x: 120, y: 150, width: 340, height: 82 } },
+  { id: "kitchen-table", kind: "table", x: 250, y: 390, width: 160, height: 104, elevation: 32, sortY: 494, rotation: -4, collision: { x: 250, y: 390, width: 160, height: 104 } },
+  { id: "kitchen-clock", kind: "clock", x: 510, y: 330, width: 60, height: 146, elevation: 64, sortY: 476 },
+  { id: "study-shelf", kind: "console", x: 110, y: 1060, width: 92, height: 330, elevation: 46, sortY: 1390, collision: { x: 110, y: 1060, width: 92, height: 330 } },
+  { id: "study-desk", kind: "table", x: 300, y: 1230, width: 190, height: 112, elevation: 34, sortY: 1342, rotation: 4, collision: { x: 300, y: 1230, width: 190, height: 112 } },
+  { id: "study-piano", kind: "piano", x: 270, y: 1430, width: 220, height: 82, elevation: 44, sortY: 1512, rotation: -3 },
+  { id: "private-seats", kind: "seats", x: 1900, y: 250, width: 300, height: 150, elevation: 34, sortY: 400, variant: "private", rotation: -2 },
+  { id: "private-console", kind: "console", x: 2000, y: 470, width: 220, height: 64, elevation: 28, sortY: 534, rotation: 2 },
+  { id: "archive-cabinets", kind: "console", x: 1870, y: 1060, width: 350, height: 92, elevation: 44, sortY: 1152, collision: { x: 1870, y: 1060, width: 350, height: 92 } },
+  { id: "archive-table", kind: "table", x: 1970, y: 1290, width: 190, height: 112, elevation: 34, sortY: 1402, rotation: -3, collision: { x: 1970, y: 1290, width: 190, height: 112 } },
+  { id: "archive-clock", kind: "clock", x: 2240, y: 1300, width: 60, height: 146, elevation: 64, sortY: 1446 },
 ];
 
 export const demoDoorFrames: DemoDoorFrame[] = [
-  { id: "west-passage", x: 610, y: 352, width: 54, height: 188, orientation: "vertical" },
-  { id: "stage-passage", x: 1168, y: 328, width: 54, height: 202, orientation: "vertical" },
-  { id: "west-south-passage", x: 358, y: 476, width: 142, height: 44, orientation: "horizontal" },
-  { id: "stage-south-passage", x: 1326, y: 476, width: 134, height: 44, orientation: "horizontal" },
+  { id: "kitchen-door", x: 680, y: 430, width: 40, height: 120, orientation: "vertical" },
+  { id: "study-door", x: 680, y: 1100, width: 40, height: 120, orientation: "vertical" },
+  { id: "private-door", x: 1680, y: 430, width: 40, height: 120, orientation: "vertical" },
+  { id: "archive-door", x: 1680, y: 1100, width: 40, height: 120, orientation: "vertical" },
 ];
 
 export const demoCharacters: DemoCharacter[] = [
   {
     id: "player",
     name: "卓司元",
-    x: 780,
-    y: 704,
+    x: 1200,
+    y: 1120,
     initialFacing: "right",
     outfit: "short-coat",
     accessory: "satchel",
@@ -299,8 +353,8 @@ export const demoCharacters: DemoCharacter[] = [
   {
     id: "linmo",
     name: "林默",
-    x: 1320,
-    y: 610,
+    x: 1380,
+    y: 820,
     initialFacing: "left",
     outfit: "long-coat",
     accessory: "keys",
@@ -311,8 +365,8 @@ export const demoCharacters: DemoCharacter[] = [
   {
     id: "suyin",
     name: "苏吟",
-    x: 320,
-    y: 610,
+    x: 1020,
+    y: 820,
     initialFacing: "right",
     outfit: "soft-jacket",
     accessory: "scarf",

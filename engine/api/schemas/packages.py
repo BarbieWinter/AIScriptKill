@@ -69,3 +69,22 @@ class PackageListResponse(ApiModel):
     """返回目录 API 中可见的全部剧本包摘要。"""
 
     packages: list[PackageSummary] = Field(description="Visible script packages.")
+
+
+class PlayableCharacterSummary(ApiModel):
+    """面向选角页公开的可玩角色资料，不包含角色知识或私密规则。"""
+
+    id: str = Field(description="Character ID.")
+    name: str = Field(description="Character display name.")
+    portrait_url: str = Field(description="Portrait storage URL.")
+    tagline: str = Field(description="Short player-facing identity line.")
+    personality: str = Field(description="Public personality summary.")
+    background: str = Field(description="Public character background.")
+
+
+class PackagePlayableCharactersResponse(ApiModel):
+    """返回一个已发布剧本包声明的全部可玩角色。"""
+
+    characters: list[PlayableCharacterSummary] = Field(
+        description="Playable characters in package display order.",
+    )
