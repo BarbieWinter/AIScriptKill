@@ -1,20 +1,38 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { GameplayPanelHost, SessionChatDock, SessionPanelDock } from "@/components/demo/GameplayPanelHost";
+import { GameplayPanelHost, SessionPanelDock } from "@/components/demo/GameplayPanelHost";
 import { MansionDemo } from "@/components/demo/MansionDemo";
-import { CharacterChapters } from "@/components/game/CharacterChapters";
-import { ClueBoard } from "@/components/game/ClueBoard";
-import { EvidenceBackpack } from "@/components/game/EvidenceBackpack";
-import { FinalSubmission } from "@/components/game/FinalSubmission";
 import {
   useGameSessionRuntime,
   useGameSessionStore,
 } from "@/components/game/GameSessionBoundary";
 import type { SessionSource } from "@/lib/game/types";
 import { mapPresentationHotspots } from "@/lib/demo-world-layout";
+
+const SessionChatDock = dynamic(
+  () => import("@/components/demo/GameplayPanelHost").then((module) => module.SessionChatDock),
+  { ssr: false },
+);
+const CharacterChapters = dynamic(
+  () => import("@/components/game/CharacterChapters").then((module) => module.CharacterChapters),
+  { ssr: false },
+);
+const ClueBoard = dynamic(
+  () => import("@/components/game/ClueBoard").then((module) => module.ClueBoard),
+  { ssr: false },
+);
+const EvidenceBackpack = dynamic(
+  () => import("@/components/game/EvidenceBackpack").then((module) => module.EvidenceBackpack),
+  { ssr: false },
+);
+const FinalSubmission = dynamic(
+  () => import("@/components/game/FinalSubmission").then((module) => module.FinalSubmission),
+  { ssr: false },
+);
 
 export function DemoGameShell({ source }: { source: SessionSource }) {
   const runtime = useGameSessionRuntime();
@@ -103,15 +121,15 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
             onOpenChat={() => setChatOpen(true)}
             onOpenJudgement={presentation?.judgement ? () => setJudgementOpen(true) : undefined}
           />
-          <SessionChatDock open={chatOpen} onClose={() => setChatOpen(false)} />
-          <ClueBoard
-            open={panel === "clue"}
+          {chatOpen && <SessionChatDock open onClose={() => setChatOpen(false)} />}
+          {panel === "clue" && <ClueBoard
+            open
             onClose={() => setPanel(null)}
             clues={clues}
             totalCluesInRound={totalClues}
-          />
-          <EvidenceBackpack
-            open={panel === "evidence"}
+          />}
+          {panel === "evidence" && <EvidenceBackpack
+            open
             onClose={() => setPanel(null)}
             sessionId={sessionId}
             playerCharacterId={playerCharacterId}
@@ -119,22 +137,22 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
             characters={characters}
             onViewEvidence={(evidenceId) => runtime.viewEvidence(evidenceId)}
             onShowEvidence={(characterId, evidenceId) => runtime.showEvidence(characterId, evidenceId)}
-          />
-          <CharacterChapters
-            open={panel === "chapter"}
+          />}
+          {panel === "chapter" && <CharacterChapters
+            open
             onClose={() => setPanel(null)}
             sessionId={sessionId}
             playerCharacterName={playerName}
             onListChapters={() => runtime.listCharacterChapters()}
             onReadChapter={(chapterId) => runtime.readCharacterChapter(chapterId)}
-          />
-          <FinalSubmission
-            open={judgementOpen}
+          />}
+          {judgementOpen && <FinalSubmission
+            open
             onClose={() => setJudgementOpen(false)}
             judgement={presentation?.judgement}
             onSubmit={(optionId) => runtime.submitJudgment(optionId)}
             onComplete={() => setJudgementOpen(false)}
-          />
+          />}
         </GameplayPanelHost>
       }
     />

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import {
+  Armchair,
   BookOpen,
   ChevronRight,
   CircleHelp,
@@ -50,9 +51,12 @@ import {
 const PLAYER_RADIUS = 17;
 const MOVE_SPEED = 270;
 const INTERACT_DISTANCE = 118;
+const SEAT_INTERACT_DISTANCE = 112;
 const SCENE_Z_BASE = 1000;
 const UI_SNAPSHOT_INTERVAL = 250;
 const ROOM_HYSTERESIS = 30;
+const ROUND_TABLE_FOCUS = { x: 1200, y: 800 };
+const ROUND_TABLE_VIEW = { width: 620, height: 560, maxZoom: 1.55 };
 const MOVEMENT_CODES = new Set([
   "KeyW",
   "KeyA",
@@ -67,6 +71,10 @@ const MOVEMENT_CODES = new Set([
 type WorldHotspot =
   | (DemoHotspot & { kind: "article" })
   | (DemoSessionHotspot & { kind: "session" });
+
+type DemoSeat = DemoFurniture & {
+  seat: NonNullable<DemoFurniture["seat"]>;
+};
 
 export interface MansionDemoProps {
   sessionHotspots?: DemoSessionHotspot[];
@@ -100,6 +108,9 @@ const collisions: DemoRect[] = [
   ...demoWalls,
   ...demoFurniture.flatMap((entity) => (entity.collision ? [entity.collision] : [])),
 ];
+const demoSeats = demoFurniture.filter(
+  (entity): entity is DemoSeat => Boolean(entity.seat),
+);
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -149,7 +160,7 @@ function isInteractiveTarget(target: EventTarget | null) {
   return Boolean(target.closest("button, a, input, textarea, select, [contenteditable='true']"));
 }
 
-function characterStyle(character: DemoCharacter, position = character): CSSProperties {
+function characterStyle(character: DemoCharacter, position: DemoPoint = character): CSSProperties {
   return {
     "--character-width": `${character.silhouette.width}px`,
     "--character-height": `${character.silhouette.height}px`,
@@ -174,21 +185,46 @@ interface CharacterSpriteProps {
   character: DemoCharacter;
   player?: boolean;
   elementRef?: React.RefObject<HTMLDivElement | null>;
+  position?: DemoPoint;
+  seatedFacing?: DemoSeat["seat"]["facing"];
+}
+
+function intersects(a: DemoRect, b: DemoRect) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+function sceneRenderBounds(roomId: DemoRoom["id"]): DemoRect {
+  const room = demoRooms.find((candidate) => candidate.id === roomId) ?? demoRooms[0];
+  const margin = room.id === "hall" ? 180 : 150;
+  return {
+    x: room.bounds.x - margin,
+    y: room.bounds.y - margin,
+    width: room.bounds.width + margin * 2,
+    height: room.bounds.height + margin * 2,
+  };
 }
 
 const CharacterSprite = memo(function CharacterSprite({
   character,
   player = false,
   elementRef,
+  position,
+  seatedFacing,
 }: CharacterSpriteProps) {
   return (
     <div
       ref={elementRef}
-      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} is-facing-${character.initialFacing}`}
+      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} is-facing-${character.initialFacing} ${seatedFacing ? "is-seated" : ""}`}
       data-character-id={character.id}
       data-outfit={character.outfit}
       data-accessory={character.accessory}
-      style={characterStyle(character)}
+      data-seat-facing={seatedFacing}
+      style={characterStyle(character, position)}
     >
       <span className="demo-character-selection" />
       <span className="demo-character-shadow" />
@@ -227,12 +263,21 @@ const StaticScene = memo(function StaticScene({
   hotspots,
   interactionPending,
   onInteract,
+  activeRoomId,
 }: {
   activeHotspotId: string | null;
   hotspots: WorldHotspot[];
   interactionPending: boolean;
   onInteract: (hotspot: WorldHotspot) => void;
+  activeRoomId: DemoRoom["id"];
 }) {
+  const renderBounds = sceneRenderBounds(activeRoomId);
+  const visibleWalls = demoWalls.filter((wall) => intersects(wall, renderBounds));
+  const visibleFurniture = demoFurniture.filter((entity) => intersects(entity, renderBounds));
+  const visibleDoors = demoDoorFrames.filter((door) => intersects({ x: door.x, y: door.y, width: door.width, height: door.height }, renderBounds));
+  const visibleHotspots = hotspots.filter((hotspot) => contains(renderBounds, hotspot));
+  const visibleCharacters = demoCharacters.slice(1).filter((character) => contains(renderBounds, character));
+
   return (
     <>
       <div className="demo-floor-layer">
@@ -241,27 +286,10 @@ const StaticScene = memo(function StaticScene({
         <div className="demo-window-light demo-window-light-one" />
         <div className="demo-window-light demo-window-light-two" />
         <div className="demo-carpet" />
-        {demoRooms.map((room) => (
+        {demoRooms.filter((room) => intersects(room.bounds, renderBounds)).map((room) => (
           <span key={room.id} className="demo-room-label" style={{ left: room.label.x, top: room.label.y }}>
             {room.name}
           </span>
-        ))}
-      </div>
-
-      <div className="demo-shadow-layer" aria-hidden="true">
-        {demoWalls.map((wall) => (
-          <span
-            key={wall.id}
-            className="demo-ground-shadow demo-wall-shadow"
-            style={{ left: wall.x + 7, top: wall.y + wall.height - 2, width: wall.width, height: 22 }}
-          />
-        ))}
-        {demoFurniture.map((entity) => (
-          <span
-            key={entity.id}
-            className="demo-ground-shadow demo-furniture-shadow"
-            style={{ left: entity.x + 9, top: entity.y + entity.height - 4, width: entity.width, height: 24 }}
-          />
         ))}
       </div>
 
@@ -273,7 +301,7 @@ const StaticScene = memo(function StaticScene({
           <b /><b />
         </div>
 
-        {demoWalls.flatMap(wallSlices).map((wall) => (
+        {visibleWalls.flatMap(wallSlices).map((wall) => (
           <div
             key={wall.sliceId}
             className="demo-wall-volume"
@@ -291,13 +319,11 @@ const StaticScene = memo(function StaticScene({
           >
             <span className="demo-elevated-faces">
               <span className="demo-wall-front" />
-              <span className="demo-wall-cap" />
-              <span className="demo-wall-side" />
             </span>
           </div>
         ))}
 
-        {demoDoorFrames.map((door) => {
+        {visibleDoors.map((door) => {
           const horizontal = door.orientation === "horizontal";
           return (
             <div
@@ -322,11 +348,11 @@ const StaticScene = memo(function StaticScene({
           );
         })}
 
-        {demoFurniture.map((entity) => (
+        {visibleFurniture.map((entity) => (
           <Furniture key={entity.id} entity={entity} />
         ))}
 
-        {hotspots.map((hotspot) => (
+        {visibleHotspots.map((hotspot) => (
           <button
             type="button"
             key={hotspot.id}
@@ -342,7 +368,7 @@ const StaticScene = memo(function StaticScene({
           </button>
         ))}
 
-        {demoCharacters.slice(1).map((character) => (
+        {visibleCharacters.map((character) => (
           <CharacterSprite key={character.id} character={character} />
         ))}
       </div>
@@ -351,6 +377,36 @@ const StaticScene = memo(function StaticScene({
 });
 
 function Furniture({ entity }: { entity: DemoFurniture }) {
+  const baseStyle = {
+    left: entity.x,
+    top: entity.y,
+    width: entity.width,
+    height: entity.height,
+    rotate: entity.rotation ? `${entity.rotation}deg` : undefined,
+    "--furniture-elevation": `${entity.elevation}px`,
+  } as CSSProperties;
+
+  if (entity.seat) {
+    return (
+      <>
+        <div
+          className="demo-chair-layer demo-chair-back"
+          data-seat="available"
+          style={{ ...baseStyle, zIndex: sceneZ(entity.sortY - 3) }}
+        >
+          <span className="demo-chair-backrest" />
+          <span className="demo-chair-cushion" />
+        </div>
+        <div
+          className="demo-chair-layer demo-chair-front"
+          style={{ ...baseStyle, zIndex: sceneZ(entity.sortY + 3) }}
+        >
+          <span className="demo-chair-front-edge" />
+        </div>
+      </>
+    );
+  }
+
   return (
     <div
       className="demo-furniture"
@@ -359,12 +415,7 @@ function Furniture({ entity }: { entity: DemoFurniture }) {
       data-fade-id={entity.fadeDistance ? entity.id : undefined}
       data-fade-distance={entity.fadeDistance}
       style={{
-        left: entity.x,
-        top: entity.y,
-        width: entity.width,
-        height: entity.height,
-        rotate: entity.rotation ? `${entity.rotation}deg` : undefined,
-        "--furniture-elevation": `${entity.elevation}px`,
+        ...baseStyle,
         zIndex: sceneZ(entity.sortY),
       } as CSSProperties}
     >
@@ -397,6 +448,9 @@ export function MansionDemo({
   const viewportSizeRef = useRef({ width: 1280, height: 720 });
   const blockedRef = useRef(false);
   const activeHotspotRef = useRef<string | null>(null);
+  const activeSeatRef = useRef<string | null>(null);
+  const seatedChairRef = useRef<string | null>(null);
+  const wakeLoopRef = useRef<() => void>(() => undefined);
   const reducedMotionRef = useRef(false);
   const lastSnapshotRef = useRef(0);
   const cameraNeedsUpdateRef = useRef(true);
@@ -416,6 +470,8 @@ export function MansionDemo({
   const shouldReduceMotion = useReducedMotion();
   const [playerSnapshot, setPlayerSnapshot] = useState(playerRef.current);
   const [activeHotspotId, setActiveHotspotId] = useState<string | null>(null);
+  const [activeSeatId, setActiveSeatId] = useState<string | null>(null);
+  const [seatedChairId, setSeatedChairId] = useState<string | null>(null);
   const [activeRoomId, setActiveRoomId] = useState<DemoRoom["id"]>("hall");
   const [selectedArticle, setSelectedArticle] = useState<DemoArticle | null>(null);
   const [showJournal, setShowJournal] = useState(false);
@@ -438,6 +494,7 @@ export function MansionDemo({
 
   useEffect(() => {
     worldHotspotsRef.current = worldHotspots;
+    wakeLoopRef.current();
   }, [worldHotspots]);
 
   const articleById = useMemo(
@@ -464,12 +521,50 @@ export function MansionDemo({
     void onInvestigate?.(hotspot.sceneId, hotspot.id);
   }, [interactionPending, onInvestigate, openArticle]);
 
+  const movePlayerTo = useCallback((position: DemoPoint) => {
+    playerRef.current = { ...position };
+    setPlayerSnapshot({ ...position });
+    cameraNeedsUpdateRef.current = true;
+    wakeLoopRef.current();
+  }, []);
+
+  const standUp = useCallback(() => {
+    const chairId = seatedChairRef.current;
+    if (!chairId) return;
+    const chair = demoSeats.find((seat) => seat.id === chairId);
+    seatedChairRef.current = null;
+    setSeatedChairId(null);
+    if (chair) movePlayerTo(chair.seat.stand);
+  }, [movePlayerTo]);
+
+  const sitDown = useCallback((chairId: string) => {
+    const chair = demoSeats.find((seat) => seat.id === chairId);
+    if (!chair) return;
+    clearInput();
+    activeSeatRef.current = null;
+    activeHotspotRef.current = null;
+    setActiveSeatId(null);
+    setActiveHotspotId(null);
+    seatedChairRef.current = chair.id;
+    setSeatedChairId(chair.id);
+    movePlayerTo(chair.seat.position);
+  }, [clearInput, movePlayerTo]);
+
   const interact = useCallback(() => {
+    if (seatedChairRef.current) {
+      standUp();
+      return;
+    }
+    const chairId = activeSeatRef.current;
+    if (chairId) {
+      sitDown(chairId);
+      return;
+    }
     const hotspotId = activeHotspotRef.current;
     if (!hotspotId) return;
     const hotspot = worldHotspotsRef.current.find((item) => item.id === hotspotId);
     if (hotspot) interactWithHotspot(hotspot);
-  }, [interactWithHotspot]);
+  }, [interactWithHotspot, sitDown, standUp]);
 
   useEffect(() => {
     reducedMotionRef.current = Boolean(shouldReduceMotion);
@@ -479,6 +574,7 @@ export function MansionDemo({
     const blocked = interactionBlocked || selectedArticle !== null || showJournal || showMap;
     blockedRef.current = blocked;
     if (blocked) clearInput();
+    wakeLoopRef.current();
   }, [clearInput, interactionBlocked, selectedArticle, showJournal, showMap]);
 
   useEffect(() => {
@@ -490,6 +586,7 @@ export function MansionDemo({
         height: entry.contentRect.height,
       };
       cameraNeedsUpdateRef.current = true;
+      wakeLoopRef.current();
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -501,8 +598,10 @@ export function MansionDemo({
       if (MOVEMENT_CODES.has(event.code)) {
         if (blockedRef.current) return;
         event.preventDefault();
+        if (seatedChairRef.current) standUp();
         keysRef.current.add(event.code);
         setShowHelp(false);
+        wakeLoopRef.current();
         return;
       }
       if (!blockedRef.current && (event.code === "KeyE" || event.code === "Enter")) {
@@ -515,7 +614,10 @@ export function MansionDemo({
         setShowMap(false);
       }
     };
-    const onKeyUp = (event: KeyboardEvent) => keysRef.current.delete(event.code);
+    const onKeyUp = (event: KeyboardEvent) => {
+      keysRef.current.delete(event.code);
+      wakeLoopRef.current();
+    };
     const onBlur = () => clearInput();
     const onVisibility = () => {
       if (document.hidden) clearInput();
@@ -531,7 +633,7 @@ export function MansionDemo({
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [clearInput, interact]);
+  }, [clearInput, interact, standUp]);
 
   useEffect(() => {
     let frame = 0;
@@ -551,52 +653,63 @@ export function MansionDemo({
         setActiveRoomId(room.id);
       }
 
+      const seated = Boolean(seatedChairRef.current);
       const portrait = viewport.height > viewport.width * 1.15;
-      const compact = viewport.width < 900;
-      const maxVisibleWidth = portrait ? 520 : compact ? 760 : 1040;
-      const maxVisibleHeight = portrait ? 700 : compact ? 500 : 650;
-      const detailZoom = Math.max(viewport.width / maxVisibleWidth, viewport.height / maxVisibleHeight);
       const coverZoom = Math.max(viewport.width / DEMO_WORLD_WIDTH, viewport.height / DEMO_WORLD_HEIGHT);
-      const roomFitZoom = Math.min(
-        viewport.width / (room.bounds.width + room.camera.padding * 2),
-        viewport.height / (room.bounds.height + room.camera.padding * 2),
-      );
-      camera.targetZoom = Math.max(
-        coverZoom,
-        detailZoom,
-        Math.min(roomFitZoom * room.camera.zoomBias, detailZoom * 1.28),
-      );
-
       const reduceMotion = reducedMotionRef.current;
       const lookAlpha = reduceMotion ? 1 : 1 - Math.exp(-4.8 * delta);
-      const desiredLookX = reduceMotion ? 0 : dx * room.camera.lookAheadX;
-      const desiredLookY = reduceMotion ? 0 : dy * room.camera.lookAheadY;
+      const desiredLookX = seated || reduceMotion ? 0 : dx * room.camera.lookAheadX;
+      const desiredLookY = seated || reduceMotion ? 0 : dy * room.camera.lookAheadY;
       camera.lookX += (desiredLookX - camera.lookX) * lookAlpha;
       camera.lookY += (desiredLookY - camera.lookY) * lookAlpha;
 
-      let subjectX = player.x + camera.lookX;
-      let subjectY = player.y + camera.lookY;
-      if (room.camera.focus) {
-        subjectX += (room.camera.focus.x - player.x) * room.camera.focusWeight;
-        subjectY += (room.camera.focus.y - player.y) * room.camera.focusWeight;
-      }
-
-      const visibleWidth = viewport.width / camera.targetZoom;
-      const visibleHeight = viewport.height / camera.targetZoom;
-      const deadX = visibleWidth * (portrait ? 0.12 : 0.18);
-      const deadY = visibleHeight * (portrait ? 0.13 : 0.16);
-      if (!camera.initialized) {
-        camera.targetX = subjectX;
-        camera.targetY = subjectY;
+      if (seated) {
+        const tableFitZoom = Math.min(
+          viewport.width / ROUND_TABLE_VIEW.width,
+          viewport.height / ROUND_TABLE_VIEW.height,
+        );
+        camera.targetZoom = Math.max(coverZoom, Math.min(tableFitZoom, ROUND_TABLE_VIEW.maxZoom));
+        camera.targetX = ROUND_TABLE_FOCUS.x;
+        camera.targetY = ROUND_TABLE_FOCUS.y;
       } else {
-        if (subjectX < camera.targetX - deadX) camera.targetX = subjectX + deadX;
-        if (subjectX > camera.targetX + deadX) camera.targetX = subjectX - deadX;
-        if (subjectY < camera.targetY - deadY) camera.targetY = subjectY + deadY;
-        if (subjectY > camera.targetY + deadY) camera.targetY = subjectY - deadY;
+        const compact = viewport.width < 900;
+        const maxVisibleWidth = portrait ? 520 : compact ? 760 : 1040;
+        const maxVisibleHeight = portrait ? 700 : compact ? 500 : 650;
+        const detailZoom = Math.max(viewport.width / maxVisibleWidth, viewport.height / maxVisibleHeight);
+        const roomFitZoom = Math.min(
+          viewport.width / (room.bounds.width + room.camera.padding * 2),
+          viewport.height / (room.bounds.height + room.camera.padding * 2),
+        );
+        camera.targetZoom = Math.max(
+          coverZoom,
+          detailZoom,
+          Math.min(roomFitZoom * room.camera.zoomBias, detailZoom * 1.28),
+        );
+
+        let subjectX = player.x + camera.lookX;
+        let subjectY = player.y + camera.lookY;
+        if (room.camera.focus) {
+          subjectX += (room.camera.focus.x - player.x) * room.camera.focusWeight;
+          subjectY += (room.camera.focus.y - player.y) * room.camera.focusWeight;
+        }
+
+        const visibleWidth = viewport.width / camera.targetZoom;
+        const visibleHeight = viewport.height / camera.targetZoom;
+        const deadX = visibleWidth * (portrait ? 0.12 : 0.18);
+        const deadY = visibleHeight * (portrait ? 0.13 : 0.16);
+        if (!camera.initialized) {
+          camera.targetX = subjectX;
+          camera.targetY = subjectY;
+        } else {
+          if (subjectX < camera.targetX - deadX) camera.targetX = subjectX + deadX;
+          if (subjectX > camera.targetX + deadX) camera.targetX = subjectX - deadX;
+          if (subjectY < camera.targetY - deadY) camera.targetY = subjectY + deadY;
+          if (subjectY > camera.targetY + deadY) camera.targetY = subjectY - deadY;
+        }
       }
 
-      const anchorX = viewport.width * (portrait ? 0.58 : 0.5);
-      const anchorY = viewport.height * (portrait ? 0.43 : 0.5);
+      const anchorX = viewport.width * (seated ? 0.5 : portrait ? 0.58 : 0.5);
+      const anchorY = viewport.height * (seated ? 0.5 : portrait ? 0.43 : 0.5);
       const minX = anchorX / camera.targetZoom;
       const maxX = DEMO_WORLD_WIDTH - (viewport.width - anchorX) / camera.targetZoom;
       const minY = anchorY / camera.targetZoom;
@@ -622,6 +735,13 @@ export function MansionDemo({
       if (cameraElementRef.current) {
         cameraElementRef.current.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${camera.zoom})`;
       }
+      return (
+        Math.abs(camera.targetX - camera.x) > 0.2 ||
+        Math.abs(camera.targetY - camera.y) > 0.2 ||
+        Math.abs(camera.targetZoom - camera.zoom) > 0.001 ||
+        Math.abs(camera.lookX) > 0.2 ||
+        Math.abs(camera.lookY) > 0.2
+      );
     };
 
     const updateForegroundFade = (now: number) => {
@@ -645,12 +765,14 @@ export function MansionDemo({
     };
 
     const loop = (now: number) => {
+      frame = 0;
       const delta = Math.min((now - last) / 1000, 0.032);
       last = now;
       const keys = keysRef.current;
-      let dx = blockedRef.current ? 0 : touchRef.current.x;
-      let dy = blockedRef.current ? 0 : touchRef.current.y;
-      if (!blockedRef.current) {
+      const movementBlocked = blockedRef.current || Boolean(seatedChairRef.current);
+      let dx = movementBlocked ? 0 : touchRef.current.x;
+      let dy = movementBlocked ? 0 : touchRef.current.y;
+      if (!movementBlocked) {
         if (keys.has("KeyA") || keys.has("ArrowLeft")) dx -= 1;
         if (keys.has("KeyD") || keys.has("ArrowRight")) dx += 1;
         if (keys.has("KeyW") || keys.has("ArrowUp")) dy -= 1;
@@ -691,39 +813,75 @@ export function MansionDemo({
         playerElement.style.zIndex = String(sceneZ(player.y));
       }
 
-      let nearestId: string | null = null;
-      let nearestDistance = Infinity;
-      for (const hotspot of worldHotspotsRef.current) {
-        const currentDistance = distance(player, hotspot);
-        if (currentDistance < nearestDistance) {
-          nearestId = hotspot.id;
-          nearestDistance = currentDistance;
+      let nearestHotspotId: string | null = null;
+      let nearestHotspotDistance = Infinity;
+      let nearestSeatId: string | null = null;
+      let nearestSeatDistance = Infinity;
+      if (!seatedChairRef.current) {
+        for (const hotspot of worldHotspotsRef.current) {
+          const currentDistance = distance(player, hotspot);
+          if (currentDistance < nearestHotspotDistance) {
+            nearestHotspotId = hotspot.id;
+            nearestHotspotDistance = currentDistance;
+          }
+        }
+        for (const chair of demoSeats) {
+          const currentDistance = distance(player, chair.seat.stand);
+          if (currentDistance < nearestSeatDistance) {
+            nearestSeatId = chair.id;
+            nearestSeatDistance = currentDistance;
+          }
         }
       }
-      if (nearestDistance > INTERACT_DISTANCE) nearestId = null;
-      if (nearestId !== activeHotspotRef.current) {
-        activeHotspotRef.current = nearestId;
-        setActiveHotspotId(nearestId);
+      if (nearestHotspotDistance > INTERACT_DISTANCE) nearestHotspotId = null;
+      if (nearestSeatDistance > SEAT_INTERACT_DISTANCE) nearestSeatId = null;
+      if (nearestSeatId && nearestSeatDistance <= nearestHotspotDistance) {
+        nearestHotspotId = null;
+      } else {
+        nearestSeatId = null;
+      }
+      if (nearestHotspotId !== activeHotspotRef.current) {
+        activeHotspotRef.current = nearestHotspotId;
+        setActiveHotspotId(nearestHotspotId);
+      }
+      if (nearestSeatId !== activeSeatRef.current) {
+        activeSeatRef.current = nearestSeatId;
+        setActiveSeatId(nearestSeatId);
       }
 
+      let cameraAnimating = false;
       if (isMoving || cameraNeedsUpdateRef.current) {
-        updateCamera(delta, isMoving ? dx : 0, isMoving ? dy : 0);
-        cameraNeedsUpdateRef.current = false;
+        cameraAnimating = updateCamera(delta, isMoving ? dx : 0, isMoving ? dy : 0);
+        cameraNeedsUpdateRef.current = cameraAnimating;
       }
       if (isMoving) updateForegroundFade(now);
       if (isMoving && now - lastSnapshotRef.current >= UI_SNAPSHOT_INTERVAL) {
         lastSnapshotRef.current = now;
         setPlayerSnapshot({ ...player });
       }
-      frame = requestAnimationFrame(loop);
+      if (isMoving || cameraAnimating) frame = requestAnimationFrame(loop);
     };
 
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
+    wakeLoopRef.current = () => {
+      if (frame) return;
+      last = performance.now();
+      frame = requestAnimationFrame(loop);
+    };
+    wakeLoopRef.current();
+    return () => {
+      wakeLoopRef.current = () => undefined;
+      cancelAnimationFrame(frame);
+    };
   }, []);
 
   const nearestHotspot = activeHotspotId
     ? worldHotspots.find((hotspot) => hotspot.id === activeHotspotId) ?? null
+    : null;
+  const nearestSeat = activeSeatId
+    ? demoSeats.find((seat) => seat.id === activeSeatId) ?? null
+    : null;
+  const seatedChair = seatedChairId
+    ? demoSeats.find((seat) => seat.id === seatedChairId) ?? null
     : null;
   const activeRoom = demoRooms.find((room) => room.id === activeRoomId)
     ?? demoRooms.find((room) => room.id === "hall")
@@ -731,9 +889,11 @@ export function MansionDemo({
 
   const setTouchDirection = (event: ReactPointerEvent<HTMLButtonElement>, x: number, y: number) => {
     if (blockedRef.current) return;
+    if (seatedChairRef.current) standUp();
     event.currentTarget.setPointerCapture(event.pointerId);
     touchRef.current = { x, y };
     setShowHelp(false);
+    wakeLoopRef.current();
   };
 
   const clearTouchDirection = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -745,7 +905,7 @@ export function MansionDemo({
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="mansion-demo" ref={viewportRef} data-room={activeRoomId}>
+      <main className="mansion-demo" ref={viewportRef} data-room={activeRoomId} data-seated={seatedChairId ? "true" : undefined}>
         <div ref={cameraElementRef} className="demo-world-camera">
           <div className="demo-world" style={{ width: DEMO_WORLD_WIDTH, height: DEMO_WORLD_HEIGHT }}>
             <StaticScene
@@ -753,11 +913,14 @@ export function MansionDemo({
               hotspots={worldHotspots}
               interactionPending={interactionPending}
               onInteract={interactWithHotspot}
+              activeRoomId={activeRoomId}
             />
             <CharacterSprite
               character={playerCharacter}
               player
               elementRef={playerElementRef}
+              position={seatedChair?.seat.position ?? playerRef.current}
+              seatedFacing={seatedChair?.seat.facing}
             />
           </div>
         </div>
@@ -834,7 +997,31 @@ export function MansionDemo({
         </aside>
 
         <AnimatePresence>
-          {nearestHotspot && !selectedArticle && !interactionBlocked && (
+          {seatedChair && !selectedArticle && !interactionBlocked && !showJournal && !showMap && (
+            <motion.button
+              type="button"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="demo-interact-prompt is-seat-action"
+              onClick={standUp}
+            >
+              <kbd>E</kbd><Armchair aria-hidden="true" /><span>起身</span><strong>圆桌座位</strong>
+            </motion.button>
+          )}
+          {!seatedChair && nearestSeat && !selectedArticle && !interactionBlocked && !showJournal && !showMap && (
+            <motion.button
+              type="button"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="demo-interact-prompt is-seat-action"
+              onClick={() => sitDown(nearestSeat.id)}
+            >
+              <kbd>E</kbd><Armchair aria-hidden="true" /><span>坐下</span><strong>圆桌座位</strong>
+            </motion.button>
+          )}
+          {!seatedChair && !nearestSeat && nearestHotspot && !selectedArticle && !interactionBlocked && !showJournal && !showMap && (
             <motion.button
               type="button"
               initial={{ opacity: 0, y: 10 }}
@@ -862,7 +1049,7 @@ export function MansionDemo({
           {showHelp && (
             <motion.div className="demo-help-card" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 14 }}>
               <CircleHelp />
-              <div><strong>先感受移动与尺度</strong><span>使用 WASD / 方向键行走，靠近光点按 E 阅读。</span></div>
+              <div><strong>移动与场景交互</strong><span>使用 WASD / 方向键行走，靠近光点或圆桌座位按 E 交互。</span></div>
               <button type="button" onClick={() => setShowHelp(false)}>知道了</button>
             </motion.div>
           )}

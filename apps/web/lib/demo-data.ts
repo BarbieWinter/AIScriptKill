@@ -67,6 +67,11 @@ export interface DemoFurniture extends DemoRect {
   collision?: DemoRect;
   fadeDistance?: number;
   variant?: string;
+  seat?: {
+    position: DemoPoint;
+    stand: DemoPoint;
+    facing: "front" | "back" | "left" | "right";
+  };
 }
 
 export interface DemoDoorFrame {
@@ -310,12 +315,12 @@ export const demoWalls: DemoWall[] = [
 
 export const demoFurniture: DemoFurniture[] = [
   { id: "round-table", kind: "table", x: 1080, y: 700, width: 240, height: 170, elevation: 42, sortY: 870, variant: "round", collision: { x: 1080, y: 700, width: 240, height: 170 } },
-  { id: "chair-n", kind: "seats", x: 1160, y: 570, width: 80, height: 54, elevation: 28, sortY: 624, variant: "chair", rotation: 1 },
-  { id: "chair-ne", kind: "seats", x: 1370, y: 660, width: 80, height: 54, elevation: 28, sortY: 714, variant: "chair", rotation: -5 },
-  { id: "chair-se", kind: "seats", x: 1370, y: 930, width: 80, height: 54, elevation: 28, sortY: 984, variant: "chair", rotation: 4 },
-  { id: "chair-s", kind: "seats", x: 1160, y: 1030, width: 80, height: 54, elevation: 28, sortY: 1084, variant: "chair", rotation: -2 },
-  { id: "chair-sw", kind: "seats", x: 950, y: 930, width: 80, height: 54, elevation: 28, sortY: 984, variant: "chair", rotation: -4 },
-  { id: "chair-nw", kind: "seats", x: 950, y: 660, width: 80, height: 54, elevation: 28, sortY: 714, variant: "chair", rotation: 5 },
+  { id: "chair-n", kind: "seats", x: 1171, y: 620, width: 58, height: 42, elevation: 22, sortY: 662, variant: "chair", rotation: 1, collision: { x: 1175, y: 626, width: 50, height: 32 }, seat: { position: { x: 1200, y: 664 }, stand: { x: 1200, y: 570 }, facing: "front" } },
+  { id: "chair-ne", kind: "seats", x: 1338, y: 680, width: 58, height: 42, elevation: 22, sortY: 722, variant: "chair", rotation: -5, collision: { x: 1342, y: 686, width: 50, height: 32 }, seat: { position: { x: 1367, y: 724 }, stand: { x: 1455, y: 680 }, facing: "left" } },
+  { id: "chair-se", kind: "seats", x: 1338, y: 900, width: 58, height: 42, elevation: 22, sortY: 942, variant: "chair", rotation: 4, collision: { x: 1342, y: 906, width: 50, height: 32 }, seat: { position: { x: 1367, y: 944 }, stand: { x: 1455, y: 970 }, facing: "left" } },
+  { id: "chair-s", kind: "seats", x: 1171, y: 910, width: 58, height: 42, elevation: 22, sortY: 952, variant: "chair", rotation: -2, collision: { x: 1175, y: 916, width: 50, height: 32 }, seat: { position: { x: 1200, y: 954 }, stand: { x: 1200, y: 1050 }, facing: "back" } },
+  { id: "chair-sw", kind: "seats", x: 1004, y: 900, width: 58, height: 42, elevation: 22, sortY: 942, variant: "chair", rotation: -4, collision: { x: 1008, y: 906, width: 50, height: 32 }, seat: { position: { x: 1033, y: 944 }, stand: { x: 945, y: 970 }, facing: "right" } },
+  { id: "chair-nw", kind: "seats", x: 1004, y: 680, width: 58, height: 42, elevation: 22, sortY: 722, variant: "chair", rotation: 5, collision: { x: 1008, y: 686, width: 50, height: 32 }, seat: { position: { x: 1033, y: 724 }, stand: { x: 945, y: 680 }, facing: "right" } },
   { id: "hall-console", kind: "console", x: 1450, y: 1150, width: 170, height: 64, elevation: 30, sortY: 1214, rotation: 3 },
   { id: "kitchen-counter", kind: "console", x: 120, y: 150, width: 340, height: 82, elevation: 34, sortY: 232, collision: { x: 120, y: 150, width: 340, height: 82 } },
   { id: "kitchen-table", kind: "table", x: 250, y: 390, width: 160, height: 104, elevation: 32, sortY: 494, rotation: -4, collision: { x: 250, y: 390, width: 160, height: 104 } },
