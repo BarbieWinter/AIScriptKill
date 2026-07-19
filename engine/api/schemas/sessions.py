@@ -121,20 +121,20 @@ class SessionPresentationResponse(ApiModel):
 
 
 class UpdateSessionRequest(ApiModel):
-    """请求从持久化的 LangGraph 检查点恢复。"""
+    """保留当前已禁用的 legacy 会话恢复维护请求契约。"""
 
-    action: Literal["restore"] = Field(description="Session maintenance action.")
+    action: Literal["restore"] = Field(description="Disabled legacy maintenance action.")
     checkpoint_id: str = Field(
         min_length=1,
         max_length=128,
-        description="Checkpoint ID used by restore actions.",
+        description="Reserved checkpoint ID; session restore is currently unavailable.",
     )
 
 
 class UpdateSessionResponse(ApiModel):
-    """返回会话成功恢复后选定的状态。"""
+    """保留当前已禁用的 legacy 会话恢复维护响应契约。"""
 
     session_id: str = Field(description="Game session ID.")
     status: str = Field(description="Updated session status.")
-    current_stage: str = Field(description="Restored current stage.")
-    restored_from: str = Field(description="Checkpoint used for restoration.")
+    current_stage: str = Field(description="Legacy restored-stage response field.")
+    restored_from: str = Field(description="Legacy checkpoint response field.")

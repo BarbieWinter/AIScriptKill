@@ -149,6 +149,21 @@ def bad_request(code: str, message: str) -> ApiError:
     )
 
 
+def conflict(
+    code: str,
+    message: str,
+    details: dict[str, str] | None = None,
+) -> ApiError:
+    """使用调用方提供的稳定错误码构造 409 API 错误。"""
+
+    return ApiError(
+        status_code=HTTPStatus.CONFLICT,
+        code=code,
+        message=message,
+        details=details,
+    )
+
+
 def not_found(code: str, message: str) -> ApiError:
     """使用调用方提供的稳定错误码构造 404 API 错误。"""
 

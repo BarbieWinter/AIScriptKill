@@ -130,20 +130,20 @@ async def update_session(
     current_user: CurrentUserDep,
     db: SessionDep,
 ) -> UpdateSessionResponse:
-    """从已存储检查点恢复可访问的游戏会话。
+    """保留当前已禁用的 legacy 会话恢复维护入口。
 
     Args:
-        session_id: 待恢复会话的 UUID 字符串。
-        payload: 待恢复检查点的标识符。
-        current_user: 用于所有权检查的可选 Supabase 身份。
-        db: 请求作用域的异步数据库会话。
+        session_id: legacy 维护请求中的会话 UUID 字符串。
+        payload: 保留的 legacy 恢复请求载荷。
+        current_user: 由鉴权依赖解析的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话；当前禁用路径不会访问它。
 
     Returns:
-        恢复后的会话状态和检查点标识符。
+        当前不会返回；响应模型仅为 legacy wire contract 保留。
 
     Raises:
-        ApiError: 恢复失败时抛出 `INVALID_TOKEN`、`INVALID_SESSION_ID`、
-            `INVALID_USER_ID`、`SESSION_NOT_FOUND` 或 `CHECKPOINT_NOT_FOUND`。
+        ApiError: 令牌或会话 ID 无效时抛出 `INVALID_TOKEN` 或
+            `INVALID_SESSION_ID`；合法 UUID 稳定抛出 `SESSION_RESTORE_UNAVAILABLE`。
     """
     return await restore_session(session_id, payload, current_user, db)
 

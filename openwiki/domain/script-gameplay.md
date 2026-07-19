@@ -2,110 +2,231 @@
 
 ## 产品边界
 
-核心领域是固定剧本的 AI 剧本杀。`/doc/剧本系统设计.md` 是最好的产品来源：系统应该保护高质量谜题的确定性，同时用 AI 提供沉浸感、自然交互、受控阶段推进和复盘。
+核心领域是固定剧本的 AI 互动悬疑。`/doc/剧本系统设计.md` 描述的原则仍有效：高质量谜题和事实边界是确定性的，AI 负责受控表达和沉浸感。
 
 AI 可以：
 
-- 扮演 DM 和 NPC。
-- 在当前阶段和角色知识范围内自然回答。
-- 控制流程，并触发线索、证据、场景和媒体。
-- 辅助最终复盘和评分。
+- 扮演当前阶段允许的 NPC。
+- 在角色知识和会话已授权材料范围内自然回答。
+- 使用经过阶段/角色/线索权限过滤的 RAG 片段。
 
 AI 不应：
 
-- 改变凶手、动机或关键证据。
-- 发明主线故事事实。
-- 泄露锁定线索、仅 DM 可见材料或未来阶段信息。
-- 向玩家暴露后台、销售或 DM 材料。
+- 改变正确判断、动机或关键证据。
+- 发明主线事实。
+- 泄露未来阶段、其他角色私有材料、DM 指引或未发现内容。
+- 决定解锁、阶段切换、评分或状态 patch；这些由 YAML/StateGraph 确定。
 
-这个边界解释了为什么仓库强调剧本包、RLS、可见性元数据、剧本包 schema，以及 Guard/RAG 概念。
+这一边界由剧本包 schema、条件/事件运行时、API 投影、RAG permissions 和 NPC 本地输出过滤共同实现。
 
 ## 主要领域概念
 
 ### 剧本包
 
-剧本包是内容单元。`/docs/SCRIPT_PACKAGE_SCHEMA.md` 描述了预期目录形态，包括 `package.yml`、`stages/`、`characters/`、`clues/`、`evidences/`、`scenes/`、`media/`、`dm_guide/`、`endings.yml` 和 `assets/`。
+剧本包是内容单元。后端支持 zip 导入，也支持 `load_package_directory()` 复用同一加载流程。归档必须恰好有一个 `package.yml`，并通过 strict Pydantic 模型、引用校验和资产校验。
 
-当前后端导入以 zip 为主，也有 `load_package_directory()` 目录入口。`engine/core/package_loader.py` 预期归档中恰好有一个 `package.yml`，通过 `engine/core/package_yaml.py`、`package_records.py` 和 `package_validation*.py` 解析/校验，并把结构行加载到数据库表。
+必需内容：
 
-当前 loader 要求：
+- `package.yml`：`metadata.id/title/version` 和 `engine.entry_stage`。
+- `stages/`：至少一个阶段 YAML。
+- `characters/`：至少一个角色 YAML。
 
-- `package.yml` 包含 `metadata.id`、`metadata.title`、`metadata.version` 和 `engine.entry_stage`。
-- `stages/` 下至少一个阶段 YAML。
-- `characters/` 下至少一个角色 YAML。
+可选且 loader 已支持：
 
-当前 loader 可选但支持：
+- `stages/_index.yml`：阶段/幕顺序。
+- `characters/_index.yml`：可玩性和排序。
+- `character_scripts/<character-id>/<chapter-id>.md`：严格 frontmatter 的角色私有 Markdown 章节。
+- `clues/rounds/*.yml`、`evidences/*.yml`、`scenes/*.yml`。
+- `media/*.yml`。
+- `endings.yml`。
+- `dm_guide/*.yml`，只写入服务端私有表，不进入公开 package config。
+- `assets/`，可上传私有 Storage，并把 YAML 本地路径重写为 `storage://` 定位符。
 
-- `characters/_index.yml`，用于可玩性/排序元数据。
-- `clues/rounds/*.yml`，用于线索轮次。
-- `evidences/*.yml`。
-- `scenes/*.yml`。
-- `media/*.yml`，带音频/图片资产列表。
-- `endings.yml`，用于导入结局、触发条件和 on_trigger 事件。
-- `dm_guide/*.yml`，用于导入 DM 私密资料，内容不进入公开 `script_packages.config`。
-- `assets/` 下的素材文件；loader 会收集为 `PackageAssetRecord`，可选通过 storage 后端上传并把 YAML 中匹配的本地路径重写为 URL。
+`engine/core/package_records.py` 将内容转换为 package/stage/character/chapter/clue/evidence/scene/media/ending 记录。`runtime_package_repository.py` 可从已发布规范化数据库行重建同一 `ScriptPackageImport` 给生产 StateGraph 使用。
 
-### 阶段
+### 阶段和动作
 
-阶段是游戏推进单元。设计文档把阶段描述为带进入和退出条件的受控轮次/幕。当前后端把完整阶段定义存入 `script_stages.definition`，并在创建会话时使用其中一个小子集：来自 `engine/repositories/session_seed.py` 的 `available_actions`、`available_characters` 和 `available_scenes`。
+阶段是受控推进单元，定义：
 
-如果阶段省略可用动作，当前后端默认使用 `talk_to_npc`、`examine_scene` 和 `open_clue_board`。如果省略场景，当前场景默认是 `start`。Loader 还支持 `/docs/SCRIPT_PACKAGE_SCHEMA.md` 中的 action object 写法，会把 `available_actions[].id` 归一化为运行期字符串列表，并把 label/description 保存在 `action_definitions`。
+- entry/exit conditions。
+- available actions/characters/scenes。
+- stage-entry、clue-discovered 等事件。
+- 可选 judgment 等 special rules。
 
-### 角色
+生产 REST action 已连接 `LangGraphRuntimeActionExecutor`，不再使用旧固定 action mapper。`runtime_action_mappers.py` 把 REST 载荷编码为 core action target：
 
-角色可以是可玩角色、NPC 或 DM alter ego。当前剧本包加载会读取角色文件和可选 `_index.yml` 元数据到 `script_characters`，包含 `is_playable`、`is_dm_alter_ego` 和 `sort_order`。
+- `talk_to_npc` -> character id + player text。
+- `examine_scene` -> scene/hotspot target。
+- `show_evidence` -> `evidence_id:character_id`。
+- `use_card`、`open_clue_board`、`request_advance` -> 各自窄 target。
 
-产品设计要求角色知识边界：NPC 只能知道其角色和当前阶段允许知道的内容。这尚未完整实现；当前动作回复是固定占位内容。
+`ScriptEngine` 校验当前阶段是否允许 action/target，执行 YAML 事件和条件，写入 checkpoint，再投影 session/chat/discoveries。非法动作返回稳定错误码，不会静默 no-op。
+
+### 角色和 NPC
+
+角色可为玩家、NPC 或 DM alter ego。导入记录包含可玩性、DM 标记、排序、identity、personality、分阶段 knowledge、evidence reactions 和 dialogue strategy。
+
+生产 NPC 路径位于 `engine/agents/npc_agent.py`：
+
+- 配置完整时调用 OpenAI-compatible Chat Completions。
+- 只把当前角色、阶段、包内已授权 knowledge、有限历史和 `RagRetriever` 返回的授权片段放入 prompt。
+- 证物 reaction 只有在证物已查看、已向该 NPC 出示、阶段和条件均满足时才进入允许事实。
+- provider/RAG 失败、配置不完整、输出为空/过长、出现 forbidden term 或未授权时间值时，返回确定性 fallback：`我只能说自己亲眼见过、亲耳听到的，没把握的事不能乱讲。`
+
+这已不是固定“王大达风格”占位回复，但本地过滤只覆盖明确约束，不应被描述为通用语义证明或已实现 AI-DM/多人裁判。
 
 ### 线索和证据
 
-源码和 schema 中，线索与证据是分开的概念：
+- 线索存储于 `script_clues`，通过 `session_discoveries(entity_type='clue')` 解锁。
+- 证据存储于 `script_evidences`，发现状态也在 discoveries；`POST .../evidences/{id}/viewed` 将其从 `unlocked` 单调升级为 `viewed`。
+- 向 NPC 出示证据记录于 GameState/session 投影；NPC evidence reaction 还要求证据已查看。
 
-- 线索是调查事实，存储在 `script_clues`，通过 `session_discoveries` 中的 `entity_type='clue'` 解锁。
-- 证据是道具、关键证据、技能卡或普通证据，存储在 `script_evidences`，发现后同样在 discoveries 中跟踪。
+浏览器不能直接读表。FastAPI 结合 session discovery、阶段和角色做授权和字段投影。
 
-FastAPI 查询代码使用阶段可见性、角色可见性等元数据防剧透；anon/authenticated 不能直接
-读取底层剧本和运行期表。当前 REST 动作仍未接入 core StateGraph，完整玩法动作闭环属于 T-2.6。
+### 场景、热点和媒体
 
-### 场景和媒体
+场景 YAML 包含背景、公开描述、视觉元数据和热点。当前真实后端已实现 `GET .../presentation`：从当前已发布场景白名单返回 id/name/description/ambient color、浏览器安全背景 URL及有序 public hotspots。
 
-按预期设计，场景是带背景/热点的互动地点。当前后端存储场景定义和背景 URL，但真实后端尚未从剧本包内容求值热点。前端 Mock 玩法中最完整的场景/热点实现位于 `apps/web/lib/mock-data.ts` 和 `components/game/SceneHotspots.tsx`。
+热点只公开 id、label、x/y、width/height；private/DM-only 项和 `on_click` 规则不会返回。前端点击后提交 scene/hotspot id，由服务端 StateGraph 执行 `clue_discover`、`evidence_discover`、`dm_narrate` 等 YAML 事件。
 
-媒体资产定义存储在 `script_media`，类型包括 `bgm`、`story`、`sfx`、`voice`、`image` 和
-`video`。剧本包中的二进制素材来自 `assets/`，导入准备阶段可通过 `package_storage.py`
-上传到私有 Supabase Storage，并把本地路径改写为 `storage://` 定位符。面向玩家的签名
-URL/代理下载属于 T-2.6；`engine/media/orchestrator.py` 仍是占位模块。
+媒体 schema 和导入已支持 `bgm`、`story`、`sfx`、`voice`、`image`、`video`。私有 Storage 的 `storage://` 定位符不是浏览器 URL；签名 URL/代理下载和完整 media orchestrator 仍未实现。
 
-### DM 指引、真相和复盘
+### 人物章节
 
-设计文档把 DM 材料和真相数据视为特权内容。当前后端剧本包 loader 会导入 `endings.yml` 为 `EndingRecord`，校验 ending condition 和 on_trigger 中的引用，并通过 `PackageImportRepository` 写入 `script_endings`。`dm_guide/` 会保留在 `ScriptPackageImport.dm_guide`，导入时写入仅 service-role 可访问的 `script_dm_guides`，不会进入公开可读的 `script_packages.config`。评分/复盘逻辑在 `engine/services/action_mappers.py` 和 `engine/repositories/session_mutations.py` 中仍是占位级别。
+人物章节采用：
 
-## 雪村状态
+```text
+character_scripts/<character-id>/<chapter-id>.md
+```
 
-仓库包含雪村资产和设计引用：
+文件必须是 UTF-8，包含严格 YAML frontmatter 和非空 Markdown 正文；路径中的 character/chapter id 必须与 frontmatter 一致。frontmatter 声明：
 
-- `/doc/剧本系统设计.md` 描述 `Organizing/` 包含剧本 PDF、线索、音频、海报、道具、DM 材料和运营资产。
-- `apps/web/lib/mock-data.ts` 包含可执行的 Mock 雪村玩法数据。
-- `/script-packages/snow-village` 包含预期剧本包目录，但在已检查的树中没有 package YAML 文件。
+- `character_id`、`chapter_id`、`order`、`title`。
+- 固定 `visibility: character_only`。
+- `release.type: game_start`，或 `release.type: rule` + `rule_id`。
+- 可选 `stage_min`。
 
-不要假设雪村已经转换成可导入的后端剧本包。如果要转换，应以 `/docs/SCRIPT_PACKAGE_SCHEMA.md` 和 `engine/core/package_loader.py` 作为绑定契约，并在把 Mock 数据视为规范前先调和其中的不一致。
+导入写入 service-role-only 的 `script_character_chapters`。开局事件或 `unlock_character_chapter` 只会为当前玩家角色发放匹配章节，并在 `session_discoveries(entity_type='character_chapter')` 记录 `unlocked`。list/read API 同时要求：
+
+1. session 可访问；
+2. chapter 属于 `session.player_character_id`；
+3. 当前 session 有 `unlocked` 或 `viewed` discovery。
+
+读取正文后状态单调升级为 `viewed`。章节正文有意不进入普通 `script_knowledge` chunking，因此当前不能声称 RAG 会检索人物章节全文。
+
+### Judgment、结局和复盘
+
+当前阶段可在 `special_rules.judgement` 中声明 question、options 和 `correct_option`。presentation 只返回 question/options；提交端点在服务端读取正确 option。
+
+当前评分 helper 是确定性的：匹配正确 option 得 100，否则 0；响应包含：
+
+- `detail.selected_option`
+- `detail.correct_option`
+- `detail.evidence_boundary`
+- `detail.npc_disclosure`
+- `ending_id`：`judgement_correct` 或 `judgement_incorrect`
+
+这些服务生成的 ending ids 不等同于 package `endings.yml` 记录。当前雪村的 `endings.yml` 明确是 `endings: []`，因此不要声称它包含完整结局文件；复盘由 submission/review 持久化路径生成。
+
+## 当前权威雪村单人垂直切片
+
+规范内容位于 `script-packages/snow-village`，可由 loader 导入并由 live REST/YAML/LangGraph 路径执行。Mock 只是 UI fixture。
+
+### 包元数据
+
+- id：`snow-village`
+- title：`雪落之前：后门的脚印`
+- version：`0.1.0`
+- description：`卓司元调查王氏杀猪菜后门异常的首个单人垂直切片。`
+- genre：`悬疑`、`互动小说`
+- difficulty：1
+- duration：30 分钟
+- max players：1
+- entry stage：`return_to_snow_village`
+
+它是 `legacy_single` 范围的单人切片，不是多人 fixture。
+
+### 阶段顺序
+
+1. `return_to_snow_village` / 炉火未熄
+   - 场景 `restaurant-hall`。
+   - 阅读第一章、与王大达交谈并请求推进。
+2. `investigate_back_alley` / 调查后巷
+   - 场景 `back-alley`。
+   - 调查热点、发现线索/证据、查看截图后推进。
+3. `confront_wangdada` / 没有打开的门
+   - 解锁并阅读第二章。
+   - 向王大达出示后门截图后推进。
+4. `back_door_judgement` / 后门判断
+   - 展示有限事实判断题并提交 option。
+
+### 当前 IDs 和内容
+
+- 玩家角色：`zhuosiyuan` / 卓司元。
+- NPC：`wangdada` / 王大达。
+- 场景：`restaurant-hall`、`back-alley`。
+- 热点：`back-door-traces` / 后门旁的痕迹，坐标 x=58、y=44。
+- 线索：`clue-back-alley-note` / 后巷便签。
+- 证据：`evidence-back-door-image` / `21:13 后门截图`。
+- 证实边界：21:13 后门半开、门内暖光和不可辨认的影子；不能确认身份、进出方向、开门者、目的或犯罪。
+
+热点的 YAML `on_click` 会发现上述线索和证据，并生成 DM 叙述。前端 `/demo/live` 从 presentation 获取热点坐标，但不会获取这些服务端规则。
+
+### Judgment
+
+问题：`根据当前材料，哪项最符合已证实事实？`
+
+正确 option 是 `C`：
+
+> 王大达关于没人来过的说法不完整；至少可确认后门在21:13半开，但不能确认开门者和目的。
+
+提交请求体是 `{ "option": "C" }` 这一类窄契约。正确得 100、错误得 0；响应 ending id 是 `judgement_correct`/`judgement_incorrect`。当前 `npc_disclosure` 字段为 `null`，具体王大达证词由出示证物的 NPC reaction/chat 路径提供。
+
+### 人物章节
+
+- `zhuosiyuan-chapter-01` / 炉火未熄
+  - `release.type: game_start`
+  - `stage_min: return_to_snow_village`
+- `zhuosiyuan-chapter-02` / 没有打开的门
+  - `release.type: rule`
+  - `rule_id: first_evidence_set_completed`
+  - `stage_min: investigate_back_alley`
+  - 在 `confront_wangdada` stage-entry 的 `unlock_character_chapter` 事件中发放。
+
+两章都只授权给选择卓司元的当前 session，状态为 `unlocked`/`viewed`。
+
+### 实际文件范围
+
+当前 package 包含：
+
+- `package.yml`
+- 4 个 stage YAML 和 `_index.yml`
+- 2 个 character YAML 和 `_index.yml`
+- 2 个 character chapter Markdown
+- 1 个 clue round YAML
+- 1 个 evidence YAML
+- 2 个 scene YAML
+- `endings.yml`，内容为 `endings: []`
+- 3 个 SVG assets：两个场景和一张证物图
+
+当前 package 没有可用的 `media/*.yml` 或 `dm_guide/*.yml` 内容；这些只是 loader 支持的可选扩展，不能描述成雪村已经具备的完整媒体/DM 材料。
 
 ## 条件 DSL 和导入期校验
 
-`/docs/CONDITION_DSL_REFERENCE.md` 定义了预期 YAML DSL，用于阶段推进、线索/证据检查、对话检查、玩家动作和布尔组合。当前 `engine/core/condition_evaluator.py` 已实现核心 DSL 评估、组合递归、短路、缓存和 trace 输出；`engine/core/script_engine.py` 已在 core StateGraph 中用它评估阶段退出和结局分支。REST action endpoint 仍走 `engine/services/action_mappers.py` 的确定性占位流程，后续还需要把 API 层切到 core 引擎。
+`engine/core/condition_evaluator.py` 已实现组合条件、常量条件，以及阶段、线索/证据、证物出示、人物章节阅读、对话、玩家行为、时间、提交、事件、计数、首玩和提示等叶子。`evaluate_condition()` 使用相关 GameState 片段生成缓存键；trace API 用于调试。
 
-当前 evaluator 支持组合条件 `all`、`any`、`not`、`count`，常量条件 `always`、`never`，以及这些叶子类别：阶段/幕进度、线索发现计数、单线索/证据发现、证据出示给 NPC、角色对话次数、已触发对话、玩家关键词、NPC 状态阈值、玩家动作/请求/卡牌、阶段内时间和真实时间、最终提交正确/错误、关键证据使用、推理链完成、事件已触发/未触发、session counter、首次游玩和提示次数。`evaluate_condition()` 使用 `GameState` 相关片段生成缓存键；`evaluate_condition_with_trace()` 和 `format_condition_trace()` 用于调试；`ConditionEvaluationOptions.force_conditions` 可在测试/沙盒中覆盖某类条件结果。
-
-不过 loader 已经会做导入期校验：`package_validation_context.py` 列出支持的 condition type、event action 和 gameplay action；`package_reference_validation.py` 校验阶段、角色、场景、线索轮次、线索、证据、媒体和结局引用；`package_event_validation.py` 校验 `play_audio`、`unlock_scenes`、`unlock_clue_round`、`npc_enter_scene`、`npc_emotion`、`clue_discover`、`transition_to` 等事件；`package_asset_validation.py` 校验本地素材路径存在，并把角色缺少阶段知识作为 warning 返回。
+loader 会在导入期校验 condition/event/action 类型和跨文件引用，包括阶段、角色、章节、场景、线索、证据、媒体和结局。运行时仍以最新 checkpoint GameState 为权威，有限 session JSONB 用于查询投影和无 checkpoint 时 bootstrap。
 
 ## 变更指引
 
-修改领域行为时，先判断你改的是：
+修改领域行为时，区分：
 
-- `docs/` 或 `doc/` 中的产品/设计规格。
-- `engine/core/package_schema.py` 和 `package_loader.py` 中的可导入剧本包契约。
-- `supabase/migrations/` 和 `engine/db/tables.py` 中的数据库表示。
-- services/repositories 中的运行期行为。
-- `apps/web/lib/mock-data.ts` 中的前端 Mock 体验。
+- 产品/设计规格。
+- package loader/schema 和可导入内容。
+- migrations/table metadata。
+- runtime service/repository/StateGraph 行为。
+- presentation 与 chapter 授权 API。
+- 前端 live client/boundary。
+- 仅用于 UI 预览的 Mock 数据。
 
-保持这些层彼此对齐。目标文档、Mock 玩法、空剧本包目录和后端占位行为之间已经存在不一致。
+当前单人内容以 `script-packages/snow-village` 为准；旧 `supabase/seed/dev_seed.sql` 和旧 Mock 故事不能覆盖该权威包。

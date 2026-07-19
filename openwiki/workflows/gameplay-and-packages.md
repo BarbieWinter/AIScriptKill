@@ -36,12 +36,16 @@
 2. 使用 `POST /api/v1/sessions` 创建会话，传入 `script_id`、`preferred_character_id` 和可选 `player_name`。
 3. `engine/repositories/session_seed.py` 检查剧本包已发布、找到 `engine.entry_stage`、验证所选角色可玩，并 seed 一个 `SessionRuntimeState`。
 4. `engine/repositories/session_mutations.py` 插入 `game_sessions`，创建 `initial` 检查点并提交。
-5. 游戏动作经过 `POST /api/v1/sessions/{session_id}/actions`，并走 `engine/services/action_mappers.py` 中的确定性映射。
+5. 游戏动作经过 `POST /api/v1/sessions/{session_id}/actions`，由
+   `engine/services/runtime_session.py::LangGraphRuntimeActionExecutor` 恢复或 bootstrap 图状态，
+   再执行已发布 YAML package 的确定性动作与阶段流程。
 6. 效果会持久化聊天消息、发现记录、状态 patch 和检查点。
 7. 最终提交经过 `POST /api/v1/sessions/{session_id}/final-submission`，持久化 `final_submissions` 和 `reviews`，并把会话标记为完成。
 8. `/review` 返回已持久化的复盘。
 
-真实后端 API 尚未执行 AI DM/NPC 生成、剧本包定义的热点行为或实时 WebSocket 事件流。core 层的 `ScriptEngine` 已可用 LangGraph StateGraph 执行阶段 entry/action/condition/event/exit/ending 流程并持久化 LangGraph checkpoint，但当前 `/actions` 路由还没有切到该引擎。
+真实后端尚未实现认证的多人房间事件流或公共 AI DM。core StateGraph 已接入生产 REST action，
+但 checkpoint saver 与查询投影仍分别提交；`game_sessions.state` 不是完整 continuation，
+多人 Command Service 上线前必须统一恢复和事务边界。
 
 ## 剧本包导入流程
 
@@ -96,19 +100,19 @@ loose package directory
 
 - 已检查实现中，前端角色选择没有调用真实 `api.createSession`。
 - 主玩法 live 模式已使用真实 session 读取和 `WsClient` 心跳，但具体动作还没有走真实 `api.performAction`。
-- 后端 WebSocket 只支持心跳，而文档和前端 Mock 期望很多玩法事件。
-- 后端 `/actions` 行为尚未由 core StateGraph 引擎和导入剧本包的阶段/热点/证据规则驱动。
-- 后端最终评分是固定占位逻辑。
-- `script-packages/snow-village` 缺少 package YAML 文件，因此不能按现状导入。
+- 后端 WebSocket 只支持心跳，没有认证玩法事件、replay 或 presence。
+- REST action 已接入 core StateGraph，但 checkpoint、查询投影和 side effects 尚未形成多人所需的单一提交边界。
+- `script-packages/snow-village` 已有完整 YAML 并通过 core vertical slice；它保持 `max_players: 1`，不是多人包。
+- Multiplayer v1 当前只冻结 standalone 契约和默认关闭 flags，没有 loader/runtime/数据库或 UI 接线。
 
 ## 变更指引
 
 做真实集成工作时，从一个很薄的纵向切片开始：
 
-1. 确保真实剧本包可以导入并发布。
-2. 让角色选择调用 `api.createSession`，并使用返回的 session id 跳转。
-3. 让一个玩法动作调用 `api.performAction`，并根据响应更新 Zustand。
-4. 仅在 REST 状态转换可靠后再添加后端 WebSocket 事件。
-5. 把 REST action endpoint 切到 core StateGraph 引擎，再补剧本包驱动热点规则和 WebSocket 事件。
+1. 保持真实剧本包导入、发布与现有单人 REST action 回归稳定。
+2. 在 MP-1 先实现无网络的双人阶段 reducer 和 fixture。
+3. 在 MP-2/MP-3 再增加房间身份、命令幂等和统一事务边界。
+4. 在持久事件、participant snapshot 与 replay 语义可靠后接入多人 WebSocket。
+5. 最后把公共 AI DM 作为无领域写权限的辅助层接入。
 
 做内容工作流时，扩展 schema 前先创建剧本包 fixtures 和 loader 测试。当前剧本包 loader 是后端可摄取内容范围的最强事实来源。

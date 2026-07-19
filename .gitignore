@@ -15,6 +15,11 @@ dist/
 # Next.js
 apps/web/.next/
 apps/web/out/
+apps/web/test-results/
+apps/web/playwright-report/
+
+# Claude Code local worktrees
+.claude/worktrees/
 
 # Env
 .env
