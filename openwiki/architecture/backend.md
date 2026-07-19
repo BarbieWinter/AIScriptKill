@@ -15,7 +15,10 @@
 
 ## 配置
 
-`engine/api/config.py` 使用 Pydantic settings。它涵盖 Supabase/database、CORS/限流、JWT audience、三个默认关闭且无入口的 MP-0 预留 flag、1024 维 RAG embedding provider，以及 OpenAI-compatible NPC provider。完整变量和默认值见[数据与运维](../operations/data-and-deployment.md)。
+`engine/api/config.py` 使用 Pydantic settings。它涵盖 Supabase/database、CORS/限流、JWT audience、
+`MULTIPLAYER_V1`/`ROOM_EVENTS_V1`/`AI_DM_V1` rollout flags、1024 维 RAG embedding provider，以及
+OpenAI-compatible NPC provider。MP-2 只消费 `MULTIPLAYER_V1`；events 与 AI DM flag 仍无消费方。完整
+变量和默认值见[数据与运维](../operations/data-and-deployment.md)。
 
 settings 读取项目根目录 `.env` 和系统环境变量；`.env.example` 只保留占位符。存在 `DATABASE_POOLER_URL` 时优先使用它，否则使用 `DATABASE_URL`。普通 `postgresql://` 会转换为 `postgresql+asyncpg://`；本地数据库不强制 SSL，远程连接使用 `ssl=require`。
 
@@ -26,8 +29,12 @@ settings 读取项目根目录 `.env` 和系统环境变量；`.env.example` 只
 - 无 bearer token：返回 `CurrentUser(subject="anonymous", role="anonymous")`。
 - 有 bearer token：根据项目 JWKS 校验 Supabase JWT 的签名、issuer、audience、有效期和必需 claims。
 - 剧本包导入和状态更新仅允许管理员；只信任 Supabase `app_metadata.role` / `app_metadata.roles`，不信任用户可编辑 metadata。
+- MP-2 使用独立 `VerifiedAnonymousPrincipalDep`：必须有合法 bearer、UUID `sub` 且
+  `is_anonymous=true`；非 anonymous identity 返回 403。客户端不能提交 principal/member actor。
 
-会话访问由 `engine/services/session_service.py` 强制执行。如果 `game_sessions.player_id` 为 `NULL`，任何知道会话 UUID 的人都能访问；设置了 `player_id` 时，必须匹配已认证 Supabase user id。
+Legacy 会话访问由 `engine/services/session_service.py` 强制执行。如果 `game_sessions.player_id` 为 `NULL`，
+任何知道会话 UUID 的人都能访问；设置了 `player_id` 时，必须匹配已认证 Supabase user id。该 legacy
+兼容行为不能用于 multiplayer room；MP-2 只能由 verified principal → membership 授权。
 
 浏览器没有底层剧本、RAG、章节和运行时表权限。服务端访问和字段投影是主边界，RLS 是纵深防御。
 
@@ -50,6 +57,11 @@ settings 读取项目根目录 `.env` 和系统环境变量；`.env.example` 只
 - `GET /api/v1/sessions/{session_id}/chat-history`：已存储聊天历史。
 - `GET /api/v1/sessions/{session_id}/cards`：从 card 类型 evidence 派生的可用卡牌。
 - `GET /api/v1/sessions/{session_id}/review`：已完成复盘或未提交时的缺省复盘。
+
+MP-2 strict contract 还提供 `GET /sessions/current`、invite create/revoke/accept、participant-safe
+`GET /sessions/{id}/snapshot` 和四种 lobby `POST /sessions/{id}/commands`。schemas、commit-free
+repository、service/routes 与前端均已集成，并通过 focused/full engine 和 OpenAPI build；这不等于真实
+Supabase/FastAPI/PostgreSQL live-stack 验收。`/current` 在动态 `/{session_id}` 前注册。
 
 ### Actions
 
@@ -75,7 +87,9 @@ settings 读取项目根目录 `.env` 和系统环境变量；`.env.example` 只
 
 `engine/api/websocket/handler.py` 接受 `/api/v1/ws/{session_id}`，其中 `session_id` 必须是 UUID。目前它是未认证的有界心跳端点：只消费 JSON 文本 `session.ping` 并返回 `session.pong`；binary 帧以 1003 关闭。连接管理器和 Uvicorn/应用层限制连接数、64 KiB 消息、接收队列、每分钟消息数和空闲时长。
 
-这里没有 ticket/hello/ready、玩法事件、事件重放、presence 或 resync。`MULTIPLAYER_V1`、`ROOM_EVENTS_V1`、`AI_DM_V1` 即使打开也不会添加入口；认证房间事件流属于尚未实现的多人运行时，而不是当前 REST-StateGraph 接线的一部分。
+这里没有 ticket/hello/ready、玩法事件、事件重放、presence 或 resync。MP-2 lobby 设计为 HTTP-only，
+不会复用这个 legacy 心跳；`ROOM_EVENTS_V1`、`AI_DM_V1` 仍不会添加入口。认证房间事件流属于后续
+多人运行时。
 
 ## 服务层和仓储层
 
@@ -86,6 +100,22 @@ settings 读取项目根目录 `.env` 和系统环境变量；`.env.example` 只
 - `session_queries.py`：加载会话、阶段、发现、章节、角色、聊天、卡牌和复盘。
 - `session_context.py`：在可见性敏感查询前设置 `app.current_stage`、`app.player_character` 等 Postgres setting。
 - `session_models.py`、`session_rows.py`：运行期状态和行映射。
+
+### MP-2 persistence and snapshot primitives
+
+`20260718000000_multiplayer_rooms.sql` 为 `game_sessions` 增加 mode/revision/event head、GameStateV2 version、
+frozen runtime package tuple 与时间字段，并建立 members、assignments、invites、required members 和
+principal reservations。五张新表只允许 service role；anon/authenticated grants 已撤销。SQLAlchemy
+metadata 与 required-table inventory 已镜像，但真实 PostgreSQL migration/privilege probe 尚未运行。
+
+`engine/core/runtime_package_snapshot.py` 定义 snapshot schema v1、stable compact sorted-key JSON 和
+lowercase SHA-256，严格 decode 全部 runtime records，排除 importer-only asset bytes/warnings。
+`get_runtime_package(..., lock_existing=True)` 生成 `FOR SHARE`；create service 在同一 injected
+`AsyncSession` 中保持锁、保存 snapshot/digest、写 room/host/reservation，并在成功路径最终 commit 一次。
+该接线已有 focused/full engine evidence，但真实 PostgreSQL republish/locking gate 尚未运行。
+
+Room repository 只 query/flush，不 commit；service 在同一个 injected `AsyncSession` 内锁 room、复查
+actor/status/revision 并最多一次最终 commit。MP-2 不持久化 command replay、event 或 outbox。
 
 ### 生产动作执行链
 

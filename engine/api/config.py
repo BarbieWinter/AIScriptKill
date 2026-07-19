@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     multiplayer_v1: bool = Field(
         default=False,
         alias="MULTIPLAYER_V1",
-        description="Reserved MP-0 multiplayer rollout flag; it does not enable an entry point.",
+        description="Enable the MP-2 room lobby routes and browser entry flow.",
     )
     room_events_v1: bool = Field(
         default=False,

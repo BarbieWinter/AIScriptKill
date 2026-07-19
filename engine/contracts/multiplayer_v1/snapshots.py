@@ -50,12 +50,10 @@ def build_participant_snapshot(
 ) -> ParticipantSnapshotV1:
     """从规范状态裁剪单个成员快照，不复制其他成员私有字段。"""
 
-    private_state = state.private_by_member.get(member_id)
-    if private_state is None:
-        player = state.players.get(member_id)
-        if player is None:
-            raise ValueError("snapshot member_id must belong to the room")
-        private_state = PrivatePlayerState(character_id=player.character_id)
+    try:
+        private_state = state.private_by_member[member_id]
+    except KeyError as exc:
+        raise ValueError("snapshot member_id must belong to the room") from exc
     return ParticipantSnapshotV1(
         snapshot_version=SNAPSHOT_VERSION,
         session_id=state.session_id,

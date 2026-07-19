@@ -6,7 +6,9 @@
 
 ## 当前运行形态
 
-当前单人 live 垂直切片已经打通 REST、YAML、LangGraph、checkpoint 和受控前端展示；多人入口尚未实现。
+当前单人 live 垂直切片已经打通 REST、YAML、LangGraph、checkpoint 和受控前端展示。MP-1 已加入
+无网络双人状态机；MP-2 已集成 persistence/snapshot/auth/schema、room repository/service/routes 与 HTTP
+lobby frontend，并通过应用层验证。真实 PostgreSQL/live-stack gates 仍未完成，因此 MP-2 不是 release-ready。
 
 ```text
 Next.js web app
@@ -37,6 +39,9 @@ WebSocket
 /demo
 /demo/live/[sessionId]
 /demo/mock/[sessionId]
+/multiplayer
+/invite/[token]
+/play/[sessionId]/lobby
 ```
 
 两套玩法外壳要明确区分：
@@ -46,6 +51,9 @@ WebSocket
 - `/demo`：视觉 demo 和会话启动器，可创建 live `snow-village`/`zhuosiyuan` 会话、恢复已有 UUID 或启动 mock。
 - `/play/[sessionId]`：旧玩法页。它仍依赖全局 `isMockMode()`、`mockScenes`、直接 Mock engine/Mock WebSocket，并在 live 模式使用硬编码的 `back-alley` 热点；不能代表统一 live 数据边界。
 - `/play/[sessionId]/select`：路由段在进入会话前仍语义上是 script 路径，但当前实现固定调用 `api.createSession("snow-village", "zhuosiyuan", "卓司元")`，再跳转后端返回的 session UUID，不再生成本地 session id。
+- `/multiplayer`、`/invite/[token]`、`/play/[sessionId]/lobby`：MP-2 HTTP-only frontend。匿名 session
+  bootstrap、current/create、invite accept、lobby polling 和 active placeholder 已实现；room backend 已接线。
+  mocked-contract Playwright 的 1 passed 不是 live backend E2E。
 
 `apps/web/lib/api.ts` 和 `apps/web/lib/ws.ts` 仍服务旧 `/play` 路径。统一 demo 使用 `apps/web/lib/game/types.ts`、`session-client.ts` 和 `components/game/GameSessionBoundary.tsx`，以 `source + sessionId` 隔离 store 和 client。
 
@@ -69,6 +77,13 @@ WebSocket
   - `GET /sessions/{session_id}/chat-history`
   - `GET /sessions/{session_id}/cards`
   - `GET /sessions/{session_id}/review`
+- MP-2 strict contract（已接线；真实数据库/live-stack gate 未运行）：
+  - `GET /sessions/current`
+  - `POST /sessions/{session_id}/invites`
+  - `DELETE /sessions/{session_id}/invites/{invite_id}`
+  - `POST /session-invites/{token}/accept`
+  - `GET /sessions/{session_id}/snapshot`
+  - `POST /sessions/{session_id}/commands`
 - Actions：
   - `POST /sessions/{session_id}/actions`
   - `POST /sessions/{session_id}/final-submission`
@@ -80,7 +95,9 @@ WebSocket
 - WebSocket：`/ws/{session_id}`，只有心跳。
 - Health：`/health`、`/health/db`。
 
-认证在依赖层是可选的：没有 bearer token 时返回匿名用户，有 token 时校验 Supabase JWT。包导入/状态变更要求管理员。匿名 session 的 `player_id` 为 NULL，知道 UUID 即可访问，这是当前边界而不是多人房间身份模型。
+Legacy 认证依赖保持可选；包导入/状态变更要求管理员。MP-2 使用独立严格依赖，要求 verified Supabase
+anonymous JWT、UUID `sub` 与 `is_anonymous=true`，再以 principal → membership 授权。Legacy
+`player_id=NULL` 的“知道 UUID 可访问”行为不能用于多人房间。
 
 参见[后端架构](backend.md)。
 
@@ -152,6 +169,8 @@ character_scripts/*.md
 - `script_character_chapters` 与 character-chapter discovery 支持。
 - `text-embedding-v4` 使用的 1024 维 `script_knowledge.embedding`。
 - `chat_messages.engine_message_id` 投影幂等约束。
+- MP-2 mode-aware `game_sessions` 扩展，以及 members、assignments、invites、required members、principal
+  reservations 五张 service-role-only 表。
 
 `script_knowledge` 不是“未来 RAG”占位表。当前已实现 package chunking/indexing、deterministic/DashScope embedding provider、vector + BM25 候选、rerank、阶段/角色/已解锁线索权限过滤和 provider factory。
 
@@ -170,10 +189,11 @@ character_scripts/*.md
 
 - AI-DM、Guard、Hint 的完整产品编排。
 - WebSocket gameplay events/replay/presence/resync。
-- 多人 room、revision/event/outbox 数据模型和多人 UI。
+- MP-2 真实数据库/live-stack gates、后续 revision event/outbox 和完整多人 gameplay。
 - 媒体签名 URL/代理下载与完整 orchestrator。
 
-三个默认关闭的 MP-0 flag 不会改变上述入口库存。
+`MULTIPLAYER_V1` 是 MP-2 fail-closed gate；`ROOM_EVENTS_V1` 和 `AI_DM_V1` 仍没有运行时消费方。即使
+打开 multiplayer flag，也不能替代尚未完成的真实数据库和 live-stack 验收。
 
 ## 重要横切约束
 

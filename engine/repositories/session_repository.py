@@ -32,6 +32,9 @@ from engine.repositories.session_mutations import (
     project_runtime_action as persist_runtime_action,
 )
 from engine.repositories.session_mutations import (
+    project_runtime_action_no_commit as persist_runtime_action_no_commit,
+)
+from engine.repositories.session_mutations import (
     restore_checkpoint as persist_restore,
 )
 from engine.repositories.session_mutations import (
@@ -113,6 +116,14 @@ class SessionRepository:
         effect: SessionActionEffect,
     ) -> StoredSession:
         return await persist_runtime_action(self._db, session, state, effect)
+
+    async def project_runtime_action_no_commit(
+        self,
+        session: StoredSession,
+        state: SessionRuntimeState,
+        effect: SessionActionEffect,
+    ) -> StoredSession:
+        return await persist_runtime_action_no_commit(self._db, session, state, effect)
 
     # 最终提交与复盘写入
     async def save_final_submission(

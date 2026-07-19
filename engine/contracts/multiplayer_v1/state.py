@@ -46,25 +46,104 @@ class PrivatePlayerState(ContractModel):
     settlement_submission: PrivateSettlementSubmission | None = None
 
 
+class RevealedBallot(ContractModel):
+    """保存结算完成后允许公开的一张实名选票。"""
+
+    member_id: Identifier
+    option_id: Identifier
+
+
+class RevealedOptionCount(ContractModel):
+    """保存结算完成后按创作选项顺序公开的一项聚合计数。"""
+
+    option_id: Identifier
+    count: int = Field(ge=0)
+
+
 class SettlementRuntimeState(ContractModel):
-    """保存结算进度，而不把未揭晓的选项放入房间公开状态。"""
+    """保存结算进度，而不把未揭晓的秘密选项放入公开状态。"""
 
     settlement_id: Identifier
     mode: SettlementMode
     required_member_ids: UniqueIdentifierTuple = Field(min_length=1)
     submitted_member_ids: UniqueIdentifierTuple = ()
+    shared_option_id: Identifier | None = None
     outcome_id: Identifier | None = None
     revealed: bool = False
+    revealed_ballots: tuple[RevealedBallot, ...] = ()
+    revealed_option_counts: tuple[RevealedOptionCount, ...] = ()
 
     @model_validator(mode="after")
-    def validate_submission_members(self) -> Self:
-        if not set(self.submitted_member_ids).issubset(self.required_member_ids):
+    def validate_settlement_progress(self) -> Self:
+        required_members = set(self.required_member_ids)
+        if not set(self.submitted_member_ids).issubset(required_members):
             raise ValueError("submitted_member_ids must be a subset of required_member_ids")
+        expected_submitted = tuple(
+            member_id
+            for member_id in self.required_member_ids
+            if member_id in self.submitted_member_ids
+        )
+        if self.submitted_member_ids != expected_submitted:
+            raise ValueError("submitted_member_ids must use canonical required-member order")
+
+        ballot_member_ids = tuple(ballot.member_id for ballot in self.revealed_ballots)
+        if len(ballot_member_ids) != len(set(ballot_member_ids)):
+            raise ValueError("revealed ballot member ids must be unique")
+        if not set(ballot_member_ids).issubset(required_members):
+            raise ValueError("revealed ballot members must belong to the settlement")
+        expected_ballot_members = tuple(
+            member_id for member_id in self.required_member_ids if member_id in ballot_member_ids
+        )
+        if ballot_member_ids != expected_ballot_members:
+            raise ValueError("revealed_ballots must use canonical required-member order")
+        if self.revealed_ballots and ballot_member_ids != self.required_member_ids:
+            raise ValueError("revealed_ballots must include all required members")
+
+        count_option_ids = tuple(item.option_id for item in self.revealed_option_counts)
+        if len(count_option_ids) != len(set(count_option_ids)):
+            raise ValueError("revealed option count ids must be unique")
+        if self.revealed_option_counts and sum(
+            item.count for item in self.revealed_option_counts
+        ) != len(self.submitted_member_ids):
+            raise ValueError("revealed option counts must sum to submitted members")
+
+        if self.revealed_ballots and self.revealed_option_counts:
+            raise ValueError("revealed ballots and option counts are mutually exclusive")
+        if (self.revealed_ballots or self.revealed_option_counts) and not self.revealed:
+            raise ValueError("public settlement results require a revealed settlement")
+        if self.revealed and self.submitted_member_ids != self.required_member_ids:
+            raise ValueError("a revealed settlement requires all required submissions")
+        if self.revealed and self.outcome_id is None:
+            raise ValueError("a revealed settlement requires outcome_id")
+        if not self.revealed and self.outcome_id is not None:
+            raise ValueError("an unrevealed settlement cannot expose outcome_id")
+        if self.shared_option_id is not None and (
+            self.revealed_ballots or self.revealed_option_counts
+        ):
+            raise ValueError("a shared settlement cannot expose individual results")
+        return self
+
+
+class HintRuntimeState(ContractModel):
+    """保存一个三级公共提示的顺序揭晓与全员确认进度。"""
+
+    hint_id: Identifier
+    revealed_level: int = Field(default=0, ge=0, le=3)
+    pending_level: int | None = Field(default=None, ge=1, le=3)
+    confirming_member_ids: UniqueIdentifierTuple = ()
+
+    @model_validator(mode="after")
+    def validate_hint_progress(self) -> Self:
+        if self.pending_level is None:
+            if self.confirming_member_ids:
+                raise ValueError("confirming_member_ids require a pending hint level")
+        elif self.pending_level != self.revealed_level + 1:
+            raise ValueError("pending_level must be the next sequential level")
         return self
 
 
 class StageRuntimeState(ContractModel):
-    """保存当前阶段的阅读、讨论、结算和揭晓进度。"""
+    """保存当前阶段的阅读、讨论、结算、提示和揭晓进度。"""
 
     stage_id: Identifier
     phase: StagePhase
@@ -72,10 +151,18 @@ class StageRuntimeState(ContractModel):
     discussion_close_member_ids: UniqueIdentifierTuple = ()
     settlement: SettlementRuntimeState | None = None
     revealed_material_ids: UniqueIdentifierTuple = ()
+    hints: tuple[HintRuntimeState, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_unique_hint_ids(self) -> Self:
+        hint_ids = tuple(hint.hint_id for hint in self.hints)
+        if len(hint_ids) != len(set(hint_ids)):
+            raise ValueError("stage hint ids must be unique")
+        return self
 
 
 class GameStateV2(ContractModel):
-    """多人状态的规范 V2 结构；仅约束数据，不实现 reducer。"""
+    """多人状态的规范 V2 结构；状态变更由独立纯 reducer 完成。"""
 
     state_schema_version: Literal[2]
     session_id: UUID
@@ -87,13 +174,18 @@ class GameStateV2(ContractModel):
 
     @model_validator(mode="after")
     def validate_member_projections(self) -> Self:
-        required_members = set(self.room.required_member_ids)
+        required_member_ids = self.room.required_member_ids
+        required_members = set(required_member_ids)
         if set(self.players) != required_members:
             raise ValueError("players keys must equal room.required_member_ids")
+        if tuple(self.players) != required_member_ids:
+            raise ValueError("players keys must use canonical room member order")
         if any(key != player.member_id for key, player in self.players.items()):
             raise ValueError("each players key must equal PlayerState.member_id")
-        if not set(self.private_by_member).issubset(required_members):
-            raise ValueError("private_by_member keys must belong to the room")
+        if set(self.private_by_member) != required_members:
+            raise ValueError("private_by_member keys must equal room.required_member_ids")
+        if tuple(self.private_by_member) != required_member_ids:
+            raise ValueError("private_by_member keys must use canonical room member order")
         if self.room.current_stage_id != self.stage.stage_id:
             raise ValueError("room.current_stage_id must equal stage.stage_id")
 
@@ -105,16 +197,34 @@ class GameStateV2(ContractModel):
 
     @model_validator(mode="after")
     def validate_stage_member_sets(self) -> Self:
-        required_members = set(self.room.required_member_ids)
-        if not set(self.stage.read_member_ids).issubset(required_members):
-            raise ValueError("read_member_ids must be a subset of room members")
-        if not set(self.stage.discussion_close_member_ids).issubset(required_members):
-            raise ValueError("discussion_close_member_ids must be a subset of room members")
-        settlement = self.stage.settlement
-        if settlement is not None and not set(settlement.required_member_ids).issubset(
-            required_members
+        required_member_ids = self.room.required_member_ids
+        required_members = set(required_member_ids)
+        for field_name, member_ids in (
+            ("read_member_ids", self.stage.read_member_ids),
+            ("discussion_close_member_ids", self.stage.discussion_close_member_ids),
         ):
-            raise ValueError("settlement members must be a subset of room members")
+            if not set(member_ids).issubset(required_members):
+                raise ValueError(f"{field_name} must be a subset of room members")
+            expected = tuple(
+                member_id for member_id in required_member_ids if member_id in member_ids
+            )
+            if member_ids != expected:
+                raise ValueError(f"{field_name} must use canonical room member order")
+
+        settlement = self.stage.settlement
+        if settlement is not None and settlement.required_member_ids != required_member_ids:
+            raise ValueError("settlement members must equal room members in canonical order")
+
+        for hint in self.stage.hints:
+            if not set(hint.confirming_member_ids).issubset(required_members):
+                raise ValueError("hint confirming members must be a subset of room members")
+            expected = tuple(
+                member_id
+                for member_id in required_member_ids
+                if member_id in hint.confirming_member_ids
+            )
+            if hint.confirming_member_ids != expected:
+                raise ValueError("hint confirmations must use canonical room member order")
         return self
 
 

@@ -39,11 +39,14 @@ class StoredSession(BaseModel):
     id: UUID
     script_id: str
     player_id: UUID | None
-    player_character_id: str
+    player_character_id: str | None
     state: SessionRuntimeState
     status: str
     created_at: datetime
     updated_at: datetime
+    mode: str = "legacy_single"
+    revision: int = 0
+    event_head_sequence: int = 0
 
 
 # ── 检查点与行动副作用 ──

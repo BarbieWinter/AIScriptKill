@@ -13,10 +13,10 @@
 - API：
   - `CORS_ORIGINS`，默认本地前端 origins。
   - `RATE_LIMIT_PER_MINUTE`，默认 120。
-- MP-0 预留开关：
-  - `MULTIPLAYER_V1=false`。
-  - `ROOM_EVENTS_V1=false`。
-  - `AI_DM_V1=false`。
+- Multiplayer rollout：
+  - `MULTIPLAYER_V1=false`：MP-2 HTTP room gate，默认 fail closed。
+  - `ROOM_EVENTS_V1=false`：后续 chat/event/replay，当前无消费方。
+  - `AI_DM_V1=false`：后续公共 AI DM，当前无消费方。
 - RAG embedding：
   - `RAG_EMBEDDING_PROVIDER`，取值 `deterministic` 或 `dashscope`，默认 `deterministic`。
   - `RAG_EMBEDDING_DIMENSIONS`，固定为 1024。
@@ -29,7 +29,11 @@
   - `NPC_OPENAI_MAX_TOKENS`，默认 512，范围 64–2048。
   - `NPC_OPENAI_TIMEOUT_SECONDS`，默认 20 秒，范围 1–60 秒。
 
-三个 MP-0 开关当前都默认关闭，而且只是配置面：即使设为 `true`，也不会挂载新的 HTTP/WebSocket 入口，不会创建多人房间、事件流、AI-DM、数据库或前端 UI。当前公开 WebSocket 仍只有未认证的有界 ping/pong 心跳。
+MP-2 frontend 还需要 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 来建立
+Supabase anonymous session；不要把 service-role secret 暴露给浏览器。`supabase/config.toml` 已启用
+`enable_anonymous_sign_ins = true`。`MULTIPLAYER_V1` 只是 fail-closed gate，不是部署完成信号；MP-2
+room backend 已接线并通过应用层验证，但真实 PostgreSQL 与 live-stack 浏览器 gate 尚未运行。公开
+WebSocket 仍只有未认证 ping/pong，不属于 MP-2 lobby。
 
 `.env.example` 只作为模板，不应提交真实 Supabase/database/provider 密钥。浏览器代码必须使用 FastAPI `/api/v1` 表面，而不是直接访问数据库。
 
@@ -56,6 +60,9 @@
 - `20260713010000_character_chapter_discoveries.sql`：允许 `session_discoveries.entity_type='character_chapter'`，以 `unlocked`/`viewed` 表示发放和阅读，并保持单调进度。
 - `20260713020000_rag_embedding_v4_1024.sql`：清空不可安全转换的派生知识行，把 embedding 列迁为 1024 维并重建 IVFFlat 索引。
 - `20260713030000_runtime_message_idempotency.sql`：为 `chat_messages` 增加 `engine_message_id` 及 `(session_id, engine_message_id)` 唯一索引，使图状态消息投影可幂等重放。
+- `20260718000000_multiplayer_rooms.sql`：additive/mode-aware 扩展 `game_sessions`，增加 frozen runtime
+  package tuple，并创建 members、assignments、invites、required members、principal reservations；五张
+  新表均为 service-role-only。
 
 `supabase/seed/dev_seed.sql` 是旧 Phase 1 seed，不是当前 `script-packages/snow-village` YAML 单人垂直切片。它仍使用标题“雪乡连环杀人事件”、入口 `prologue`、旧场景/阶段和最多 4 人配置，并构造 1536 维向量；当前迁移后的列是 `vector(1024)`。因此不能把 `make db-reset` 应用这个 seed 后的内容描述为当前可执行雪村包，且 1536 维 seed 行与现有 schema 不兼容。当前 live 验收应导入并发布 `script-packages/snow-village`，直到 seed 被同步。
 
@@ -72,7 +79,9 @@
 - `service_role` 和后端数据库角色可访问剧本、RAG 和运行期表。
 - `20260711073629_fastapi_data_access_boundary.sql` 已撤销 anon/authenticated 对剧本内容、catalogue、RAG 和运行期表的权限，并删除对应 player/public policies。
 - 浏览器只能调用 FastAPI。服务层根据当前阶段、角色和发现状态过滤线索、证据、章节、场景和会话数据。
-- `script_endings`、`script_dm_guides`、`script_character_chapters` 和 `script_knowledge` 只能由服务端读取。
+- `script_endings`、`script_dm_guides`、`script_character_chapters`、`script_knowledge`，以及 MP-2 的
+  `room_members`、`room_character_assignments`、`room_invites`、`room_required_members`、
+  `room_principal_reservations` 只能由服务端读取。
 
 应用层仍需仔细审查：匿名会话使用 `player_id = NULL`，只要 UUID 已知，当前服务层访问检查就会允许访问。剧本包导入和状态变更额外受管理员 FastAPI 依赖保护；该依赖只信任 Supabase `app_metadata`。
 
@@ -120,7 +129,14 @@ POST /sessions/{id}/actions
 
 同一会话动作由独立连接上的事务级 `pg_advisory_xact_lock` 跨进程串行化。checkpoint saver 使用另一专用会话并自行提交，业务投影使用请求会话提交；锁事务、checkpoint 事务和投影事务不是一个原子事务。图消息使用 `engine_message_id` 去重，发现记录使用 upsert，投影前还会把线索、证据查看、章节阅读和证物出示等六类单调进度合并回图状态。
 
-`engine/tests` 已覆盖 API 契约/JWT/WebSocket 边界、权限迁移、剧本包解析与导入、条件 DSL、StateGraph、RAG、人物章节、展示投影、runtime mapper、checkpoint codec/pending writes/并发和真实 PostgreSQL `SIGKILL` 恢复。前端有 build/lint scripts，但 `apps/web/package.json` 没有明确测试 runner。
+`engine/tests` 已覆盖 API 契约/JWT/WebSocket 边界、权限迁移结构、剧本包解析与导入、多人 snapshot
+codec、MP-2 room repository/service/routes、条件 DSL、StateGraph、RAG、人物章节、展示投影、runtime
+mapper 和 checkpoint。MP-2 backend 已通过 focused/full engine、Ruff、focused BasedPyright 与
+OpenAPI build。Frontend 的 1 passed Playwright 使用 mocked Supabase/HTTP contract；它不是 live-stack E2E。
+
+真实 MP-2 migration、constraints、并发、RLS/GRANT 和 republish probes 需要 disposable PostgreSQL。本次
+环境无法连接 Docker/Colima daemon，因此这些 lane 为 `BLOCKED / NOT RUN`；默认 pytest skip 不能写成
+PostgreSQL PASS。真实 multi-context Playwright 也保持 `BLOCKED / NOT RUN`。
 
 后续回归测试应优先覆盖：
 
@@ -136,4 +152,5 @@ POST /sessions/{id}/actions
 - 真实凭据只放 `.env` 或部署环境。
 - `/health/db` 要求 `script_knowledge` 等必要表存在；使用前确保迁移完整。
 - 浏览器表访问应始终被拒绝；保持 RLS、角色 grants、service-role 使用和 FastAPI 应用层检查同步。
-- 三个 MP-0 flag 不是部署完成信号；当前没有多人运行时、房间事件持久化、认证事件 WebSocket 或多人 UI。
+- `MULTIPLAYER_V1` 只是 MP-2 gate，不是部署完成信号；在真实 PostgreSQL 和 live-stack browser gates
+  通过前不得开放生产流量。`ROOM_EVENTS_V1`/`AI_DM_V1` 仍没有运行时消费方。

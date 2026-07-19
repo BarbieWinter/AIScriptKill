@@ -1,0 +1,9 @@
+characters:
+  - id: "investigator"
+    name: "调查员"
+    playable: true
+    order: 1
+  - id: "insider"
+    name: "知情人"
+    playable: true
+    order: 2

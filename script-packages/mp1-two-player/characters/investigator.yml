@@ -1,0 +1,14 @@
+id: "investigator"
+name: "调查员"
+identity:
+  public: "负责核对值班室异常记录的外部调查员"
+personality:
+  summary: "谨慎，优先核对时间与来源"
+  traits: ["克制", "细致"]
+knowledge:
+  investigation:
+    knows:
+      - "抵达照片的时间戳是二十点十分"
+  final-judgment:
+    knows:
+      - "公开材料之间存在十分钟的时间缺口"

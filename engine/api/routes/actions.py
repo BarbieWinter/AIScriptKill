@@ -6,10 +6,12 @@ from engine.api.middleware.auth import CurrentUserDep
 from engine.api.schemas import (
     ActionRequest,
     ActionResponse,
+    CommandActionResponse,
     FinalSubmissionRequest,
     SubmissionResult,
 )
 from engine.db.session import SessionDep
+from engine.services.session_commands import execute_command
 from engine.services.session_service import (
     perform_action as perform_session_action,
 )
@@ -25,13 +27,13 @@ router = APIRouter(prefix="/sessions/{session_id}", tags=["actions"])
 # ── 行动执行 ──
 
 
-@router.post("/actions", response_model=ActionResponse)
+@router.post("/actions", response_model=ActionResponse | CommandActionResponse)
 async def perform_action(
     session_id: str,
     payload: ActionRequest,
     current_user: CurrentUserDep,
     db: SessionDep,
-) -> ActionResponse:
+) -> ActionResponse | CommandActionResponse:
     """对可访问会话执行一个真实 LangGraph 玩家动作。
 
     Args:
@@ -48,6 +50,8 @@ async def perform_action(
             `INVALID_TOKEN`、`INVALID_SESSION_ID`、`INVALID_USER_ID`、
             `SESSION_NOT_FOUND`、`SCRIPT_PACKAGE_NOT_FOUND` 或核心动作错误。
     """
+    if payload.command_id is not None:
+        return await execute_command(session_id, payload, current_user, db)
     return await perform_session_action(session_id, payload, current_user, db)
 
 

@@ -10,7 +10,7 @@ import { toast } from "sonner";
 
 import { Sheet } from "@/components/ui/Sheet";
 import { api } from "@/lib/api";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 
 interface ChapterSummary {
   id: string;
@@ -84,11 +84,12 @@ export function CharacterChapters({
   onListChapters,
   onReadChapter,
 }: CharacterChaptersProps = {}) {
-  const storeOpen = useGameStore((state) => state.activePanel === "chapter");
-  const storeSessionId = useGameStore((state) => state.sessionId);
+  const storeOpen = useActiveGameStore((state) => state.activePanel === "chapter");
+  const storeSessionId = useActiveGameStore((state) => state.sessionId);
+  const closePanel = useActiveGameStore((state) => state.closePanel);
   const open = controlledOpen ?? storeOpen;
   const sessionId = controlledSessionId ?? storeSessionId;
-  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
+  const onClose = controlledOnClose ?? closePanel;
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
   const [selected, setSelected] = useState<ChapterContent | null>(null);
   const [loading, setLoading] = useState(false);

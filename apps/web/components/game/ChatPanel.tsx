@@ -15,11 +15,17 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useGameStore, type ActionType } from "@/stores/gameStore";
+import { type ActionType } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 import { api, isMockMode } from "@/lib/api";
 import { getMockEngine } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { Send, ChevronUp, Sparkles } from "lucide-react";
+import type {
+  ActionResponse,
+  AvailableCharacter,
+  ChatMessage,
+} from "@/lib/game/types";
 
 /* ── NPC 配置 ── */
 const npcConfig: Record<string, { name: string; color: string; icon: string }> = {
@@ -159,18 +165,41 @@ function MessageBubble({ msg }: { msg: any }) {
 }
 
 /* ── 主组件 ── */
-export function ChatPanel() {
-  const chatMessages = useGameStore((s) => s.chatMessages);
-  const isNpcTyping = useGameStore((s) => s.isNpcTyping);
-  const typingCharacterId = useGameStore((s) => s.typingCharacterId);
-  const addMessage = useGameStore((s) => s.addMessage);
-  const setNpcTyping = useGameStore((s) => s.setNpcTyping);
-  const availableCharacters = useGameStore((s) => s.availableCharacters);
-  const currentStage = useGameStore((s) => s.currentStage);
-  const sessionId = useGameStore((s) => s.sessionId);
-  const setStage = useGameStore((s) => s.setStage);
-  const setScene = useGameStore((s) => s.setScene);
-  const setActions = useGameStore((s) => s.setActions);
+interface ChatPanelProps {
+  sessionId?: string | null;
+  messages?: ChatMessage[];
+  characters?: AvailableCharacter[];
+  currentStage?: string;
+  pending?: boolean;
+  onTalk?: (characterId: string, message: string) => Promise<ActionResponse>;
+  onAdvance?: (reason: string) => Promise<ActionResponse>;
+}
+
+export function ChatPanel({
+  sessionId: controlledSessionId,
+  messages: controlledMessages,
+  characters: controlledCharacters,
+  currentStage: controlledStage,
+  pending = false,
+  onTalk,
+  onAdvance,
+}: ChatPanelProps = {}) {
+  const storeMessages = useActiveGameStore((s) => s.chatMessages);
+  const chatMessages = controlledMessages ?? storeMessages;
+  const isNpcTyping = useActiveGameStore((s) => s.isNpcTyping);
+  const typingCharacterId = useActiveGameStore((s) => s.typingCharacterId);
+  const addMessage = useActiveGameStore((s) => s.addMessage);
+  const setNpcTyping = useActiveGameStore((s) => s.setNpcTyping);
+  const storeCharacters = useActiveGameStore((s) => s.availableCharacters);
+  const availableCharacters = controlledCharacters ?? storeCharacters;
+  const storeStage = useActiveGameStore((s) => s.currentStage);
+  const currentStage = controlledStage ?? storeStage;
+  const storeSessionId = useActiveGameStore((s) => s.sessionId);
+  const sessionId = controlledSessionId ?? storeSessionId;
+  const setStage = useActiveGameStore((s) => s.setStage);
+  const setScene = useActiveGameStore((s) => s.setScene);
+  const setActions = useActiveGameStore((s) => s.setActions);
+  const openPanel = useActiveGameStore((s) => s.openPanel);
 
   const [inputText, setInputText] = useState("");
   const [selectedChar, setSelectedChar] = useState("wangdada");
@@ -197,17 +226,20 @@ export function ChatPanel() {
   /** 发送消息 → 触发 NPC 回复 */
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || !sessionId || isNpcTyping) return;
+    if (!text || !sessionId || isNpcTyping || pending) return;
 
     shouldFollowLatestRef.current = true;
-    addMessage({
-      id: `msg-p-${Date.now()}`,
-      role: "player",
-      character_id: null,
-      text,
-      timestamp: new Date().toISOString(),
-    });
-    setInputText("");
+    const controlled = Boolean(onTalk);
+    if (!controlled) {
+      addMessage({
+        id: `msg-p-${Date.now()}`,
+        role: "player",
+        character_id: null,
+        text,
+        timestamp: new Date().toISOString(),
+      });
+      setInputText("");
+    }
     setNpcTyping(selectedChar);
 
     try {
@@ -223,6 +255,12 @@ export function ChatPanel() {
             timestamp: new Date().toISOString(),
           });
         }
+        return;
+      }
+
+      if (onTalk) {
+        await onTalk(selectedChar, text);
+        setInputText("");
         return;
       }
 
@@ -250,17 +288,21 @@ export function ChatPanel() {
     addMessage,
     inputText,
     isNpcTyping,
+    onTalk,
+    pending,
     selectedChar,
     sessionId,
     setNpcTyping,
   ]);
 
   const handleAdvance = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || pending) return;
     try {
-      const result = await api.performAction(sessionId, "request_advance", {
-        reason: "玩家请求推进",
-      });
+      const result = onAdvance
+        ? await onAdvance("玩家请求推进")
+        : await api.performAction(sessionId, "request_advance", {
+            reason: "玩家请求推进",
+          });
       if (result.type === "advance_denied") {
         toast(result.hint, { icon: "💡", duration: 4000 });
         return;
@@ -277,7 +319,7 @@ export function ChatPanel() {
         description: "请检查人物章节、调查材料和证物出示是否完成。",
       });
     }
-  }, [sessionId, setActions, setScene, setStage]);
+  }, [onAdvance, pending, sessionId, setActions, setScene, setStage]);
 
   const currentCharConfig = npcConfig[selectedChar] || { name: selectedChar, color: "#fff", icon: "?" };
   const canShowAdvance = currentStage !== "epilogue" && currentStage !== "back_door_judgement";
@@ -296,7 +338,7 @@ export function ChatPanel() {
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2 space-y-1.5 scroll-smooth"
       >
         {chatMessages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-white/30 text-sm">
+          <div className="flex flex-col items-center justify-center h-full text-white/30 text-sm" data-testid="chat-empty">
             <p className="mb-1 text-lg">💬</p>
             <p>故事即将开始……</p>
           </div>
@@ -377,13 +419,13 @@ export function ChatPanel() {
 
           {/* 快捷按钮 */}
           <button
-            onClick={() => useGameStore.getState().openPanel("evidence")}
+            onClick={() => openPanel("evidence")}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/50 hover:text-white/80 hover:border-white/20 transition-all"
           >
             [出示证物]
           </button>
           <button
-            onClick={() => useGameStore.getState().openPanel("clue")}
+            onClick={() => openPanel("clue")}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/50 hover:text-white/80 hover:border-white/20 transition-all"
           >
             [线索板]
@@ -405,12 +447,14 @@ export function ChatPanel() {
                 }
               }}
               placeholder={`对 ${currentCharConfig.name} 说点什么……`}
+              data-testid="chat-input"
               className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white outline-none transition-all placeholder:text-white/25 focus:border-[var(--theme-primary)]/50 focus:bg-white/[0.08]"
             />
           </div>
           <button
             onClick={handleSend}
-            disabled={!inputText.trim()}
+            data-testid="chat-send"
+            disabled={!inputText.trim() || pending}
             className="flex items-center justify-center rounded-xl bg-[var(--theme-primary)] px-4 text-white transition-all hover:bg-[var(--theme-primary)]/80 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-[var(--theme-primary)]/20"
           >
             <Send className="h-4 w-4" />
@@ -418,6 +462,7 @@ export function ChatPanel() {
           {canShowAdvance && (
             <button
               onClick={handleAdvance}
+              disabled={pending}
               className="hidden sm:flex items-center gap-1 rounded-xl border border-white/10 px-3 py-2.5 text-xs text-white/50 hover:text-white/80 hover:border-white/20 transition-all"
               title="推进到下一阶段"
             >

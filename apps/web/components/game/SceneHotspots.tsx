@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { api, isMockMode } from "@/lib/api";
 import { getMockEngine } from "@/lib/mock-data";
 import { toast } from "sonner";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 import { Search } from "lucide-react";
 
 interface Hotspot {
@@ -30,26 +30,33 @@ interface SceneHotspotsProps {
   sceneId: string;
   hotspots: Hotspot[];
   discovered?: string[];
+  sessionId?: string | null;
+  onInvestigate?: (sceneId: string, hotspotId: string) => Promise<unknown>;
+  disabled?: boolean;
 }
 
 export function SceneHotspots({
   sceneId,
   hotspots,
   discovered = [],
+  sessionId: controlledSessionId,
+  onInvestigate,
+  disabled = false,
 }: SceneHotspotsProps) {
-  const sessionId = useGameStore((s) => s.sessionId);
-  const addMessage = useGameStore((s) => s.addMessage);
-  const addClue = useGameStore((s) => s.addClue);
-  const addEvidence = useGameStore((s) => s.addEvidence);
-  const setClues = useGameStore((s) => s.setClues);
-  const setEvidences = useGameStore((s) => s.setEvidences);
+  const storeSessionId = useActiveGameStore((s) => s.sessionId);
+  const sessionId = controlledSessionId ?? storeSessionId;
+  const addMessage = useActiveGameStore((s) => s.addMessage);
+  const addClue = useActiveGameStore((s) => s.addClue);
+  const addEvidence = useActiveGameStore((s) => s.addEvidence);
+  const setClues = useActiveGameStore((s) => s.setClues);
+  const setEvidences = useActiveGameStore((s) => s.setEvidences);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [discoveredIds, setDiscoveredIds] = useState<Set<string>>(
     () => new Set(discovered)
   );
 
   const handleClick = async (hotspot: Hotspot) => {
-    if (!sessionId || discoveredIds.has(hotspot.id) || activeId) return;
+    if (!sessionId || disabled || discoveredIds.has(hotspot.id) || activeId) return;
     setActiveId(hotspot.id);
 
     try {
@@ -71,6 +78,8 @@ export function SceneHotspots({
         result.discovered_evidences?.forEach((evidence: any, i: number) => {
           setTimeout(() => addEvidence(evidence), 600 + i * 200);
         });
+      } else if (onInvestigate) {
+        await onInvestigate(sceneId, hotspot.id);
       } else {
         const result = await api.performAction(sessionId, "examine_scene", {
           scene_id: sceneId,
@@ -138,7 +147,7 @@ export function SceneHotspots({
           >
             <button
               onClick={() => handleClick(hotspot)}
-              disabled={isDiscovered}
+              disabled={disabled || isDiscovered}
               className="group relative w-full h-full flex items-center justify-center"
             >
               {/* 热区背景 */}

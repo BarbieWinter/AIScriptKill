@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
 
@@ -19,7 +20,7 @@ from langgraph.checkpoint.base import (
     PendingWrite,
 )
 from langgraph.checkpoint.serde.base import SerializerProtocol
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,12 +37,18 @@ from engine.core.checkpoint_codec import (
 )
 from engine.core.checkpoint_models import (
     AsyncCheckpointOnlyError,
+    CheckpointAttemptFencedError,
     CheckpointConfigError,
     CheckpointDbSession,
+    CheckpointLocator,
     checkpoint_config,
     checkpoint_locator,
 )
-from engine.db.tables import session_checkpoint_writes, session_checkpoints
+from engine.db.tables import (
+    session_checkpoint_writes,
+    session_checkpoints,
+    session_command_receipts,
+)
 
 type IndexedPendingWrite = tuple[int, PendingWrite]
 
@@ -57,12 +64,17 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
     """
 
     db: AsyncSession | CheckpointDbSession
+    lease_seconds: int = 30
     serde: SerializerProtocol = field(
         default=STRICT_CHECKPOINT_SERDE,
         init=False,
         repr=False,
     )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.lease_seconds) is not int or self.lease_seconds <= 0:
+            raise ValueError("lease_seconds must be a positive integer")
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         """拒绝同步读取，因为本保存器持有异步数据库会话。"""
@@ -118,6 +130,92 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
             finally:
                 await self.db.rollback()
 
+    async def alatest_command_config(
+        self,
+        thread_id: str,
+        command_id: UUID | str,
+        command_attempt: int,
+    ) -> RunnableConfig | None:
+        """返回指定命令尝试中最大 checkpoint_id 的精确配置。"""
+
+        item = await self.aget_tuple(
+            checkpoint_config(
+                thread_id,
+                command_id=str(command_id),
+                command_attempt=command_attempt,
+            )
+        )
+        return item.config if item is not None else None
+
+    async def alatest_command_config_through_attempt(
+        self,
+        thread_id: str,
+        command_id: UUID | str,
+        max_attempt: int,
+    ) -> RunnableConfig | None:
+        """跨同一命令不晚于 max_attempt 的尝试返回最大 checkpoint_id。"""
+
+        base = checkpoint_config(
+            thread_id,
+            command_id=str(command_id),
+            command_attempt=max_attempt,
+        )
+        locator = checkpoint_locator(base)
+        async with self._lock:
+            try:
+                result = await self.db.execute(
+                    select(session_checkpoints.c.thread_ts)
+                    .where(
+                        session_checkpoints.c.session_id == UUID(locator.thread_id),
+                        session_checkpoints.c.command_id == UUID(cast(str, locator.command_id)),
+                        session_checkpoints.c.command_attempt <= max_attempt,
+                        session_checkpoints.c.state.contains({"version": ENCODING_VERSION}),
+                    )
+                    .order_by(
+                        session_checkpoints.c.thread_ts.desc(),
+                        session_checkpoints.c.created_at.desc(),
+                    )
+                    .limit(1)
+                )
+                row = result.mappings().one_or_none()
+            finally:
+                await self.db.rollback()
+        if row is None:
+            return None
+        return checkpoint_config(
+            locator.thread_id,
+            str(row["thread_ts"]),
+            command_id=locator.command_id,
+            command_attempt=max_attempt,
+        )
+
+    async def aget_latest_command_checkpoint(
+        self,
+        *,
+        thread_id: str,
+        command_id: UUID | str,
+        command_attempt: int | None = None,
+        max_attempt: int | None = None,
+    ) -> CheckpointTuple | None:
+        """加载精确尝试或截至 max_attempt 的最大 checkpoint_id。"""
+
+        if (command_attempt is None) == (max_attempt is None):
+            raise CheckpointConfigError("command_attempt")
+        if max_attempt is not None:
+            exact = await self.alatest_command_config_through_attempt(
+                thread_id,
+                command_id,
+                max_attempt,
+            )
+            return await self.aget_tuple(exact) if exact is not None else None
+        return await self.aget_tuple(
+            checkpoint_config(
+                thread_id,
+                command_id=str(command_id),
+                command_attempt=command_attempt,
+            )
+        )
+
     async def _aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         locator = checkpoint_locator(config)
         stmt = (
@@ -138,6 +236,18 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         )
         if locator.checkpoint_id is not None:
             stmt = stmt.where(session_checkpoints.c.thread_ts == locator.checkpoint_id)
+        if locator.command_id is not None and locator.command_attempt is not None:
+            stmt = stmt.where(session_checkpoints.c.command_id == UUID(locator.command_id))
+            if locator.checkpoint_id is None:
+                stmt = stmt.where(
+                    session_checkpoints.c.command_attempt == locator.command_attempt,
+                )
+            else:
+                # 精确恢复可以读取同一命令的前序尝试，但绝不能跨命令或读取未来尝试。
+                # 返回配置仍携带当前尝试，后续写入会被 receipt 围栏并标记为当前代。
+                stmt = stmt.where(
+                    session_checkpoints.c.command_attempt <= locator.command_attempt,
+                )
         result = await self.db.execute(stmt)
         row = result.mappings().one_or_none()
         if row is None:
@@ -149,10 +259,10 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
             (checkpoint_id,),
         )
         return CheckpointTuple(
-            config=checkpoint_config(locator.thread_id, checkpoint_id),
+            config=_located_checkpoint_config(locator, checkpoint_id),
             checkpoint=stored.checkpoint,
             metadata=stored.metadata,
-            parent_config=checkpoint_config(locator.thread_id, str(row["parent_ts"]))
+            parent_config=_located_checkpoint_config(locator, str(row["parent_ts"]))
             if row["parent_ts"] is not None
             else None,
             pending_writes=_merge_pending_write_records(
@@ -201,6 +311,11 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
                         session_checkpoints.c.created_at.desc(),
                     )
                 )
+                if locator.command_id is not None and locator.command_attempt is not None:
+                    stmt = stmt.where(
+                        session_checkpoints.c.command_id == UUID(locator.command_id),
+                        session_checkpoints.c.command_attempt == locator.command_attempt,
+                    )
                 result = await self.db.execute(stmt)
                 for row in result.mappings().all():
                     checkpoint_id = str(row["thread_ts"])
@@ -236,10 +351,10 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
                 await self.db.rollback()
         items = [
             CheckpointTuple(
-                config=checkpoint_config(locator.thread_id, checkpoint_id),
+                config=_located_checkpoint_config(locator, checkpoint_id),
                 checkpoint=checkpoint,
                 metadata=metadata,
-                parent_config=checkpoint_config(locator.thread_id, parent_id)
+                parent_config=_located_checkpoint_config(locator, parent_id)
                 if parent_id is not None
                 else None,
                 pending_writes=_merge_pending_write_records(
@@ -266,6 +381,7 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         checkpoint_id = str(checkpoint["id"])
         async with self._lock:
             try:
+                await self._renew_command_lease(locator)
                 legacy_writes = await self._aload_legacy_pending_writes(
                     locator.thread_id,
                     checkpoint_id,
@@ -280,6 +396,8 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
                     thread_ts=checkpoint_id,
                     parent_ts=locator.checkpoint_id,
                     state=stored_state,
+                    command_id=UUID(locator.command_id) if locator.command_id is not None else None,
+                    command_attempt=locator.command_attempt,
                 )
                 await self.db.execute(
                     statement.on_conflict_do_update(
@@ -290,6 +408,10 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
                         set_={
                             "parent_ts": locator.checkpoint_id,
                             "state": stored_state,
+                            "command_id": (
+                                UUID(locator.command_id) if locator.command_id is not None else None
+                            ),
+                            "command_attempt": locator.command_attempt,
                         },
                     ),
                 )
@@ -297,7 +419,7 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
             except BaseException:
                 await self.db.rollback()
                 raise
-        return checkpoint_config(locator.thread_id, checkpoint_id)
+        return _located_checkpoint_config(locator, checkpoint_id)
 
     async def aput_writes(
         self,
@@ -312,7 +434,7 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         locator = checkpoint_locator(config)
         if locator.checkpoint_id is None:
             raise CheckpointConfigError("checkpoint_id")
-        if len(writes) == 0:
+        if len(writes) == 0 and locator.command_id is None:
             return
         records = [
             {
@@ -327,26 +449,52 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
         ]
         async with self._lock:
             try:
-                statement = insert(session_checkpoint_writes).values(records)
-                await self.db.execute(
-                    statement.on_conflict_do_update(
-                        index_elements=(
-                            session_checkpoint_writes.c.session_id,
-                            session_checkpoint_writes.c.checkpoint_id,
-                            session_checkpoint_writes.c.task_id,
-                            session_checkpoint_writes.c.write_idx,
+                await self._renew_command_lease(locator)
+                if records:
+                    statement = insert(session_checkpoint_writes).values(records)
+                    await self.db.execute(
+                        statement.on_conflict_do_update(
+                            index_elements=(
+                                session_checkpoint_writes.c.session_id,
+                                session_checkpoint_writes.c.checkpoint_id,
+                                session_checkpoint_writes.c.task_id,
+                                session_checkpoint_writes.c.write_idx,
+                            ),
+                            set_={
+                                "channel": statement.excluded.channel,
+                                "value": statement.excluded.value,
+                            },
+                            where=statement.excluded.write_idx < 0,
                         ),
-                        set_={
-                            "channel": statement.excluded.channel,
-                            "value": statement.excluded.value,
-                        },
-                        where=statement.excluded.write_idx < 0,
-                    ),
-                )
+                    )
                 await self.db.commit()
             except BaseException:
                 await self.db.rollback()
                 raise
+
+    async def _renew_command_lease(self, locator: CheckpointLocator) -> None:
+        if locator.command_id is None or locator.command_attempt is None:
+            return
+        result = await self.db.execute(
+            update(session_command_receipts)
+            .where(
+                session_command_receipts.c.session_id == UUID(locator.thread_id),
+                session_command_receipts.c.command_id == UUID(locator.command_id),
+                session_command_receipts.c.status == "processing",
+                session_command_receipts.c.attempt_count == locator.command_attempt,
+            )
+            .values(
+                lease_expires_at=func.now() + timedelta(seconds=self.lease_seconds),
+                updated_at=func.now(),
+            )
+            .returning(session_command_receipts.c.command_id)
+        )
+        if result.mappings().one_or_none() is None:
+            raise CheckpointAttemptFencedError(
+                locator.thread_id,
+                locator.command_id,
+                locator.command_attempt,
+            )
 
     async def _aload_pending_writes(
         self,
@@ -434,6 +582,15 @@ class SupabaseSessionCheckpointSaver(BaseCheckpointSaver[int]):
             except BaseException:
                 await self.db.rollback()
                 raise
+
+
+def _located_checkpoint_config(locator: CheckpointLocator, checkpoint_id: str) -> RunnableConfig:
+    return checkpoint_config(
+        locator.thread_id,
+        checkpoint_id,
+        command_id=locator.command_id,
+        command_attempt=locator.command_attempt,
+    )
 
 
 def _merge_pending_write_records(

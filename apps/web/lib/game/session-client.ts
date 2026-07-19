@@ -12,9 +12,13 @@ import type {
   CharacterChapterSummary,
   ChatMessage,
   Clue,
+  CommandActionResponse,
+  CommandReceiptResponse,
+  DurableActionEnvelope,
   Evidence,
   Review,
   SessionCharacter,
+  SessionEventPage,
   SessionPresentation,
   SessionSource,
   SessionState,
@@ -54,6 +58,19 @@ export interface GameSessionClient {
   }>;
   getCards(options?: RequestOptions): Promise<{ cards: Card[] }>;
   getPresentation(options?: RequestOptions): Promise<SessionPresentation | null>;
+  submitCommand?(
+    envelope: DurableActionEnvelope,
+    options?: RequestOptions
+  ): Promise<CommandActionResponse>;
+  getCommandReceipt?(
+    commandId: string,
+    options?: RequestOptions
+  ): Promise<CommandReceiptResponse>;
+  getEvents?(
+    afterSequence: number,
+    limit?: number,
+    options?: RequestOptions
+  ): Promise<SessionEventPage>;
   examine(
     sceneId: string,
     hotspotId: string,
@@ -175,6 +192,38 @@ export class LiveSessionClient implements GameSessionClient {
       if (error instanceof SessionClientError && error.status === 404) return null;
       throw error;
     }
+  }
+
+  submitCommand(envelope: DurableActionEnvelope, options?: RequestOptions) {
+    return liveRequest<CommandActionResponse>(
+      "POST",
+      `/sessions/${this.sessionId}/actions`,
+      { ...options, body: envelope }
+    );
+  }
+
+  getCommandReceipt(commandId: string, options?: RequestOptions) {
+    return liveRequest<CommandReceiptResponse>(
+      "GET",
+      `/sessions/${this.sessionId}/commands/${encodeURIComponent(commandId)}`,
+      options
+    );
+  }
+
+  getEvents(
+    afterSequence: number,
+    limit = 100,
+    options?: RequestOptions
+  ) {
+    const query = new URLSearchParams({
+      after_sequence: String(afterSequence),
+      limit: String(limit),
+    });
+    return liveRequest<SessionEventPage>(
+      "GET",
+      `/sessions/${this.sessionId}/events?${query}`,
+      options
+    );
   }
 
   private performAction(
@@ -313,6 +362,8 @@ export class MockSessionClient implements GameSessionClient {
       viewed_evidences: [...this.viewedEvidenceIds],
       current_scene: scene.id,
       pending_media: [],
+      revision: 0,
+      event_head_sequence: 0,
     };
   }
 

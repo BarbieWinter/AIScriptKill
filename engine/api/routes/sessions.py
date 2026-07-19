@@ -1,8 +1,15 @@
 """公开游戏会话创建与查询端点。"""
 
-from fastapi import APIRouter
+from typing import Annotated
+from uuid import UUID
 
-from engine.api.middleware.auth import CurrentUserDep
+from fastapi import APIRouter, Body, Query, Response, status
+
+from engine.api.middleware.auth import (
+    CurrentUserDep,
+    VerifiedAnonymousPrincipalDep,
+    require_verified_anonymous_principal,
+)
 from engine.api.schemas import (
     CardListResponse,
     CharacterChapterListResponse,
@@ -10,17 +17,42 @@ from engine.api.schemas import (
     CharacterListResponse,
     ChatHistoryResponse,
     ClueListResponse,
+    CommandReceiptResponse,
     CreateSessionRequest,
     CreateSessionResponse,
     EvidenceListResponse,
     EvidenceViewedResponse,
     ReviewResponse,
+    SessionEventPage,
     SessionPresentationResponse,
     SessionStateResponse,
     UpdateSessionRequest,
     UpdateSessionResponse,
 )
+from engine.api.schemas.multiplayer_rooms import (
+    AcceptRoomInviteResponse,
+    CreateMultiplayerSessionRequest,
+    CreateMultiplayerSessionResponse,
+    CreateRoomInviteRequest,
+    CreateRoomInviteResponse,
+    CurrentMultiplayerSession,
+    LobbySnapshotV1,
+)
+from engine.contracts.multiplayer_v1.commands import CommandResultV1, MultiplayerCommand
 from engine.db.session import SessionDep
+from engine.services.multiplayer_room_service import (
+    accept_room_invite,
+    create_multiplayer_session,
+    create_room_invite,
+    execute_lobby_command,
+    get_current_multiplayer_session,
+    get_lobby_snapshot,
+    revoke_room_invite,
+)
+from engine.services.session_commands import (
+    get_command_receipt,
+    get_session_events,
+)
 from engine.services.session_service import (
     get_cards,
     get_character_chapters,
@@ -44,32 +76,246 @@ from engine.services.session_service import (
 # ── 会话与数据查询路由 ──
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+invite_router = APIRouter(prefix="/session-invites", tags=["sessions"])
 
 
 # ── 会话生命周期 ──
 
 
-@router.post("", response_model=CreateSessionResponse)
+@router.post(
+    "",
+    response_model=CreateSessionResponse | CreateMultiplayerSessionResponse,
+    responses={status.HTTP_201_CREATED: {"model": CreateMultiplayerSessionResponse}},
+)
 async def create_session(
-    payload: CreateSessionRequest,
+    payload: Annotated[
+        CreateSessionRequest | CreateMultiplayerSessionRequest,
+        Body(),
+    ],
     current_user: CurrentUserDep,
     db: SessionDep,
-) -> CreateSessionResponse:
-    """从已发布剧本包创建游戏会话。
+    response: Response,
+) -> CreateSessionResponse | CreateMultiplayerSessionResponse:
+    """保留 legacy 创建契约，并按严格 mode 分派 Multiplayer v1 创建。
 
     Args:
-        payload: 剧本包、玩家名称和必需的偏好角色 ID。
-        current_user: 由鉴权依赖解析的可选 Supabase 身份。
-        db: 请求作用域的异步数据库会话。
+        payload: legacy 或带 ``mode=multiplayer_v1`` 的严格创建载荷。
+        current_user: 可选 JWT 解析结果；多人分支必须是 verified anonymous identity。
+        db: 请求作用域数据库会话。
+        response: 用于仅把 multiplayer 创建响应设为 201 的 FastAPI response。
 
     Returns:
-        已创建会话的标识符和初始运行时状态。
+        对应模式的已创建会话响应。
 
     Raises:
-        ApiError: 认证或创建失败时抛出 `INVALID_TOKEN`、`INVALID_USER_ID` 或
-            `SCRIPT_PACKAGE_NOT_FOUND`。
+        ApiError: 身份、feature gate、剧本包或未完成房间约束不满足。
     """
+
+    if isinstance(payload, CreateMultiplayerSessionRequest):
+        principal = await require_verified_anonymous_principal(current_user)
+        created = await create_multiplayer_session(payload, principal, db)
+        response.status_code = status.HTTP_201_CREATED
+        return created
     return await start_session(payload, current_user, db)
+
+
+@router.get("/current", response_model=CurrentMultiplayerSession | None)
+async def get_current_room(
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> CurrentMultiplayerSession | None:
+    """返回当前 anonymous principal 的未完成多人房间定位器。
+
+    Args:
+        principal: 经过验证的 anonymous principal。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        当前 lobby/active 定位器，或没有 reservation 时返回 null。
+
+    Raises:
+        ApiError: 身份无效或 multiplayer feature 被禁用。
+    """
+
+    return await get_current_multiplayer_session(principal, db)
+
+
+@invite_router.post("/{token}/accept", response_model=AcceptRoomInviteResponse)
+async def accept_invite(
+    token: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> AcceptRoomInviteResponse:
+    """使用一次性明文 token 加入房间；token 本身不授予任何读取权限。"""
+
+    return await accept_room_invite(token, principal, db)
+
+
+@router.post(
+    "/{session_id}/invites",
+    response_model=CreateRoomInviteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_invite(
+    session_id: str,
+    payload: CreateRoomInviteRequest,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> CreateRoomInviteResponse:
+    """由 lobby 房主创建短时邀请，并仅在此响应返回一次明文 token。
+
+    Args:
+        session_id: 多人房间 UUID。
+        payload: 受限的邀请 TTL。
+        principal: 经过验证的 anonymous principal。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        新邀请 ID、一次性 token 和数据库时间派生的 expiry。
+
+    Raises:
+        ApiError: 房间、成员、房主、容量或 feature gate 校验失败。
+    """
+
+    return await create_room_invite(session_id, payload, principal, db)
+
+
+@router.delete(
+    "/{session_id}/invites/{invite_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_invite(
+    session_id: str,
+    invite_id: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> Response:
+    """由房主撤销邀请；重复撤销保持 204 且不推进 revision。
+
+    Args:
+        session_id: 多人房间 UUID。
+        invite_id: 待撤销邀请 UUID。
+        principal: 经过验证的 anonymous principal。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        无响应体的 204 响应。
+
+    Raises:
+        ApiError: 房间、邀请、成员、房主或 feature gate 校验失败。
+    """
+
+    await revoke_room_invite(session_id, invite_id, principal, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{session_id}/snapshot", response_model=LobbySnapshotV1)
+async def get_room_snapshot(
+    session_id: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> LobbySnapshotV1:
+    """返回不含 principal、token、package 定义或私有章节的安全房间投影。
+
+    Args:
+        session_id: 多人房间 UUID。
+        principal: 经过验证的 anonymous principal。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        仅供房间成员读取的 participant-safe lobby/active 投影。
+
+    Raises:
+        ApiError: 房间、成员、固定 package 或 feature gate 校验失败。
+    """
+
+    return await get_lobby_snapshot(session_id, principal, db)
+
+
+@router.post("/{session_id}/commands", response_model=CommandResultV1)
+async def post_room_command(
+    session_id: str,
+    command: MultiplayerCommand,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> CommandResultV1:
+    """解析完整多人命令 union，并仅执行 MP-2 lobby 命令。
+
+    Args:
+        session_id: 多人房间 UUID。
+        command: 完整 ``MultiplayerCommand`` 严格 discriminated union。
+        principal: 经过验证的 anonymous principal。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        MP-2 非持久幂等的 accepted command result。
+
+    Raises:
+        ApiError: 非大厅命令、revision、权限、状态或 feature gate 校验失败。
+    """
+
+    return await execute_lobby_command(session_id, command, principal, db)
+
+
+@router.get(
+    "/{session_id}/commands/{command_id}",
+    response_model=CommandReceiptResponse,
+)
+async def get_receipt(
+    session_id: str,
+    command_id: UUID,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+) -> CommandReceiptResponse:
+    """Return one durable command receipt for an authorized session.
+
+    Args:
+        session_id: UUID string identifying the session.
+        command_id: Client command identity to replay.
+        current_user: Authenticated session principal.
+        db: Request-scoped asynchronous database session.
+
+    Returns:
+        The stored receipt and its terminal or processing state.
+
+    Raises:
+        ApiError: Raises ``SESSION_NOT_FOUND`` or ``COMMAND_NOT_FOUND`` when access
+            or the requested receipt fails.
+    """
+    return await get_command_receipt(session_id, command_id, current_user, db)
+
+
+@router.get("/{session_id}/events", response_model=SessionEventPage)
+async def list_events(
+    session_id: str,
+    current_user: CurrentUserDep,
+    db: SessionDep,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> SessionEventPage:
+    """Return ordered public events and an authoritative HTTP snapshot.
+
+    Args:
+        session_id: UUID string identifying the session.
+        current_user: Authenticated session principal.
+        db: Request-scoped asynchronous database session.
+        after_sequence: Exclusive event cursor, starting at zero.
+        limit: Maximum number of events to return, from 1 through 500.
+
+    Returns:
+        A participant-safe snapshot, ordered events, and the next cursor.
+
+    Raises:
+        ApiError: Raises ``SESSION_NOT_FOUND``, ``INVALID_EVENT_CURSOR`` or
+            ``INVALID_EVENT_LIMIT`` for inaccessible or invalid requests.
+    """
+    return await get_session_events(
+        session_id,
+        after_sequence,
+        limit,
+        current_user,
+        db,
+    )
 
 
 @router.get("/{session_id}", response_model=SessionStateResponse)

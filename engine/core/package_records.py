@@ -5,6 +5,7 @@ from typing import Final
 
 from engine.api.schemas.common import JsonValue
 from engine.core.package_archive import PackageArchiveError
+from engine.core.package_multiplayer import split_stage_mapping
 from engine.core.package_schema import (
     CharacterRecord,
     ClueRecord,
@@ -39,15 +40,19 @@ def stage_record_from_mapping(
     raw: JsonMapping,
     index_item: StageIndexItem,
     act_id: str | None,
+    multiplayer_enabled: bool = False,
 ) -> StageRecord:
     """校验一个阶段映射并序列化其可执行定义。"""
 
-    stage = StageDefinition.model_validate(raw)
+    legacy_raw, multiplayer_definition = split_stage_mapping(raw, multiplayer_enabled)
+    stage = StageDefinition.model_validate(legacy_raw)
+    definition = _stage_definition_mapping(legacy_raw, stage, index_item, act_id)
+    definition.update(multiplayer_definition)
     return StageRecord(
         id=stage.id,
         name=index_item.name,
         sort_order=index_item.sort_order,
-        definition=_stage_definition_mapping(raw, stage, index_item, act_id),
+        definition=definition,
     )
 
 

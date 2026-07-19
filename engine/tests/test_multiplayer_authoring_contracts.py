@@ -14,9 +14,6 @@ from engine.contracts.multiplayer_v1.authoring import (
     SecretVoteSettlementDefinition,
     SharedChoiceSettlementDefinition,
 )
-from engine.core.package_archive import PackageArchiveError
-from engine.core.package_loader import load_package_archive
-from engine.tests.package_loader_fixtures import minimal_package_files, package_archive
 
 
 def _policy_json(**overrides: object) -> str:
@@ -39,9 +36,10 @@ def _settlements() -> list[dict[str, object]]:
             "settlement_id": "vote-1",
             "question": "本阶段最可疑的人是谁？",
             "options": [
-                {"id": "option-a", "text": "甲"},
-                {"id": "option-b", "text": "乙"},
+                {"id": "option-a", "text": "甲", "outcome_id": "suspect-a"},
+                {"id": "option-b", "text": "乙", "outcome_id": "suspect-b"},
             ],
+            "tie_outcome_id": "split-vote",
             "reveal": "named_ballots",
             "submission_change": "forbidden",
             "default_effect": "record_and_continue",
@@ -50,7 +48,9 @@ def _settlements() -> list[dict[str, object]]:
             "mode": "shared_choice",
             "settlement_id": "choice-1",
             "question": "是否继续调查？",
-            "options": [{"id": "continue", "text": "继续调查"}],
+            "options": [
+                {"id": "continue", "text": "继续调查", "outcome_id": "continue-investigation"}
+            ],
             "reveal": "outcome_only",
             "submission_change": "allowed_before_complete",
             "default_effect": "record_and_continue",
@@ -60,7 +60,7 @@ def _settlements() -> list[dict[str, object]]:
             "settlement_id": "judgment-1",
             "question": "最终判断是什么？",
             "answer_mode": "shared_choice",
-            "options": [{"id": "suspect-a", "text": "指认甲"}],
+            "options": [{"id": "suspect-a", "text": "指认甲", "outcome_id": "accuse-a"}],
             "reveal": "named_ballots",
             "submission_change": "forbidden",
             "default_effect": "branch",
@@ -137,30 +137,59 @@ def test_all_settlement_modes_are_discriminated_and_round_trip() -> None:
 def test_settlement_definitions_reject_invalid_local_shapes() -> None:
     duplicate_options = _settlements()[1]
     duplicate_options["options"] = [
-        {"id": "same", "text": "甲"},
-        {"id": "same", "text": "乙"},
+        {"id": "same", "text": "甲", "outcome_id": "outcome-a"},
+        {"id": "same", "text": "乙", "outcome_id": "outcome-b"},
     ]
+    duplicate_outcomes = _settlements()[1]
+    duplicate_outcomes["options"] = [
+        {"id": "a", "text": "甲", "outcome_id": "same"},
+        {"id": "b", "text": "乙", "outcome_id": "same"},
+    ]
+    tie_matches_option = _settlements()[1]
+    tie_matches_option["tie_outcome_id"] = "suspect-a"
     empty_options = _settlements()[2]
     empty_options["options"] = []
     missing_question = _settlements()[1]
     del missing_question["question"]
+    missing_secret_tie = _settlements()[1]
+    del missing_secret_tie["tie_outcome_id"]
     old_field_name = _settlements()[1]
     old_field_name["submission_change_policy"] = old_field_name.pop("submission_change")
     final_without_answer_mode = _settlements()[3]
     del final_without_answer_mode["answer_mode"]
+    shared_final_with_tie = _settlements()[3]
+    shared_final_with_tie["tie_outcome_id"] = "tie"
+    individual_final_without_tie = _settlements()[3]
+    individual_final_without_tie["answer_mode"] = "individual_secret"
 
     invalid_definitions: list[dict[str, object]] = [
         duplicate_options,
+        duplicate_outcomes,
+        tie_matches_option,
         empty_options,
         missing_question,
+        missing_secret_tie,
         old_field_name,
         final_without_answer_mode,
+        shared_final_with_tie,
+        individual_final_without_tie,
         {"mode": "future_mode"},
         {"mode": "none", "options": []},
     ]
     for invalid in invalid_definitions:
         with pytest.raises(ValidationError):
             STAGE_SETTLEMENT_ADAPTER.validate_json(json.dumps(invalid))
+
+
+def test_individual_secret_final_judgment_requires_distinct_tie_outcome() -> None:
+    definition = _settlements()[3]
+    definition["answer_mode"] = "individual_secret"
+    definition["tie_outcome_id"] = "judgment-tie"
+
+    settlement = STAGE_SETTLEMENT_ADAPTER.validate_json(json.dumps(definition))
+
+    assert isinstance(settlement, FinalJudgmentSettlementDefinition)
+    assert settlement.tie_outcome_id == "judgment-tie"
 
 
 def test_complete_multiplayer_stage_round_trips_and_validates_local_ids() -> None:
@@ -209,26 +238,3 @@ def test_complete_multiplayer_stage_round_trips_and_validates_local_ids() -> Non
     for invalid_stage in invalid_stages:
         with pytest.raises(ValidationError):
             MULTIPLAYER_STAGE_ADAPTER.validate_json(json.dumps(invalid_stage))
-
-
-def test_authoring_contracts_remain_standalone_from_legacy_package_loader() -> None:
-    legacy_files = minimal_package_files()
-    package = load_package_archive(package_archive(legacy_files))
-
-    assert package.package.id == "minimal-case"
-    assert "multiplayer" not in package.package.config
-
-    multiplayer_files = minimal_package_files()
-    multiplayer_files["package.yml"] += """
-multiplayer:
-  min_players: 2
-  max_players: 4
-  character_assignment: required
-  start_policy: all_players_ready
-  duplicate_characters: false
-"""
-    with pytest.raises(PackageArchiveError) as exc_info:
-        load_package_archive(package_archive(multiplayer_files))
-
-    assert exc_info.value.code == "INVALID_PACKAGE_SCHEMA"
-    assert "multiplayer" in exc_info.value.message

@@ -53,6 +53,10 @@ class SessionStateResponse(ApiModel):
     viewed_evidences: list[str] = Field(description="Viewed evidence IDs.")
     current_scene: str = Field(description="Current scene ID.")
     pending_media: list[PendingMedia] = Field(description="Active media queue.")
+    revision: int = Field(default=0, ge=0, description="Authoritative session revision.")
+    event_head_sequence: int = Field(
+        default=0, ge=0, description="Latest public event sequence."
+    )
 
 
 # ── 会话展示投影 ──

@@ -1,0 +1,5 @@
+image_assets:
+  - id: "arrival-photo"
+    file: "assets/materials/arrival-photo.svg"
+    type: "image"
+    resolution: "640x360"

@@ -61,6 +61,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     api.include_router(sessions.router, prefix="/api/v1")
+    api.include_router(sessions.invite_router, prefix="/api/v1")
     api.include_router(actions.router, prefix="/api/v1")
     api.include_router(packages.router, prefix="/api/v1")
     api.include_router(websocket_router, prefix="/api/v1")

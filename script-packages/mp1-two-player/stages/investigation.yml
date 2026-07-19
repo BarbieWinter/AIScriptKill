@@ -1,0 +1,40 @@
+id: "investigation"
+name: "核对口供"
+sort_order: 0
+allowed_transitions: ["final-judgment"]
+entry_conditions: []
+exit_conditions: []
+available_actions: []
+available_characters: ["investigator", "insider"]
+chapters:
+  investigator: "investigator-investigation"
+  insider: "insider-investigation"
+public_materials:
+  - id: "arrival-photo"
+    reveal_at: "stage_enter"
+  - id: "witness-note"
+    reveal_at: "all_players_read"
+discussion:
+  suggested_minutes: 12
+  close_policy: "all_players"
+settlement:
+  mode: "secret_vote"
+  settlement_id: "investigation-vote"
+  question: "哪一份解释更符合公开时间线？"
+  options:
+    - id: "investigator-account"
+      text: "调查员的解释"
+      outcome_id: "trust-investigator"
+    - id: "insider-account"
+      text: "知情人的解释"
+      outcome_id: "trust-insider"
+  tie_outcome_id: "split-vote"
+  reveal: "named_ballots"
+  submission_change: "forbidden"
+  default_effect: "record_and_continue"
+hints:
+  - id: "timeline"
+    levels:
+      - "先把抵达照片与目击便签按时间排序。"
+      - "注意两份材料之间相隔十分钟。"
+      - "区分材料明确记录的事实与角色各自的解释。"

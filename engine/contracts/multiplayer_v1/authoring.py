@@ -39,10 +39,11 @@ class MultiplayerPolicy(ContractModel):
 
 
 class SettlementOption(ContractModel):
-    """声明结算中可选择的稳定选项 ID 和参与者文案。"""
+    """声明结算中可选择的稳定选项 ID、文案和阶段局部结果。"""
 
     id: Identifier
     text: str = Field(min_length=1)
+    outcome_id: Identifier
 
 
 class _SettlementWithOptions(ContractModel):
@@ -58,6 +59,9 @@ class _SettlementWithOptions(ContractModel):
         option_ids = [option.id for option in self.options]
         if len(option_ids) != len(set(option_ids)):
             raise ValueError("settlement option ids must be unique")
+        outcome_ids = [option.outcome_id for option in self.options]
+        if len(outcome_ids) != len(set(outcome_ids)):
+            raise ValueError("settlement option outcome ids must be unique")
         return self
 
 
@@ -72,9 +76,16 @@ class SecretVoteSettlementDefinition(_SettlementWithOptions):
     """声明每名成员的选项在揭晓前保持私有。"""
 
     mode: Literal[SettlementMode.SECRET_VOTE]
+    tie_outcome_id: Identifier
     reveal: SettlementReveal = SettlementReveal.NAMED_BALLOTS
     submission_change: SubmissionChangePolicy = SubmissionChangePolicy.FORBIDDEN
     default_effect: SettlementEffect = SettlementEffect.RECORD_AND_CONTINUE
+
+    @model_validator(mode="after")
+    def validate_tie_outcome(self) -> Self:
+        if self.tie_outcome_id in {option.outcome_id for option in self.options}:
+            raise ValueError("tie outcome id must be distinct from option outcome ids")
+        return self
 
 
 class SharedChoiceSettlementDefinition(_SettlementWithOptions):
@@ -91,9 +102,21 @@ class FinalJudgmentSettlementDefinition(_SettlementWithOptions):
 
     mode: Literal[SettlementMode.FINAL_JUDGMENT]
     answer_mode: FinalAnswerMode
+    tie_outcome_id: Identifier | None = None
     reveal: SettlementReveal = SettlementReveal.NAMED_BALLOTS
     submission_change: SubmissionChangePolicy = SubmissionChangePolicy.FORBIDDEN
     default_effect: SettlementEffect = SettlementEffect.BRANCH
+
+    @model_validator(mode="after")
+    def validate_tie_outcome(self) -> Self:
+        if self.answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET:
+            if self.tie_outcome_id is None:
+                raise ValueError("individual-secret final judgment requires a tie outcome id")
+            if self.tie_outcome_id in {option.outcome_id for option in self.options}:
+                raise ValueError("tie outcome id must be distinct from option outcome ids")
+        elif self.tie_outcome_id is not None:
+            raise ValueError("shared-choice final judgment must not declare a tie outcome id")
+        return self
 
 
 StageSettlementDefinition: TypeAlias = Annotated[
@@ -137,10 +160,10 @@ class MultiplayerStageDefinition(ContractModel):
 
     id: Identifier
     chapters: dict[Identifier, Identifier]
-    public_materials: tuple[PublicMaterialDefinition, ...] = ()
+    public_materials: tuple[PublicMaterialDefinition, ...]
     discussion: DiscussionDefinition
     settlement: StageSettlementDefinition
-    hints: tuple[HintDefinition, ...] = ()
+    hints: tuple[HintDefinition, ...]
 
     @model_validator(mode="after")
     def validate_local_ids(self) -> Self:

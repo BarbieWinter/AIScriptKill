@@ -16,6 +16,8 @@ class MemoryCheckpointRow:
     thread_ts: str
     parent_ts: str | None
     state: dict[str, JsonValue]
+    command_id: UUID | None
+    command_attempt: int | None
     sequence: int
 
 
@@ -36,6 +38,16 @@ class MemoryCheckpointSession:
         self.writes: list[MemoryCheckpointWriteRow] = []
         self.commit_count = 0
         self._sequence = 0
+        self.active_command_attempts: dict[tuple[UUID, UUID], int] = {}
+        self.lease_renewals: list[tuple[UUID, UUID, int, int]] = []
+
+    def activate_command_attempt(
+        self,
+        session_id: UUID,
+        command_id: UUID,
+        command_attempt: int,
+    ) -> None:
+        self.active_command_attempts[(session_id, command_id)] = command_attempt
 
     async def execute(self, statement: Executable) -> "MemoryCheckpointResult":
         if not isinstance(statement, ClauseElement):
@@ -44,6 +56,9 @@ class MemoryCheckpointSession:
         params = compiled.params or {}
         compiled_sql = compiled.string.upper()
         targets_writes = "SESSION_CHECKPOINT_WRITES" in compiled_sql
+        targets_receipts = "SESSION_COMMAND_RECEIPTS" in compiled_sql
+        if targets_receipts:
+            return MemoryCheckpointResult(self._renew_command_lease(params))
         if getattr(statement, "is_insert", False):
             if targets_writes:
                 self._insert_writes(params, update_special="DO UPDATE" in compiled_sql)
@@ -70,6 +85,7 @@ class MemoryCheckpointSession:
                 params,
                 order_by_thread_ts="ORDER BY SESSION_CHECKPOINTS.THREAD_TS DESC"
                 in compiled.string.upper(),
+                command_attempt_at_most="COMMAND_ATTEMPT <=" in compiled.string.upper(),
             )
         )
 
@@ -78,6 +94,26 @@ class MemoryCheckpointSession:
 
     async def rollback(self) -> None:
         pass
+
+    def _renew_command_lease(self, params: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        session_id = _uuid_named(params, "session_id")
+        command_id = _uuid_named(params, "command_id")
+        command_attempt = _int_value(params, "attempt_count")
+        active_attempt = self.active_command_attempts.get((session_id, command_id))
+        if active_attempt != command_attempt:
+            return []
+        lease_seconds = next(
+            (
+                int(value.total_seconds())
+                for value in params.values()
+                if hasattr(value, "total_seconds")
+            ),
+            30,
+        )
+        self.lease_renewals.append(
+            (session_id, command_id, command_attempt, lease_seconds)
+        )
+        return [{"command_id": command_id}]
 
     def _insert(
         self,
@@ -90,6 +126,8 @@ class MemoryCheckpointSession:
         thread_ts = _string_value(params, "thread_ts")
         parent_ts = params.get("parent_ts")
         state = params.get("state")
+        command_id = _optional_uuid_named(params, "command_id")
+        command_attempt = _optional_int_value(params, "command_attempt")
         assert isinstance(parent_ts, str) or parent_ts is None
         assert isinstance(state, dict)
         self._sequence += 1
@@ -98,6 +136,8 @@ class MemoryCheckpointSession:
             thread_ts=thread_ts,
             parent_ts=parent_ts,
             state=cast(dict[str, JsonValue], state),
+            command_id=command_id,
+            command_attempt=command_attempt,
             sequence=self._sequence,
         )
         if is_upsert:
@@ -108,6 +148,8 @@ class MemoryCheckpointSession:
                         thread_ts=row.thread_ts,
                         parent_ts=row.parent_ts,
                         state=row.state,
+                        command_id=row.command_id,
+                        command_attempt=row.command_attempt,
                         sequence=row.sequence if refresh_order else existing.sequence,
                     )
                     return
@@ -166,6 +208,8 @@ class MemoryCheckpointSession:
                     thread_ts=existing.thread_ts,
                     parent_ts=existing.parent_ts,
                     state=cast(dict[str, JsonValue], state),
+                    command_id=existing.command_id,
+                    command_attempt=existing.command_attempt,
                     sequence=existing.sequence,
                 )
                 return
@@ -183,6 +227,7 @@ class MemoryCheckpointSession:
         params: Mapping[str, Any],
         *,
         order_by_thread_ts: bool,
+        command_attempt_at_most: bool,
     ) -> list[Mapping[str, Any]]:
         session_id = _uuid_value(params)
         checkpoint_ids = {value for value in params.values() if isinstance(value, str)}
@@ -190,6 +235,20 @@ class MemoryCheckpointSession:
         matching_ids = checkpoint_ids.intersection(row.thread_ts for row in rows)
         if matching_ids:
             rows = [row for row in rows if row.thread_ts in matching_ids]
+        command_id = _optional_uuid_named(params, "command_id")
+        command_attempt = _optional_int_value(params, "command_attempt")
+        if command_id is not None:
+            rows = [row for row in rows if row.command_id == command_id]
+        if command_attempt is not None:
+            if command_attempt_at_most:
+                rows = [
+                    row
+                    for row in rows
+                    if row.command_attempt is not None
+                    and row.command_attempt <= command_attempt
+                ]
+            else:
+                rows = [row for row in rows if row.command_attempt == command_attempt]
         if order_by_thread_ts:
             rows.sort(key=lambda row: row.thread_ts, reverse=True)
         else:
@@ -200,6 +259,8 @@ class MemoryCheckpointSession:
                 "thread_ts": row.thread_ts,
                 "parent_ts": row.parent_ts,
                 "state": row.state,
+                "command_id": row.command_id,
+                "command_attempt": row.command_attempt,
             }
             for row in rows
         ]
@@ -260,6 +321,18 @@ def _uuid_value(params: Mapping[str, Any]) -> UUID:
     raise AssertionError("statement must contain a UUID session id")
 
 
+def _uuid_named(params: Mapping[str, Any], prefix: str) -> UUID:
+    value = next((value for key, value in params.items() if key.startswith(prefix)), None)
+    assert isinstance(value, UUID)
+    return value
+
+
+def _optional_uuid_named(params: Mapping[str, Any], prefix: str) -> UUID | None:
+    value = next((value for key, value in params.items() if key.startswith(prefix)), None)
+    assert isinstance(value, UUID) or value is None
+    return value
+
+
 def _string_value(params: Mapping[str, Any], prefix: str) -> str:
     value = next((value for key, value in params.items() if key.startswith(prefix)), None)
     assert isinstance(value, str)
@@ -269,6 +342,12 @@ def _string_value(params: Mapping[str, Any], prefix: str) -> str:
 def _int_value(params: Mapping[str, Any], prefix: str) -> int:
     value = next((value for key, value in params.items() if key.startswith(prefix)), None)
     assert type(value) is int
+    return value
+
+
+def _optional_int_value(params: Mapping[str, Any], prefix: str) -> int | None:
+    value = next((value for key, value in params.items() if key.startswith(prefix)), None)
+    assert type(value) is int or value is None
     return value
 
 

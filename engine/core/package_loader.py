@@ -1,5 +1,6 @@
 """协调安全归档解析和剧本包级校验。"""
 
+import json
 from io import BytesIO
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -29,6 +30,7 @@ from engine.core.package_content_loader import (
     relative_names,
 )
 from engine.core.package_directory import package_directory_archive
+from engine.core.package_multiplayer import validate_multiplayer_package
 from engine.core.package_schema import PackageRecord, ScriptPackageImport
 from engine.core.package_stage_loader import (
     load_stage_index,
@@ -95,7 +97,7 @@ def _load_package(
     publish: bool,
 ) -> ScriptPackageImport:
     package_yaml = read_yaml_mapping(archive, package_path)
-    manifest = PackageManifest.model_validate(package_yaml)
+    manifest = PackageManifest.model_validate_json(json.dumps(package_yaml, ensure_ascii=False))
     stage_index = load_stage_index(archive, names, root)
     dm_guide = load_dm_guide(archive, names, root)
     package = ScriptPackageImport(
@@ -106,7 +108,13 @@ def _load_package(
             status=_package_status(publish),
             config=package_config(package_yaml, stage_index, dm_guide),
         ),
-        stages=load_stages(archive, names, root, stage_index),
+        stages=load_stages(
+            archive,
+            names,
+            root,
+            stage_index,
+            multiplayer_enabled=manifest.multiplayer is not None,
+        ),
         characters=load_characters(archive, names, root),
         chapters=load_character_chapters(archive, names, root),
         clues=load_clues(archive, names, root),
@@ -119,6 +127,7 @@ def _load_package(
         assets=load_assets(archive, names, root),
     )
     warnings = validate_package_import(package, available_files=relative_names(names, root))
+    validate_multiplayer_package(package, manifest)
     if len(warnings) == 0:
         return package
     return ScriptPackageImport(

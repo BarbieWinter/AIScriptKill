@@ -314,6 +314,8 @@ def _player_id(current_user: CurrentUser) -> UUID | None:
 
 
 def _assert_session_access(session: StoredSession, current_user: CurrentUser) -> None:
+    if session.mode != "legacy_single":
+        raise not_found("SESSION_NOT_FOUND", "未找到指定游戏会话")
     if session.player_id is None:
         return
     if _player_id(current_user) == session.player_id:

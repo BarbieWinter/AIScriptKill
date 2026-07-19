@@ -12,7 +12,7 @@ def initial_game_state(session: StoredSession) -> GameState:
         session_id=str(session.id),
         script_id=session.script_id,
         player_id=str(session.player_id) if session.player_id is not None else "anonymous",
-        player_character_id=session.player_character_id,
+        player_character_id=session.player_character_id or "player",
         entry_stage=session.state.current_stage,
     )
     _copy_projection_to_game_state(state, session.state)

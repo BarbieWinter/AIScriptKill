@@ -10,7 +10,16 @@
 
 ## 路由图
 
-当前页面：
+当前页面还包括 MP-2 HTTP lobby 基础：
+
+- `/multiplayer`：复用/建立 Supabase anonymous session，查询 nullable current room，创建或恢复
+  `mp1-two-player` lobby。
+- `/invite/[token]`：只提交一次 invite accept；成功后 `router.replace()` 到 lobby，避免 token 保留在
+  active URL/history。
+- `/play/[sessionId]/lobby`：React Query 读取安全 snapshot，仅在 `lobby` 每 2 秒 polling；`active` 停止
+  polling 并显示 MP-6 placeholder。
+
+Legacy/单人页面：
 
 - `/library`：`apps/web/app/library/page.tsx`。展示硬编码的雪村剧本库体验，而不是查询真实剧本包。
 - `/library/[id]`：`apps/web/app/library/[id]/page.tsx`。调用 `api.getPackage(scriptId)`，并用 Mock 角色预览渲染详情；live 模式依赖后端 `GET /packages/{id}`。
@@ -44,6 +53,21 @@
 `apps/web/lib/ws.ts` 是真实 WebSocket 客户端。它优先使用 `NEXT_PUBLIC_WS_URL`，否则连接同一浏览器 host 下的 `/api/v1/ws/{sessionId}`，按 `message.type` 分发事件，自动重连，并每 30 秒发送一次 `session.ping`。
 
 `apps/web/lib/mock-ws.ts` 为 Mock 模式模拟更丰富的玩法事件。后端 WebSocket 目前只接受 `session.ping` 并发出 `session.pong`，所以不要期待真实服务端事件已经与 Mock 对齐。
+
+### MP-2 lobby client boundary
+
+`apps/web/lib/auth/anonymous-session.ts` 复用有效 Supabase session、按需 refresh，只在没有 session 时
+`signInAnonymously()`，并去重并发 bootstrap。`apps/web/lib/multiplayer/room-client.ts` 为 MP-2 请求附加
+bearer token；legacy API client 不变。
+
+大厅只允许本人 assign/unassign 与 ready/unready。host 可创建、复制和撤销 15 分钟邀请并 start；本地
+start 按钮要求房间满员、角色完整且互异、全员 ready 且服务端 `can_start=true`。revision mismatch
+只 invalidates snapshot，不自动重放 mutation。大厅不挂载 legacy gameplay store，也不建立 application
+WebSocket。
+
+`apps/web/e2e/multiplayer-lobby.spec.ts` 使用三个独立 browser contexts，但 Supabase Auth 和全部 room HTTP
+均由测试内存 mock。它的 1 passed 是 mocked-contract browser evidence，不是 real Supabase/FastAPI/
+PostgreSQL E2E。后端 room repository/service/routes 已接线并通过应用层验证，但真实 live-stack gate 尚未运行。
 
 ## 玩法 UI 组成
 

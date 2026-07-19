@@ -11,6 +11,21 @@ from engine.api.schemas.actions import (
     StageTransition,
     SubmissionResult,
 )
+from engine.api.schemas.commands import (
+    CommandActionResponse,
+    CommandReceiptResponse,
+    SessionEvent,
+    SessionEventPage,
+)
+from engine.api.schemas.multiplayer_rooms import (
+    AcceptRoomInviteResponse,
+    CreateMultiplayerSessionRequest,
+    CreateMultiplayerSessionResponse,
+    CreateRoomInviteRequest,
+    CreateRoomInviteResponse,
+    CurrentMultiplayerSession,
+    LobbySnapshotV1,
+)
 from engine.api.schemas.packages import (
     PackageImportResponse,
     PackageListResponse,
@@ -42,6 +57,11 @@ from engine.api.schemas.sessions import (
 __all__ = [
     "ActionRequest",
     "ActionResponse",
+    "AcceptRoomInviteResponse",
+    "CommandActionResponse",
+    "CommandReceiptResponse",
+    "SessionEvent",
+    "SessionEventPage",
     "AdvanceDenied",
     "AdvanceRequirement",
     "CardListResponse",
@@ -53,10 +73,16 @@ __all__ = [
     "ClueListResponse",
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "CreateMultiplayerSessionRequest",
+    "CreateMultiplayerSessionResponse",
+    "CreateRoomInviteRequest",
+    "CreateRoomInviteResponse",
+    "CurrentMultiplayerSession",
     "EvidenceListResponse",
     "EvidenceViewedResponse",
     "EvidenceReaction",
     "FinalSubmissionRequest",
+    "LobbySnapshotV1",
     "NpcResponse",
     "PackageImportResponse",
     "PackageListResponse",

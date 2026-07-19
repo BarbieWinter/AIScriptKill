@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 # LangGraph 发布包保留了类型注解但未声明 py.typed；仅在导入边界抑制缺失存根诊断。
@@ -15,6 +16,7 @@ from langgraph.graph.state import (  # pyright: ignore[reportMissingTypeStubs]
 from engine.agents.npc_agent import DeterministicNpcResponder, NpcResponder
 from engine.api.schemas.common import ActionType
 from engine.core.checkpoint import checkpoint_config
+from engine.core.checkpoint_models import CheckpointConfigError, checkpoint_locator
 from engine.core.clock import SYSTEM_CLOCK, Clock
 from engine.core.event_bus import EventActionSink, EventBus
 from engine.core.game_state import (
@@ -47,6 +49,15 @@ type CompiledGameGraph = CompiledStateGraph[GameState, None, GameState, GameStat
 
 
 @dataclass(frozen=True, slots=True)
+class ScriptEngineStateInspection:
+    """描述一个精确图快照及其是否已无待执行节点。"""
+
+    state: GameState | None
+    config: RunnableConfig
+    quiescent: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ScriptEngine:
     """持有已编译游戏图及其不可变剧本包协作者。"""
 
@@ -56,6 +67,7 @@ class ScriptEngine:
     clock: Clock
     npc_responder: NpcResponder
     graph: CompiledGameGraph | None
+    has_checkpointer: bool
 
     @classmethod
     def from_archive(cls, archive_bytes: bytes) -> "ScriptEngine":
@@ -85,6 +97,7 @@ class ScriptEngine:
             clock=clock,
             npc_responder=resolved_npc_responder,
             graph=None,
+            has_checkpointer=checkpointer is not None,
         )
         return cls(
             package=package,
@@ -93,6 +106,7 @@ class ScriptEngine:
             clock=clock,
             npc_responder=resolved_npc_responder,
             graph=engine._build_graph(checkpointer),
+            has_checkpointer=checkpointer is not None,
         )
 
     async def run_action(
@@ -104,8 +118,29 @@ class ScriptEngine:
         text: str | None = None,
         thread_id: str | None = None,
     ) -> GameState:
-        """校验玩家动作、写入检查点并执行至图运行完成。"""
+        """兼容旧调用：在未标记命令的线程配置上执行完整动作。"""
 
+        result, _ = await self.run_action_from(
+            state,
+            action_id=action_id,
+            target=target,
+            text=text,
+            config=checkpoint_config(thread_id or state["session_id"]),
+        )
+        return result
+
+    async def run_action_from(
+        self,
+        state: GameState,
+        *,
+        action_id: ActionType,
+        config: RunnableConfig,
+        target: str | None = None,
+        text: str | None = None,
+    ) -> tuple[GameState, RunnableConfig]:
+        """使用调用方提供的命令配置执行新动作，并返回最终精确配置。"""
+
+        _ = checkpoint_locator(config)
         next_state = clone_game_state(state)
         action = PlayerActionInput(
             action_id=action_id,
@@ -122,34 +157,76 @@ class ScriptEngine:
         next_state["current_time"] = self.clock.now()
         next_state["pending_action"] = action
         graph = self._compiled_graph()
-        # LangGraph 的 Command 泛型未完整标注，但 values 模式的结果仍在下方执行运行时校验。
         raw_result: object = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]
             next_state,
-            checkpoint_config(thread_id or state["session_id"]),
+            config,
         )
-        if isinstance(raw_result, dict):
-            result = cast(Mapping[object, object], raw_result)
-            values = {
-                str(key): json_value(value, f"graph_result.{key}") for key, value in result.items()
-            }
-            return game_state_from_mapping(values)
-        raise ScriptEngineGraphResultError()
+        result = _game_state_from_graph_result(raw_result, "graph_result")
+        if not self.has_checkpointer:
+            return result, config
+        inspection = await self.inspect_state(_lineage_config(config))
+        if inspection.state is None:
+            raise ScriptEngineGraphResultError()
+        return result, inspection.config
 
-    async def restore_state(self, *, thread_id: str) -> GameState | None:
-        """恢复线程最新持久状态，缺失时返回 None。"""
+    async def resume_action(self, config: RunnableConfig) -> tuple[GameState, RunnableConfig]:
+        """从一个精确 checkpoint_id 继续未完成图执行，并返回最终精确配置。"""
 
-        snapshot = await self._compiled_graph().aget_state(checkpoint_config(thread_id))
+        locator = checkpoint_locator(config)
+        if locator.checkpoint_id is None:
+            raise CheckpointConfigError("checkpoint_id")
+        raw_result: object = await self._compiled_graph().ainvoke(  # pyright: ignore[reportUnknownMemberType]
+            None,
+            config,
+        )
+        result = _game_state_from_graph_result(raw_result, "graph_result")
+        inspection = await self.inspect_state(_lineage_config(config))
+        if inspection.state is None:
+            raise ScriptEngineGraphResultError()
+        return result, inspection.config
+
+    async def inspect_state(self, config: RunnableConfig) -> ScriptEngineStateInspection:
+        """读取最新或精确图快照，同时报告是否已无待执行节点。"""
+
+        _ = checkpoint_locator(config)
+        snapshot = await self._compiled_graph().aget_state(config)
         raw_values: object = snapshot.values
-        if not isinstance(raw_values, dict):
-            return None
-        snapshot_values = cast(Mapping[object, object], raw_values)
-        if len(snapshot_values) == 0:
-            return None
-        values = {
-            str(key): json_value(value, f"checkpoint_state.{key}")
-            for key, value in snapshot_values.items()
-        }
-        return game_state_from_mapping(values)
+        if isinstance(raw_values, dict):
+            checkpoint_values = cast(dict[object, object], raw_values)
+        else:
+            checkpoint_values = {}
+        if len(checkpoint_values) > 0:
+            state = _game_state_from_graph_result(
+                checkpoint_values,
+                "checkpoint_state",
+            )
+        else:
+            state = None
+        return ScriptEngineStateInspection(
+            state=state,
+            config=snapshot.config,
+            quiescent=len(snapshot.next) == 0,
+        )
+
+    async def restore_state(
+        self,
+        *,
+        thread_id: str,
+        checkpoint_id: str | None = None,
+        command_id: str | None = None,
+        command_attempt: int | None = None,
+    ) -> GameState | None:
+        """恢复线程最新或指定命令谱系中的精确持久状态。"""
+
+        inspection = await self.inspect_state(
+            checkpoint_config(
+                thread_id,
+                checkpoint_id,
+                command_id=command_id,
+                command_attempt=command_attempt,
+            )
+        )
+        return inspection.state
 
     def _build_graph(
         self,
@@ -413,3 +490,22 @@ class ScriptEngine:
         if self.graph is None:
             raise ScriptEngineGraphError()
         return self.graph
+
+
+def _lineage_config(config: RunnableConfig) -> RunnableConfig:
+    locator = checkpoint_locator(config)
+    return checkpoint_config(
+        locator.thread_id,
+        command_id=locator.command_id,
+        command_attempt=locator.command_attempt,
+    )
+
+
+def _game_state_from_graph_result(raw_result: object, field: str) -> GameState:
+    if not isinstance(raw_result, dict):
+        raise ScriptEngineGraphResultError()
+    result = cast(Mapping[object, object], raw_result)
+    values = {
+        str(key): json_value(value, f"{field}.{key}") for key, value in result.items()
+    }
+    return game_state_from_mapping(values)

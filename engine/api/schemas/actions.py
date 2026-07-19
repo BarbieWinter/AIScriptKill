@@ -1,8 +1,9 @@
 """定义玩家动作的严格请求与响应模型。"""
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from engine.api.schemas.common import (
     ActionType,
@@ -47,9 +48,22 @@ class ActionRequest(ApiModel):
     reason: str | None = Field(
         default=None, min_length=1, max_length=2000, description="Advance request reason."
     )
+    command_id: UUID | None = Field(
+        default=None,
+        description="Client idempotency identity; required with expected_revision.",
+    )
+    expected_revision: int | None = Field(
+        default=None,
+        ge=0,
+        description="Authoritative session revision observed before dispatch.",
+    )
 
+    @model_validator(mode="after")
+    def validate_command_pair(self) -> "ActionRequest":
+        if (self.command_id is None) != (self.expected_revision is None):
+            raise ValueError("command_id and expected_revision must be provided together")
+        return self
 
-# ── 行动响应类型 ──
 
 
 class NpcResponse(ApiModel):

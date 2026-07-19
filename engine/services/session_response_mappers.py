@@ -24,13 +24,20 @@ from engine.services.mapper_utils import timestamp
 # ── 会话响应映射 ──
 
 
+def _legacy_character_id(session: StoredSession) -> str:
+    if session.mode != "legacy_single" or session.player_character_id is None:
+        raise ValueError("legacy response requires a player character")
+    return session.player_character_id
+
+
 def create_response(session: StoredSession) -> CreateSessionResponse:
+    character_id = _legacy_character_id(session)
     return CreateSessionResponse(
         session_id=str(session.id),
         script_id=session.script_id,
         status=session.status,
         current_stage=session.state.current_stage,
-        player_character_id=session.player_character_id,
+        player_character_id=character_id,
         available_actions=session.state.available_actions,
         created_at=timestamp(session.created_at),
     )
@@ -41,13 +48,14 @@ def create_response(session: StoredSession) -> CreateSessionResponse:
 
 def state_response(session: StoredSession, stage_name: str | None) -> SessionStateResponse:
     state = session.state
+    character_id = _legacy_character_id(session)
     return SessionStateResponse(
         session_id=str(session.id),
         script_id=session.script_id,
         status=session.status,
         current_stage=state.current_stage,
         stage_name=stage_name or state.stage_name,
-        player_character_id=session.player_character_id,
+        player_character_id=character_id,
         available_actions=state.available_actions,
         available_characters=state.available_characters,
         unlocked_clues_count=len(state.unlocked_clues),
@@ -59,6 +67,8 @@ def state_response(session: StoredSession, stage_name: str | None) -> SessionSta
             PendingMedia(id=item["id"], type=item["type"], status=item["status"])
             for item in state.pending_media
         ],
+        revision=session.revision,
+        event_head_sequence=session.event_head_sequence,
     )
 
 

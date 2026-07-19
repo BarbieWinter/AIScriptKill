@@ -8,7 +8,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet } from "@/components/ui/Sheet";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 import { Eye, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -36,18 +36,19 @@ export function EvidenceBackpack({
   onViewEvidence,
   onShowEvidence,
 }: EvidenceBackpackProps = {}) {
-  const storeOpen = useGameStore((s) => s.activePanel === "evidence");
-  const storeSessionId = useGameStore((s) => s.sessionId);
-  const storePlayerCharacterId = useGameStore((s) => s.playerCharacterId);
-  const storeEvidences = useGameStore((s) => s.discoveredEvidences);
-  const storeCharacters = useGameStore((s) => s.availableCharacters);
+  const storeOpen = useActiveGameStore((s) => s.activePanel === "evidence");
+  const storeSessionId = useActiveGameStore((s) => s.sessionId);
+  const storePlayerCharacterId = useActiveGameStore((s) => s.playerCharacterId);
+  const storeEvidences = useActiveGameStore((s) => s.discoveredEvidences);
+  const storeCharacters = useActiveGameStore((s) => s.availableCharacters);
+  const closePanel = useActiveGameStore((s) => s.closePanel);
   const open = controlledOpen ?? storeOpen;
-  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
+  const onClose = controlledOnClose ?? closePanel;
   const sessionId = controlledSessionId ?? storeSessionId;
   const playerCharacterId = controlledPlayerCharacterId ?? storePlayerCharacterId;
   const evidences = controlledEvidences ?? storeEvidences;
   const characters = controlledCharacters ?? storeCharacters;
-  const updateEvidence = useGameStore((s) => s.updateEvidence);
+  const updateEvidence = useActiveGameStore((s) => s.updateEvidence);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showNpcList, setShowNpcList] = useState(false);
@@ -72,7 +73,9 @@ export function EvidenceBackpack({
         const result = onViewEvidence
           ? await onViewEvidence(selected.id)
           : await api.viewEvidence(sessionId, selected.id);
-        if (!cancelled) updateEvidence(selected.id, { status: result.status });
+        if (!cancelled && !onViewEvidence) {
+          updateEvidence(selected.id, { status: result.status });
+        }
       } catch (error) {
         console.error("[EvidenceBackpack] 标记证物已查看失败:", error);
       }

@@ -1,0 +1,10 @@
+round_id: "public-records"
+name: "公开记录"
+stage_visible: "investigation"
+clues:
+  - id: "witness-note"
+    name: "目击便签"
+    stage_visible: "investigation"
+    description: "便签写着：二十点二十分，值班室里传来金属碰撞声。"
+    key_clue: true
+    importance: 3

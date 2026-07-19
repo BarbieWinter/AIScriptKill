@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -19,7 +19,7 @@ class ErrorDetail(BaseModel):
 
     code: str = Field(description="Stable machine-readable error code.")
     message: str = Field(description="Human-readable error message.")
-    details: dict[str, str] = Field(
+    details: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional structured details for debugging or UI hints.",
     )
@@ -47,7 +47,7 @@ class ApiError(Exception):
         status_code: int,
         code: str,
         message: str,
-        details: dict[str, str] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -152,7 +152,7 @@ def bad_request(code: str, message: str) -> ApiError:
 def conflict(
     code: str,
     message: str,
-    details: dict[str, str] | None = None,
+    details: dict[str, Any] | None = None,
 ) -> ApiError:
     """使用调用方提供的稳定错误码构造 409 API 错误。"""
 
@@ -161,6 +161,41 @@ def conflict(
         code=code,
         message=message,
         details=details,
+    )
+
+
+def unprocessable_entity(
+    code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> ApiError:
+    """使用调用方提供的稳定错误码构造 422 API 错误。"""
+
+    return ApiError(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code=code,
+        message=message,
+        details=details,
+    )
+
+
+def gone(code: str, message: str) -> ApiError:
+    """使用调用方提供的稳定错误码构造 410 API 错误。"""
+
+    return ApiError(
+        status_code=HTTPStatus.GONE,
+        code=code,
+        message=message,
+    )
+
+
+def service_unavailable(code: str, message: str) -> ApiError:
+    """使用调用方提供的稳定错误码构造 503 API 错误。"""
+
+    return ApiError(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        code=code,
+        message=message,
     )
 
 
