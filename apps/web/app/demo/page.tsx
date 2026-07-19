@@ -1,6 +1,5 @@
-import { DemoSessionLauncher } from "@/components/demo/DemoSessionLauncher";
-import { MansionDemo } from "@/components/demo/MansionDemo";
+import { redirect } from "next/navigation";
 
-export default function DemoPage() {
-  return <MansionDemo overlay={<DemoSessionLauncher />} />;
+export default function LegacyDemoPage() {
+  redirect("/library");
 }

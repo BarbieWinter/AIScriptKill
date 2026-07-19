@@ -153,8 +153,15 @@ export function SessionChatDock({
               }}
               placeholder={selectedCharacter ? `对 ${selectedCharacter.name} 说…` : "当前没有可对话角色"}
               disabled={pending || !selectedCharacter}
+              data-testid="chat-input"
             />
-            <button type="button" onClick={() => void sendMessage()} disabled={pending || !input.trim()} aria-label="发送消息"><Send /></button>
+            <button
+              type="button"
+              onClick={() => void sendMessage()}
+              disabled={pending || !input.trim()}
+              aria-label="发送消息"
+              data-testid="chat-send"
+            ><Send /></button>
             {currentStage !== "back_door_judgement" && (
               <button type="button" className="demo-session-advance" onClick={() => void advance()} disabled={pending}>
                 推进
@@ -173,23 +180,25 @@ export function SessionPanelDock({
   onOpenChapters,
   onOpenChat,
   onOpenJudgement,
+  disabled = false,
 }: {
   onOpenClues: () => void;
   onOpenEvidence: () => void;
   onOpenChapters: () => void;
   onOpenChat: () => void;
   onOpenJudgement?: () => void;
+  disabled?: boolean;
 }) {
   const clueCount = useGameSessionStore((state) => state.unlockedClues.length);
   const evidenceCount = useGameSessionStore((state) => state.discoveredEvidences.length);
 
   return (
     <nav className="demo-session-dock" aria-label="游戏数据面板">
-      <button type="button" onClick={onOpenClues}><Search /><span>线索板</span><b>{clueCount}</b></button>
-      <button type="button" onClick={onOpenEvidence}><span className="demo-dock-backpack">⌑</span><span>证物背包</span><b>{evidenceCount}</b></button>
-      <button type="button" onClick={onOpenChapters}><BookOpen /><span>人物章节</span></button>
-      <button type="button" onClick={onOpenChat}><MessageSquare /><span>剧情对话</span></button>
-      {onOpenJudgement && <button type="button" className="is-primary" onClick={onOpenJudgement}><Send /><span>提交判断</span></button>}
+      <button type="button" onClick={onOpenClues} disabled={disabled}><Search /><span>线索板</span><b>{clueCount}</b></button>
+      <button type="button" onClick={onOpenEvidence} disabled={disabled}><span className="demo-dock-backpack">⌑</span><span>证物背包</span><b>{evidenceCount}</b></button>
+      <button type="button" onClick={onOpenChapters} disabled={disabled}><BookOpen /><span>人物章节</span></button>
+      <button type="button" onClick={onOpenChat} disabled={disabled} data-testid="chat-open"><MessageSquare /><span>剧情对话</span></button>
+      {onOpenJudgement && <button type="button" className="is-primary" onClick={onOpenJudgement} disabled={disabled}><Send /><span>提交判断</span></button>}
     </nav>
   );
 }

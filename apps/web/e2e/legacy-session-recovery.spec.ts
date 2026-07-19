@@ -135,6 +135,11 @@ async function installBaseApi(page: Page) {
   return { commandBodies };
 }
 
+async function openChat(page: Page) {
+  await page.getByTestId("chat-open").click();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
+}
+
 function succeededCommand(body: Record<string, unknown>, revision: number, eventHead: number) {
   return {
     command_id: body.command_id,
@@ -186,7 +191,8 @@ function eventPage(
 
 test("live action sends one durable command and advances the replay cursor", async ({ page }) => {
   const api = await installBaseApi(page);
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
 
   await page.getByTestId("chat-input").fill("你看见了谁？");
   await page.getByTestId("chat-send").click();
@@ -233,7 +239,8 @@ test("lost POST response resolves from the receipt without duplicate mutation", 
     return apiError(route, 404, "NOT_FOUND", pathname);
   });
 
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
   await page.getByTestId("chat-input").fill("响应丢失");
   await page.getByTestId("chat-send").click();
   await expect.poll(() => receiptReads).toBeGreaterThan(0);
@@ -276,7 +283,8 @@ test("missing receipt replays one byte-equivalent command envelope", async ({ pa
     return apiError(route, 404, "NOT_FOUND", pathname);
   });
 
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
   await page.getByTestId("chat-input").fill("只重发一次");
   await page.getByTestId("chat-send").click();
   await expect.poll(() => bodies.length).toBe(2);
@@ -318,7 +326,8 @@ test("processing budget becomes uncertain and manual recovery keeps the UUID", a
     return apiError(route, 404, "NOT_FOUND", pathname);
   });
 
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
   await page.getByTestId("chat-input").fill("还在处理");
   await page.getByTestId("chat-send").click();
   await expect(page.getByTestId("recovery-status")).toContainText("待确认", { timeout: 10_000 });
@@ -399,9 +408,11 @@ test("event gap performs one cursor-zero reset before applying the snapshot", as
     return apiError(route, 404, "NOT_FOUND", pathname);
   });
 
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
   await page.getByTestId("chat-input").fill("检测事件缺口");
   await page.getByTestId("chat-send").click();
+  await expect.poll(() => eventCursors.length).toBe(2);
   await expect(page.getByTestId("chat-input")).toHaveValue("");
   expect(eventCursors).toEqual([1, 0]);
   expect(bodies).toHaveLength(1);
@@ -461,7 +472,8 @@ test("revision conflict resyncs without replaying the stale intent", async ({ pa
     return apiError(route, 404, "NOT_FOUND", pathname);
   });
 
-  await page.goto(`/play/${sessionId}`);
+  await page.goto(`/play/snow-village/${sessionId}`);
+  await openChat(page);
   await page.getByTestId("chat-input").fill("第一次");
   await page.getByTestId("chat-send").click();
   await expect.poll(() => bodies.length).toBe(1);

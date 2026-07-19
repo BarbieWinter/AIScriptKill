@@ -1,20 +1,38 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { GameplayPanelHost, SessionChatDock, SessionPanelDock } from "@/components/demo/GameplayPanelHost";
+import { GameplayPanelHost, SessionPanelDock } from "@/components/demo/GameplayPanelHost";
 import { MansionDemo } from "@/components/demo/MansionDemo";
-import { CharacterChapters } from "@/components/game/CharacterChapters";
-import { ClueBoard } from "@/components/game/ClueBoard";
-import { EvidenceBackpack } from "@/components/game/EvidenceBackpack";
-import { FinalSubmission } from "@/components/game/FinalSubmission";
 import {
   useGameSessionRuntime,
   useGameSessionStore,
 } from "@/components/game/GameSessionBoundary";
 import type { SessionSource } from "@/lib/game/types";
 import { mapPresentationHotspots } from "@/lib/demo-world-layout";
+
+const SessionChatDock = dynamic(
+  () => import("@/components/demo/GameplayPanelHost").then((module) => module.SessionChatDock),
+  { ssr: false },
+);
+const CharacterChapters = dynamic(
+  () => import("@/components/game/CharacterChapters").then((module) => module.CharacterChapters),
+  { ssr: false },
+);
+const ClueBoard = dynamic(
+  () => import("@/components/game/ClueBoard").then((module) => module.ClueBoard),
+  { ssr: false },
+);
+const EvidenceBackpack = dynamic(
+  () => import("@/components/game/EvidenceBackpack").then((module) => module.EvidenceBackpack),
+  { ssr: false },
+);
+const FinalSubmission = dynamic(
+  () => import("@/components/game/FinalSubmission").then((module) => module.FinalSubmission),
+  { ssr: false },
+);
 
 export function DemoGameShell({ source }: { source: SessionSource }) {
   const runtime = useGameSessionRuntime();
@@ -29,6 +47,8 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
   const clues = useGameSessionStore((state) => state.unlockedClues);
   const evidences = useGameSessionStore((state) => state.discoveredEvidences);
   const totalClues = useGameSessionStore((state) => state.totalCluesInRound);
+  const recoveryStatus = useGameSessionStore((state) => state.recoveryStatus);
+  const recoveryError = useGameSessionStore((state) => state.recoveryError);
 
   const [panel, setPanel] = useState<"clue" | "evidence" | "chapter" | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -42,7 +62,11 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
   );
   const playerName = characters.find((character) => character.id === playerCharacterId)?.name
     ?? (playerCharacterId === "zhuosiyuan" ? "卓司元" : "当前角色");
-  const interactionBlocked = panel !== null || chatOpen || judgementOpen;
+  const interactionBlocked =
+    panel !== null ||
+    chatOpen ||
+    judgementOpen ||
+    (source === "live" && recoveryStatus !== "idle");
 
   const investigate = async (sceneId: string, hotspotId: string) => {
     if (interactionPending) return;
@@ -96,22 +120,50 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
               当前场景 {currentScene || "未知"} 尚未提供可公开的地图热点投影。
             </div>
           )}
+          {source === "live" && recoveryStatus !== "idle" && (
+            <div
+              data-testid="recovery-status"
+              className="absolute left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-xs text-white/75 backdrop-blur-md"
+            >
+              <span>
+                {recoveryStatus === "uncertain"
+                  ? "上次操作结果待确认"
+                  : recoveryStatus === "conflict"
+                    ? "状态已变化，正在同步"
+                    : recoveryStatus === "error"
+                      ? "同步权威状态失败"
+                      : "正在同步权威状态"}
+              </span>
+              {(recoveryStatus === "uncertain" || recoveryStatus === "error") && (
+                <button
+                  type="button"
+                  data-testid="recovery-retry"
+                  onClick={() => void runtime.retryPendingCommand().catch(() => undefined)}
+                  className="font-medium text-[var(--theme-primary)] hover:text-white"
+                  title={recoveryError ?? undefined}
+                >
+                  重新确认
+                </button>
+              )}
+            </div>
+          )}
           <SessionPanelDock
             onOpenClues={() => setPanel("clue")}
             onOpenEvidence={() => setPanel("evidence")}
             onOpenChapters={() => setPanel("chapter")}
             onOpenChat={() => setChatOpen(true)}
             onOpenJudgement={presentation?.judgement ? () => setJudgementOpen(true) : undefined}
+            disabled={source === "live" && recoveryStatus !== "idle"}
           />
-          <SessionChatDock open={chatOpen} onClose={() => setChatOpen(false)} />
-          <ClueBoard
-            open={panel === "clue"}
+          {chatOpen && <SessionChatDock open onClose={() => setChatOpen(false)} />}
+          {panel === "clue" && <ClueBoard
+            open
             onClose={() => setPanel(null)}
             clues={clues}
             totalCluesInRound={totalClues}
-          />
-          <EvidenceBackpack
-            open={panel === "evidence"}
+          />}
+          {panel === "evidence" && <EvidenceBackpack
+            open
             onClose={() => setPanel(null)}
             sessionId={sessionId}
             playerCharacterId={playerCharacterId}
@@ -119,22 +171,22 @@ export function DemoGameShell({ source }: { source: SessionSource }) {
             characters={characters}
             onViewEvidence={(evidenceId) => runtime.viewEvidence(evidenceId)}
             onShowEvidence={(characterId, evidenceId) => runtime.showEvidence(characterId, evidenceId)}
-          />
-          <CharacterChapters
-            open={panel === "chapter"}
+          />}
+          {panel === "chapter" && <CharacterChapters
+            open
             onClose={() => setPanel(null)}
             sessionId={sessionId}
             playerCharacterName={playerName}
             onListChapters={() => runtime.listCharacterChapters()}
             onReadChapter={(chapterId) => runtime.readCharacterChapter(chapterId)}
-          />
-          <FinalSubmission
-            open={judgementOpen}
+          />}
+          {judgementOpen && <FinalSubmission
+            open
             onClose={() => setJudgementOpen(false)}
             judgement={presentation?.judgement}
             onSubmit={(optionId) => runtime.submitJudgment(optionId)}
             onComplete={() => setJudgementOpen(false)}
-          />
+          />}
         </GameplayPanelHost>
       }
     />

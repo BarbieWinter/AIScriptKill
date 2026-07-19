@@ -9,6 +9,7 @@ from engine.api.middleware.auth import AdminUserDep, CurrentUserDep
 from engine.api.schemas import (
     PackageImportResponse,
     PackageListResponse,
+    PackagePlayableCharactersResponse,
     PackageUpdateRequest,
     PackageUpdateResponse,
 )
@@ -26,6 +27,9 @@ from engine.services.package_service import (
 )
 from engine.services.package_service import (
     list_packages as list_package_service,
+)
+from engine.services.package_service import (
+    list_playable_characters as list_playable_characters_service,
 )
 from engine.services.package_service import (
     update_package as update_package_service,
@@ -185,3 +189,29 @@ async def get_package(
             `PACKAGE_NOT_FOUND`。
     """
     return await get_package_service(package_id, db)
+
+
+@router.get(
+    "/{package_id}/characters",
+    response_model=PackagePlayableCharactersResponse,
+)
+async def list_playable_characters(
+    package_id: str,
+    _current_user: CurrentUserDep,
+    db: SessionDep,
+) -> PackagePlayableCharactersResponse:
+    """返回剧本在选角阶段公开的全部可玩角色。
+
+    Args:
+        package_id: 待读取可玩角色的已发布剧本包标识符。
+        _current_user: 由鉴权依赖解析的可选 Supabase 身份。
+        db: 请求作用域的异步数据库会话。
+
+    Returns:
+        按剧本声明顺序排列且过滤过剧透字段的可玩角色列表。
+
+    Raises:
+        ApiError: Bearer 鉴权无效时抛出 `INVALID_TOKEN`；剧本缺失或未发布时抛出
+            `PACKAGE_NOT_FOUND`。
+    """
+    return await list_playable_characters_service(package_id, db)

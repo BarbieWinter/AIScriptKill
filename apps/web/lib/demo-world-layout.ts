@@ -23,13 +23,13 @@ interface SceneLayout {
 const sceneLayouts: Record<string, SceneLayout> = {
   "restaurant-hall": {
     roomId: "hall",
-    spawn: { x: 810, y: 704 },
+    spawn: { x: 1200, y: 1120 },
   },
   "back-alley": {
-    roomId: "south",
-    spawn: { x: 1180, y: 690 },
+    roomId: "archive",
+    spawn: { x: 2020, y: 1280 },
     hotspotAnchors: {
-      "back-door-traces": { x: 1380, y: 690 },
+      "back-door-traces": { x: 2160, y: 1280 },
     },
   },
 };

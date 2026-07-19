@@ -16,6 +16,16 @@ import {
   getMockEngine,
   resetMockEngine,
 } from "./mock-data";
+import { registerMockSession } from "./mock-session-registry";
+
+export interface PlayableCharacter {
+  id: string;
+  name: string;
+  portrait_url: string;
+  tagline: string;
+  personality: string;
+  background: string;
+}
 
 const API_BASE = "/api/v1";
 
@@ -100,8 +110,15 @@ export const api = {
   }> => {
     if (USE_MOCK) {
       resetMockEngine();
+      const sessionId = "mock-session-" + Date.now();
+      registerMockSession({
+        sessionId,
+        scriptId,
+        characterId,
+        playerName,
+      });
       return {
-        session_id: "mock-session-" + Date.now(),
+        session_id: sessionId,
         script_id: scriptId,
         status: "in_progress",
         current_stage: "prologue",
@@ -548,5 +565,29 @@ export const api = {
       };
     }
     return request("GET", `/packages/${packageId}`);
+  },
+
+  getPlayableCharacters: async (
+    packageId: string
+  ): Promise<{ characters: PlayableCharacter[] }> => {
+    if (USE_MOCK) {
+      const packageExists = mockPackages.some((pkg) => pkg.id === packageId);
+      if (!packageExists) {
+        throw new ApiError(404, "SCRIPT_NOT_FOUND", "剧本包不存在");
+      }
+      return {
+        characters: mockCharacters
+          .filter((character) => character.playable)
+          .map((character) => ({
+            id: character.id,
+            name: character.name,
+            portrait_url: character.portrait_url || "",
+            tagline: character.tagline || "",
+            personality: character.personality || "",
+            background: character.background || "",
+          })),
+      };
+    }
+    return request("GET", `/packages/${encodeURIComponent(packageId)}/characters`);
   },
 };

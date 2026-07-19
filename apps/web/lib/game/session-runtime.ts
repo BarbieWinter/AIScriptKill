@@ -193,6 +193,10 @@ export class SessionRuntime implements GameSessionRuntime {
       sessionId: session.session_id,
       scriptId: session.script_id,
       playerCharacterId: session.player_character_id,
+      playerCharacterName:
+        characters.characters.find(
+          (character) => character.id === session.player_character_id
+        )?.name ?? session.player_character_id,
       status: session.status,
       currentStage: session.current_stage,
       stageName: session.stage_name,

@@ -39,6 +39,7 @@ export interface RuntimeStatePatch {
   currentScene?: string;
   availableActions?: ActionType[];
   availableCharacters?: AvailableCharacter[];
+  playerCharacterName?: string;
   availableScenes?: Array<{ id: string; name: string }>;
   totalCluesInRound?: number;
   unlockedClues?: Clue[];
@@ -59,6 +60,7 @@ export interface GameStore {
   sessionId: string | null;
   scriptId: string | null;
   playerCharacterId: string | null;
+  playerCharacterName: string | null;
   status: string;
 
   currentStage: string;
@@ -136,6 +138,7 @@ function initialState(source: SessionSource | null, sessionId: string | null) {
     sessionId,
     scriptId: null,
     playerCharacterId: null,
+    playerCharacterName: null,
     status: "",
     currentStage: "",
     stageName: "",

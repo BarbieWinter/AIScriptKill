@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar, Final
+from typing import ClassVar, Final, cast
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sqlalchemy import func, select, update
@@ -11,7 +11,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from engine.api.schemas.packages import PackageStatus
-from engine.db.tables import script_packages
+from engine.db.tables import script_characters, script_packages
 
 # ── 剧本包读取 Repository ──
 
@@ -72,6 +72,15 @@ class StoredPackageStatus:
     updated_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class StoredPlayableCharacter:
+    """已发布剧本中可安全投影到选角页的原始角色记录。"""
+
+    id: str
+    name: str
+    definition: Mapping[str, object]
+
+
 class PackageRepository:
     """读取已发布剧本包并提交显式的剧本包状态变更。"""
 
@@ -111,6 +120,29 @@ class PackageRepository:
         if row is None:
             return None
         return stored_package_from_row(row)
+
+    async def list_playable_characters(
+        self,
+        package_id: str,
+    ) -> list[StoredPlayableCharacter]:
+        """按剧本声明顺序返回一个已发布剧本的可玩角色。"""
+
+        stmt = (
+            select(
+                script_characters.c.character_id,
+                script_characters.c.name,
+                script_characters.c.definition,
+            )
+            .join(script_packages, script_packages.c.id == script_characters.c.script_id)
+            .where(
+                script_characters.c.script_id == package_id,
+                script_characters.c.is_playable.is_(True),
+                script_packages.c.status == "published",
+            )
+            .order_by(script_characters.c.sort_order, script_characters.c.character_id)
+        )
+        result = await self._db.execute(stmt)
+        return [stored_playable_character_from_row(row) for row in result.mappings().all()]
 
     async def update_package_status(
         self,
@@ -164,6 +196,26 @@ def stored_package_status_from_row(row: RowMapping) -> StoredPackageStatus:
         id=str(row["id"]),
         status=package_status(row),
         updated_at=row["updated_at"],
+    )
+
+
+def stored_playable_character_from_row(row: RowMapping) -> StoredPlayableCharacter:
+    """将角色表行规范化为可玩角色仓储记录。"""
+
+    raw_definition = row["definition"]
+    definition: Mapping[str, object]
+    if isinstance(raw_definition, Mapping):
+        definition = {
+            key: value
+            for key, value in cast(Mapping[object, object], raw_definition).items()
+            if isinstance(key, str)
+        }
+    else:
+        definition = {}
+    return StoredPlayableCharacter(
+        id=str(row["character_id"]),
+        name=str(row["name"]),
+        definition=definition,
     )
 
 
