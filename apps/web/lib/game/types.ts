@@ -29,6 +29,8 @@ export interface SessionState {
   viewed_evidences: string[];
   current_scene: string;
   pending_media: PendingMedia[];
+  revision: number;
+  event_head_sequence: number;
 }
 
 export interface SessionCharacter {
@@ -161,6 +163,8 @@ export interface GameSessionSnapshot {
   chatMessages: ChatMessage[];
   cards: Card[];
   presentation: SessionPresentation | null;
+  revision: number;
+  eventCursor: number;
 }
 
 export interface MediaTrigger {
@@ -250,6 +254,60 @@ export type ActionResponse =
   | StageTransition
   | AdvanceDenied
   | ActionAcknowledgement;
+
+export type DurableActionPayload = {
+  action: ActionType;
+  [key: string]: unknown;
+};
+
+export interface DurableActionEnvelope extends DurableActionPayload {
+  command_id: string;
+  expected_revision: number;
+}
+
+export interface CommandActionResponse {
+  command_id: string;
+  status: "succeeded" | "rejected" | "failed";
+  revision: number;
+  event_sequence_from: number | null;
+  event_sequence_to: number | null;
+  result: ActionResponse | null;
+  error_code: string | null;
+  error_details: Record<string, unknown>;
+}
+
+export interface CommandReceiptResponse extends Omit<CommandActionResponse, "status"> {
+  status: "processing" | "succeeded" | "rejected" | "failed";
+}
+
+export interface SessionEvent {
+  sequence: number;
+  revision: number;
+  command_id: string;
+  event_type: string;
+  event_version: number;
+  payload: Record<string, unknown>;
+  state_sha256: string | null;
+}
+
+export interface SessionEventPage {
+  revision: number;
+  event_head_sequence: number;
+  snapshot: SessionState;
+  events: SessionEvent[];
+  next_after_sequence: number;
+  has_more: boolean;
+  reset_required: boolean;
+}
+
+export type RecoveryStatus =
+  | "idle"
+  | "submitting"
+  | "resolving"
+  | "resyncing"
+  | "uncertain"
+  | "conflict"
+  | "error";
 
 export interface SubmissionResult {
   type: "submission_result";

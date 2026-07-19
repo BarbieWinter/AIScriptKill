@@ -11,6 +11,7 @@ import type {
   Clue,
   Evidence,
   GameSessionSnapshot,
+  RecoveryStatus,
   SessionPresentation,
   SessionSource,
 } from "@/lib/game/types";
@@ -45,6 +46,8 @@ export interface RuntimeStatePatch {
   chatMessages?: ChatMessage[];
   cards?: Card[];
   presentation?: SessionPresentation | null;
+  revision?: number;
+  eventCursor?: number;
 }
 
 export type ClueInput = Pick<Clue, "id" | "name"> & Partial<Clue>;
@@ -72,10 +75,16 @@ export interface GameStore {
   cards: Card[];
   chatMessages: ChatMessage[];
   presentation: SessionPresentation | null;
+  revision: number;
+  eventCursor: number;
 
   hydrationStatus: "idle" | "loading" | "ready" | "error";
   hydrationError: string | null;
   hydratedAt: number | null;
+
+  recoveryStatus: RecoveryStatus;
+  pendingCommandId: string | null;
+  recoveryError: string | null;
 
   isNpcTyping: boolean;
   typingCharacterId: string | null;
@@ -90,6 +99,11 @@ export interface GameStore {
   applyRuntimePatch: (patch: RuntimeStatePatch) => void;
   setHydration: (
     status: GameStore["hydrationStatus"],
+    error?: string | null
+  ) => void;
+  setRecovery: (
+    status: RecoveryStatus,
+    commandId?: string | null,
     error?: string | null
   ) => void;
   setSession: (sessionId: string, scriptId: string, charId: string) => void;
@@ -135,9 +149,14 @@ function initialState(source: SessionSource | null, sessionId: string | null) {
     cards: [] as Card[],
     chatMessages: [] as ChatMessage[],
     presentation: null as SessionPresentation | null,
+    revision: 0,
+    eventCursor: 0,
     hydrationStatus: "idle" as const,
     hydrationError: null as string | null,
     hydratedAt: null as number | null,
+    recoveryStatus: "idle" as RecoveryStatus,
+    pendingCommandId: null as string | null,
+    recoveryError: null as string | null,
     isNpcTyping: false,
     typingCharacterId: null as string | null,
     currentBgm: null as MediaState | null,
@@ -154,23 +173,45 @@ function gameStoreCreator(source: SessionSource | null, scopedSessionId: string 
     ...initialState(source, scopedSessionId),
 
     applySnapshot: (snapshot) =>
-      set({
-        ...snapshot,
-        hydrationStatus: "ready",
-        hydrationError: null,
-        hydratedAt: Date.now(),
+      set((state) => {
+        if (state.sessionKey !== snapshot.sessionKey) return state;
+        if (
+          snapshot.revision < state.revision ||
+          snapshot.eventCursor < state.eventCursor
+        ) {
+          return state;
+        }
+        return {
+          ...snapshot,
+          hydrationStatus: "ready",
+          hydrationError: null,
+          hydratedAt: Date.now(),
+        };
       }),
 
     applyRuntimePatch: (patch) =>
-      set({
-        ...patch,
-        hydrationStatus: "ready",
-        hydrationError: null,
-        hydratedAt: Date.now(),
+      set((state) => {
+        if (
+          (patch.revision !== undefined && patch.revision < state.revision) ||
+          (patch.eventCursor !== undefined && patch.eventCursor < state.eventCursor)
+        ) {
+          return state;
+        }
+        return {
+          ...patch,
+          hydrationStatus: "ready",
+          hydrationError: null,
+          hydratedAt: Date.now(),
+        };
       }),
 
     setHydration: (hydrationStatus, hydrationError = null) =>
       set({ hydrationStatus, hydrationError }),
+    setRecovery: (
+      recoveryStatus,
+      pendingCommandId = null,
+      recoveryError = null
+    ) => set({ recoveryStatus, pendingCommandId, recoveryError }),
 
     setSession: (sessionId, scriptId, charId) =>
       set({ sessionId, scriptId, playerCharacterId: charId }),

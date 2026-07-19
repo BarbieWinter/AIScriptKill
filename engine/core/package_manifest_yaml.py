@@ -2,6 +2,7 @@
 
 from pydantic import Field
 
+from engine.contracts.multiplayer_v1.authoring import MultiplayerPolicy
 from engine.core.package_yaml_base import PackageYamlModel
 
 
@@ -83,5 +84,9 @@ class PackageManifest(PackageYamlModel):
     guard_rules: PackageGuardRules = Field(
         default_factory=PackageGuardRules,
         description="package.yml guard_rules",
+    )
+    multiplayer: MultiplayerPolicy | None = Field(
+        default=None,
+        description="package.yml multiplayer",
     )
     engine: PackageEngine = Field(description="package.yml engine")

@@ -156,6 +156,19 @@ async def project_runtime_action(
 ) -> StoredSession:
     """将已提交图结果的有限投影和关系表差量幂等写入。"""
 
+    updated = await project_runtime_action_no_commit(db, session, state, effect)
+    await db.commit()
+    return updated
+
+
+async def project_runtime_action_no_commit(
+    db: AsyncSession,
+    session: StoredSession,
+    state: SessionRuntimeState,
+    effect: SessionActionEffect,
+) -> StoredSession:
+    """写入运行时投影但不提交，供 durable command transaction 使用。"""
+
     for message in effect.chat_messages:
         message_values = {
             "session_id": session.id,
@@ -188,7 +201,6 @@ async def project_runtime_action(
         .returning(*SESSION_COLUMNS)
     )
     updated = stored_session_from_row(result.mappings().one())
-    await db.commit()
     return updated
 
 
@@ -262,9 +274,7 @@ async def mark_content_viewed(
     state_field: Literal["viewed_evidences", "read_character_chapters"],
 ) -> ContentProgress | None:
     current_result = await db.execute(
-        select(game_sessions.c.state)
-        .where(game_sessions.c.id == session.id)
-        .with_for_update()
+        select(game_sessions.c.state).where(game_sessions.c.id == session.id).with_for_update()
     )
     current_raw = current_result.scalar_one_or_none()
     if current_raw is None:

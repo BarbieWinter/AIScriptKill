@@ -40,23 +40,26 @@ from engine.db.tables import (
 async def get_runtime_package(
     db: AsyncSession,
     script_id: str,
+    *,
+    lock_existing: bool = False,
 ) -> ScriptPackageImport | None:
-    """读取一个已发布剧本包的完整服务端运行时结构。"""
+    """Read a published runtime package, optionally holding its row ``FOR SHARE``."""
 
-    package_result = await db.execute(
-        select(
-            script_packages.c.id,
-            script_packages.c.name,
-            script_packages.c.version,
-            script_packages.c.status,
-            script_packages.c.config,
-        ).where(
-            and_(
-                script_packages.c.id == script_id,
-                script_packages.c.status == "published",
-            )
+    package_statement = select(
+        script_packages.c.id,
+        script_packages.c.name,
+        script_packages.c.version,
+        script_packages.c.status,
+        script_packages.c.config,
+    ).where(
+        and_(
+            script_packages.c.id == script_id,
+            script_packages.c.status == "published",
         )
     )
+    if lock_existing:
+        package_statement = package_statement.with_for_update(read=True)
+    package_result = await db.execute(package_statement)
     package_row = package_result.mappings().one_or_none()
     if package_row is None:
         return None
@@ -266,9 +269,7 @@ def _scene(row: RowMapping) -> SceneRecord:
     return SceneRecord(
         id=str(row["scene_id"]),
         name=str(row["name"]),
-        background_url=(
-            str(row["background_url"]) if row["background_url"] is not None else None
-        ),
+        background_url=(str(row["background_url"]) if row["background_url"] is not None else None),
         definition=_mapping(row["definition"]),
     )
 

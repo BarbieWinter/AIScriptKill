@@ -73,6 +73,21 @@ class Settings(BaseSettings):
         ge=1,
         description="Per-client request limit for the API gateway skeleton.",
     )
+    multiplayer_v1: bool = Field(
+        default=False,
+        alias="MULTIPLAYER_V1",
+        description="Enable the MP-2 room lobby routes and browser entry flow.",
+    )
+    room_events_v1: bool = Field(
+        default=False,
+        alias="ROOM_EVENTS_V1",
+        description="Reserved MP-0 room-event rollout flag; it does not enable an entry point.",
+    )
+    ai_dm_v1: bool = Field(
+        default=False,
+        alias="AI_DM_V1",
+        description="Reserved MP-0 AI-DM rollout flag; it does not enable an entry point.",
+    )
     rag_embedding_provider: Literal["deterministic", "dashscope"] = Field(
         default="deterministic",
         alias="RAG_EMBEDDING_PROVIDER",

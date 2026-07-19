@@ -28,6 +28,15 @@ PROTECTED_TABLES = {
     "session_checkpoints",
     "session_discoveries",
 }
+MULTIPLAYER_PROTECTED_TABLES = {
+    "room_character_assignments",
+    "room_invites",
+    "room_members",
+    "room_principal_reservations",
+    "room_required_members",
+    "session_command_receipts",
+    "session_events",
+}
 DATABASE_PRIVILEGES = (
     "SELECT",
     "INSERT",
@@ -193,10 +202,14 @@ async def test_browser_roles_have_no_effective_access_to_protected_tables() -> N
         build_async_database_url(database_url),
         connect_args=build_connect_args(database_url),
     )
-    restricted_tables = PROTECTED_TABLES | {
-        "script_packages",
-        "session_checkpoint_writes",
-    }
+    restricted_tables = (
+        PROTECTED_TABLES
+        | MULTIPLAYER_PROTECTED_TABLES
+        | {
+            "script_packages",
+            "session_checkpoint_writes",
+        }
+    )
     try:
         async with engine.connect() as connection:
             # 当：查询角色经继承和 PUBLIC 权限计算后的最终表权限。

@@ -1,5 +1,6 @@
 """提供共享的剧本包标识符和重复项校验辅助函数。"""
 
+import json
 import re
 from collections.abc import Iterable
 from typing import Final
@@ -36,7 +37,7 @@ def validate_package_import(
 
     manifest_config = dict(package.package.config)
     manifest_config.pop("stage_index", None)
-    manifest = PackageManifest.model_validate(manifest_config)
+    manifest = PackageManifest.model_validate_json(json.dumps(manifest_config, ensure_ascii=False))
     _validate_package_id(manifest.metadata.id)
     context = _validation_context(package, available_files)
 

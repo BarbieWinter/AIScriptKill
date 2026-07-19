@@ -15,7 +15,7 @@
 
 import { useMemo, useRef, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 
 /* ── 场景环境配置 ── */
 interface SceneAtmosphere {
@@ -216,8 +216,9 @@ function SceneDecor({ sceneId, atmosphere }: { sceneId: string; atmosphere: Scen
 }
 
 /* ── 主组件 ── */
-export function SceneBackground() {
-  const currentScene = useGameStore((s) => s.currentScene);
+export function SceneBackground({ sceneId }: { sceneId?: string } = {}) {
+  const storeScene = useActiveGameStore((s) => s.currentScene);
+  const currentScene = sceneId ?? storeScene;
   const [tensionLevel, setTensionLevel] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 

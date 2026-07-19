@@ -11,7 +11,7 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import type { JudgementPresentation, SubmissionResult } from "@/lib/game/types";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 
 const legacyJudgement: JudgementPresentation = {
   title: "后门判断",
@@ -47,7 +47,7 @@ export function FinalSubmission({
   onSubmit,
 }: FinalSubmissionProps) {
   const activeJudgement = judgement ?? (onSubmit ? null : legacyJudgement);
-  const sessionId = useGameStore((state) => state.sessionId);
+  const sessionId = useActiveGameStore((state) => state.sessionId);
   const [option, setOption] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);

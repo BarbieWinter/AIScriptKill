@@ -18,5 +18,6 @@ sql_paths = ["./seed/dev_seed.sql"]
 
 [auth]
 enabled = true
+enable_anonymous_sign_ins = true
 site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = ["http://localhost:3000"]

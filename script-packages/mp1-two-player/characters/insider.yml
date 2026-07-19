@@ -1,0 +1,14 @@
+id: "insider"
+name: "知情人"
+identity:
+  public: "当晚留在值班室附近的内部工作人员"
+personality:
+  summary: "熟悉现场流程，说话简洁"
+  traits: ["警觉", "务实"]
+knowledge:
+  investigation:
+    knows:
+      - "公开的目击便签没有写明记录人身份"
+  final-judgment:
+    knows:
+      - "共同终判必须只依据已经公开的材料"

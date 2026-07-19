@@ -22,6 +22,7 @@ import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore, type ActionType } from "@/stores/gameStore";
 import { api, isMockMode } from "@/lib/api";
+import { toast } from "sonner";
 import { WsClient } from "@/lib/ws";
 import { mockScenes } from "@/lib/mock-data";
 import { SceneBackground } from "@/components/game/SceneBackground";
@@ -33,7 +34,11 @@ import { CharacterChapters } from "@/components/game/CharacterChapters";
 import { StageTransition } from "@/components/game/StageTransition";
 import { FinalSubmission } from "@/components/game/FinalSubmission";
 import { TruthReveal } from "@/components/game/TruthReveal";
-import { toast } from "sonner";
+import {
+  GameSessionProvider,
+  useActiveGameStore,
+  useOptionalGameSessionRuntime,
+} from "@/components/game/GameSessionBoundary";
 import {
   Search, Backpack, BookOpen, Send, ArrowLeft,
   Menu as MenuIcon, X, Sparkles, MessageSquare,
@@ -63,8 +68,19 @@ const liveSceneHotspots: Record<
 
 export default function GamePage() {
   const params = useParams();
-  const router = useRouter();
   const sessionId = params.sessionId as string;
+  if (isMockMode()) return <GamePageContent sessionId={sessionId} />;
+  return (
+    <GameSessionProvider source="live" sessionId={sessionId}>
+      <GamePageContent sessionId={sessionId} />
+    </GameSessionProvider>
+  );
+}
+
+function GamePageContent({ sessionId }: { sessionId: string }) {
+  const router = useRouter();
+  const runtime = useOptionalGameSessionRuntime();
+  const liveScoped = runtime?.source === "live";
 
   /* store */
   const setSession = useGameStore((s) => s.setSession);
@@ -77,8 +93,15 @@ export default function GamePage() {
   const setEvidences = useGameStore((s) => s.setEvidences);
   const setMessages = useGameStore((s) => s.setMessages);
   const setCards = useGameStore((s) => s.setCards);
-  const currentStage = useGameStore((s) => s.currentStage);
-  const currentScene = useGameStore((s) => s.currentScene);
+  const currentStage = useActiveGameStore((s) => s.currentStage);
+  const currentScene = useActiveGameStore((s) => s.currentScene);
+  const activePanel = useActiveGameStore((s) => s.activePanel);
+  const closePanel = useActiveGameStore((s) => s.closePanel);
+  const scopedOpenPanel = useActiveGameStore((s) => s.openPanel);
+  const playerCharacterId = useActiveGameStore((s) => s.playerCharacterId);
+  const totalCluesInRound = useActiveGameStore((s) => s.totalCluesInRound);
+  const scopedClues = useActiveGameStore((s) => s.unlockedClues);
+  const presentation = useActiveGameStore((s) => s.presentation);
   const addMessage = useGameStore((s) => s.addMessage);
   const addClue = useGameStore((s) => s.addClue);
   const addEvidence = useGameStore((s) => s.addEvidence);
@@ -151,6 +174,7 @@ export default function GamePage() {
 
   // ══ 初始化 ══
   useEffect(() => {
+    if (liveScoped) return;
     let cancelled = false;
 
     hydrateSession().catch((error) => {
@@ -164,7 +188,21 @@ export default function GamePage() {
     return () => {
       cancelled = true;
     };
-  }, [hydrateSession]);
+  }, [hydrateSession, liveScoped]);
+
+  useEffect(() => {
+    if (!liveScoped || !runtime) return;
+    const recover = () => void runtime.resync().catch(() => undefined);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") recover();
+    };
+    window.addEventListener("online", recover);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", recover);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [liveScoped, runtime]);
 
   // ══ WebSocket 事件 ══
   useEffect(() => {
@@ -235,12 +273,18 @@ export default function GamePage() {
   const currentHotspots = isMockMode()
     ? currentSceneConfig?.hotspots ?? []
     : liveSceneHotspots[currentScene] ?? [];
-  const discoveredEvidences = useGameStore((state) => state.discoveredEvidences);
+  const discoveredEvidences = useActiveGameStore((state) => state.discoveredEvidences);
+  const scopedMessages = useActiveGameStore((state) => state.chatMessages);
+  const scopedCharacters = useActiveGameStore((state) => state.availableCharacters);
+  const recoveryStatus = useActiveGameStore((state) => state.recoveryStatus);
+  const recoveryError = useActiveGameStore((state) => state.recoveryError);
+  const mutationPending = liveScoped && recoveryStatus !== "idle";
   const discoveredEvidenceIds = discoveredEvidences.map((evidence) => evidence.id);
   const investigatedHotspotIds = discoveredEvidenceIds.includes("evidence-back-door-image")
     ? ["back-door-traces"]
     : [];
   const canSubmitFinal = currentStage === "back_door_judgement";
+  const openActivePanel = liveScoped ? scopedOpenPanel : openPanel;
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[var(--background)] select-none">
@@ -248,7 +292,7 @@ export default function GamePage() {
       <div className="absolute inset-0 z-0 bg-[var(--background)]" />
 
       {/* ══ Layer 1: 场景 ══ */}
-      <SceneBackground />
+      <SceneBackground sceneId={liveScoped ? currentScene : undefined} />
 
       {/* ══ 线索发现提示（弹出式卡片） ══ */}
       <AnimatePresence>
@@ -312,7 +356,33 @@ export default function GamePage() {
           sceneId={currentScene}
           hotspots={currentHotspots}
           discovered={investigatedHotspotIds}
+          sessionId={liveScoped ? sessionId : undefined}
+          onInvestigate={liveScoped ? runtime?.investigate.bind(runtime) : undefined}
+          disabled={mutationPending}
         />
+      )}
+
+      {liveScoped && recoveryStatus !== "idle" && (
+        <div data-testid="recovery-status" className="absolute left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-xs text-white/75 backdrop-blur-md">
+          <span>
+            {recoveryStatus === "uncertain"
+              ? "上次操作结果待确认"
+              : recoveryStatus === "conflict"
+                ? "状态已变化，正在同步"
+                : "正在同步权威状态"}
+          </span>
+          {(recoveryStatus === "uncertain" || recoveryStatus === "error") && (
+            <button
+              type="button"
+              data-testid="recovery-retry"
+              onClick={() => void runtime?.retryPendingCommand().catch(() => undefined)}
+              className="font-medium text-[var(--theme-primary)] hover:text-white"
+              title={recoveryError ?? undefined}
+            >
+              重新确认
+            </button>
+          )}
+        </div>
       )}
 
       {/* ══ Layer 3: 顶部栏（纯透明浮动） ══ */}
@@ -327,17 +397,17 @@ export default function GamePage() {
             </button>
           </div>
           <div className="flex items-center gap-1.5">
-            <button onClick={() => openPanel("clue")}
+            <button onClick={() => openActivePanel("clue")}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-sm border border-white/5 text-white/60 hover:text-white/90 hover:bg-black/60 transition-all"
               title="线索板">
               <Search className="h-4 w-4" />
             </button>
-            <button onClick={() => openPanel("evidence")}
+            <button onClick={() => openActivePanel("evidence")}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-sm border border-white/5 text-white/60 hover:text-white/90 hover:bg-black/60 transition-all"
               title="证物背包">
               <Backpack className="h-4 w-4" />
             </button>
-            <button onClick={() => openPanel("chapter")}
+            <button onClick={() => openActivePanel("chapter")}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-sm border border-white/5 text-white/60 hover:text-white/90 hover:bg-black/60 transition-all"
               title="人物章节">
               <BookOpen className="h-4 w-4" />
@@ -380,7 +450,15 @@ export default function GamePage() {
             </div>
 
             <div className="relative flex min-h-0 flex-1 flex-col">
-              <ChatPanel />
+              <ChatPanel
+                sessionId={liveScoped ? sessionId : undefined}
+                messages={liveScoped ? scopedMessages : undefined}
+                characters={liveScoped ? scopedCharacters : undefined}
+                currentStage={liveScoped ? currentStage : undefined}
+                pending={mutationPending}
+                onTalk={liveScoped ? runtime?.talk.bind(runtime) : undefined}
+                onAdvance={liveScoped ? runtime?.advance.bind(runtime) : undefined}
+              />
             </div>
           </motion.div>
         ) : (
@@ -402,6 +480,8 @@ export default function GamePage() {
       <FinalSubmission
         open={showFinal}
         onClose={() => setShowFinal(false)}
+        judgement={liveScoped ? presentation?.judgement : undefined}
+        onSubmit={liveScoped ? runtime?.submitJudgment.bind(runtime) : undefined}
         onComplete={async (result) => {
           setShowFinal(false);
           try {
@@ -430,9 +510,29 @@ export default function GamePage() {
       />
 
       {/* ══ 模态面板 ══ */}
-      <ClueBoard />
-      <EvidenceBackpack />
-      <CharacterChapters />
+      <ClueBoard
+        open={liveScoped ? activePanel === "clue" : undefined}
+        onClose={liveScoped ? closePanel : undefined}
+        clues={liveScoped ? scopedClues : undefined}
+        totalCluesInRound={liveScoped ? totalCluesInRound : undefined}
+      />
+      <EvidenceBackpack
+        open={liveScoped ? activePanel === "evidence" : undefined}
+        onClose={liveScoped ? closePanel : undefined}
+        sessionId={liveScoped ? sessionId : undefined}
+        playerCharacterId={liveScoped ? playerCharacterId : undefined}
+        evidences={liveScoped ? discoveredEvidences : undefined}
+        characters={liveScoped ? scopedCharacters : undefined}
+        onViewEvidence={liveScoped ? runtime?.viewEvidence.bind(runtime) : undefined}
+        onShowEvidence={liveScoped ? runtime?.showEvidence.bind(runtime) : undefined}
+      />
+      <CharacterChapters
+        open={liveScoped ? activePanel === "chapter" : undefined}
+        onClose={liveScoped ? closePanel : undefined}
+        sessionId={liveScoped ? sessionId : undefined}
+        onListChapters={liveScoped ? runtime?.listCharacterChapters.bind(runtime) : undefined}
+        onReadChapter={liveScoped ? runtime?.readCharacterChapter.bind(runtime) : undefined}
+      />
 
       {/* ══ 手机端浮动操作按钮 ══ */}
       <div className="md:hidden fixed bottom-4 right-4 z-45 flex flex-col gap-2">
@@ -471,7 +571,7 @@ export default function GamePage() {
                   { icon: BookOpen, label: "人物章节", panel: "chapter" as const, color: "text-[var(--info)]" },
                 ].map((item) => (
                   <button key={item.panel}
-                    onClick={() => { openPanel(item.panel); setMobileMenu(false); }}
+                    onClick={() => { openActivePanel(item.panel); setMobileMenu(false); }}
                     className="w-full flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm text-white/80 hover:bg-white/5 transition-colors"
                   >
                     <item.icon className={`h-5 w-5 ${item.color}`} />

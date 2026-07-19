@@ -170,7 +170,7 @@ def test_backend_launch_surfaces_bound_websocket_frames_before_asgi_buffering() 
     limits = "--ws-max-size 65536 --ws-max-queue 4"
 
     # 当/则：每条启动命令都在 ASGI 收到帧前应用传输限制。
-    assert makefile.count(limits) == 2
+    assert makefile.count(limits) == 4
     assert limits in compose
     assert '"--ws-max-size", "65536", "--ws-max-queue", "4"' in dockerfile
 

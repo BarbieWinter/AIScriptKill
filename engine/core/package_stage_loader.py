@@ -34,6 +34,7 @@ def load_stages(
     names: tuple[str, ...],
     root: str,
     stage_index_raw: JsonMapping,
+    multiplayer_enabled: bool = False,
 ) -> tuple[StageRecord, ...]:
     """校验索引与文件一致性，并按权威顺序返回阶段。"""
 
@@ -42,7 +43,12 @@ def load_stages(
     stage_mappings = _stage_mappings_by_id(archive, names, root)
     _ensure_stage_files_match_index(frozenset(stage_mappings), stage_index)
     return tuple(
-        stage_record_from_mapping(stage_mappings[item.id], item, act_ids.get(item.id))
+        stage_record_from_mapping(
+            stage_mappings[item.id],
+            item,
+            act_ids.get(item.id),
+            multiplayer_enabled=multiplayer_enabled,
+        )
         for item in ordered_stage_index_items(stage_index)
     )
 

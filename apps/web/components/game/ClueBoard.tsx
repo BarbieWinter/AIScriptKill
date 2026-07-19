@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet } from "@/components/ui/Sheet";
-import { useGameStore } from "@/stores/gameStore";
+import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 import {
   Search,
   Star,
@@ -33,11 +33,12 @@ export function ClueBoard({
   clues: controlledClues,
   totalCluesInRound: controlledTotal,
 }: ClueBoardProps = {}) {
-  const storeOpen = useGameStore((s) => s.activePanel === "clue");
-  const storeClues = useGameStore((s) => s.unlockedClues);
-  const storeTotal = useGameStore((s) => s.totalCluesInRound);
+  const storeOpen = useActiveGameStore((s) => s.activePanel === "clue");
+  const storeClues = useActiveGameStore((s) => s.unlockedClues);
+  const storeTotal = useActiveGameStore((s) => s.totalCluesInRound);
+  const closePanel = useActiveGameStore((s) => s.closePanel);
   const open = controlledOpen ?? storeOpen;
-  const onClose = controlledOnClose ?? (() => useGameStore.getState().closePanel());
+  const onClose = controlledOnClose ?? closePanel;
   const clues = controlledClues ?? storeClues;
   const totalCluesInRound = controlledTotal ?? storeTotal;
   const [filter, setFilter] = useState<string>("all");

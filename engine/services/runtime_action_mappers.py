@@ -1,6 +1,7 @@
 """将 REST 动作转换为核心图输入，并将图状态差量映射回现有响应。"""
 
 from dataclasses import dataclass
+from typing import cast
 
 from engine.api.schemas import (
     ActionRequest,
@@ -14,7 +15,13 @@ from engine.api.schemas import (
     StageTransition,
 )
 from engine.api.schemas.actions import StageTransitionState
-from engine.api.schemas.common import ActionType, DiscoveredClue, EventTrigger, MediaTrigger
+from engine.api.schemas.common import (
+    ActionType,
+    DiscoveredClue,
+    EventTrigger,
+    JsonValue,
+    MediaTrigger,
+)
 from engine.core.condition_evaluator import evaluate_condition
 from engine.core.game_state import GameState
 from engine.core.package_schema import ScriptPackageImport
@@ -235,23 +242,55 @@ def _advance_requirements(
     return result
 
 
-def _requirement_conditions(value: object) -> list[dict[str, object]]:
+def _requirement_conditions(value: object) -> list[dict[str, JsonValue]]:
     if not isinstance(value, list):
         return []
-    flattened: list[dict[str, object]] = []
-    for item in value:
+    raw_items = cast(list[object], value)
+    flattened: list[dict[str, JsonValue]] = []
+    for item in raw_items:
         if not isinstance(item, dict):
             continue
-        condition = {str(key): raw for key, raw in item.items()}
-        if condition.get("type") == "all" and isinstance(condition.get("conditions"), list):
-            flattened.extend(_requirement_conditions(condition["conditions"]))
+        raw_mapping = cast(dict[object, object], item)
+        condition: dict[str, JsonValue] = {}
+        for key, raw in raw_mapping.items():
+            if isinstance(key, str) and _is_json_value(raw):
+                condition[key] = _json_value(raw)
+        nested = condition.get("conditions")
+        if condition.get("type") == "all" and isinstance(nested, list):
+            flattened.extend(_requirement_conditions(nested))
         else:
             flattened.append(condition)
     return flattened
 
 
+def _is_json_value(value: object) -> bool:
+    if value is None or isinstance(value, str | int | float | bool):
+        return True
+    if isinstance(value, list):
+        raw_items = cast(list[object], value)
+        return all(_is_json_value(item) for item in raw_items)
+    if isinstance(value, dict):
+        raw_mapping = cast(dict[object, object], value)
+        return all(
+            isinstance(key, str) and _is_json_value(item) for key, item in raw_mapping.items()
+        )
+    return False
+
+
+def _json_value(value: object) -> JsonValue:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, list):
+        raw_items = cast(list[object], value)
+        return [_json_value(item) for item in raw_items]
+    if isinstance(value, dict):
+        raw_mapping = cast(dict[object, object], value)
+        return {key: _json_value(item) for key, item in raw_mapping.items() if isinstance(key, str)}
+    raise TypeError("value is not JSON-compatible")
+
+
 def _requirement_label(
-    condition: dict[str, object],
+    condition: dict[str, JsonValue],
     package: ScriptPackageImport,
 ) -> str:
     condition_type = condition.get("type")
@@ -314,9 +353,7 @@ def _new_discoveries(
     ]
     discoveries.extend(
         DiscoveryDraft(entity_type="evidence", entity_id=item)
-        for item in _new_items(
-            previous["discovered_evidences"], current["discovered_evidences"]
-        )
+        for item in _new_items(previous["discovered_evidences"], current["discovered_evidences"])
     )
     discoveries.extend(
         DiscoveryDraft(entity_type="character_chapter", entity_id=item)

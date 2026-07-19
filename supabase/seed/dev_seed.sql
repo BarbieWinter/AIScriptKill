@@ -138,7 +138,7 @@ SELECT
     'phase1_seed_context',
     0,
     '雪乡案发夜，破碎灯笼、煤灰手套和后门脚印共同指向饭店后院的异常行动。',
-    array_prepend(1::real, array_fill(0::real, ARRAY[1535]))::vector,
+    array_prepend(1::real, array_fill(0::real, ARRAY[1023]))::vector,
     '{"stage_visible":"act1_investigation","visibility":"dm_only","character_id":"dm"}'::jsonb
 WHERE NOT EXISTS (
     SELECT 1

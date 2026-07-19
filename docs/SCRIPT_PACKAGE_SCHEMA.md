@@ -1,6 +1,10 @@
 # 剧本包 Schema 规范 (Script Package Schema)
 
 > **这是你编排剧本的核心参考文档。** 每个剧本包是一个文件夹，遵循本规范定义的 YAML Schema。引擎根据这些配置执行游戏。
+>
+> **当前内容快照：** `script-packages/snow-village/` 是单人 `legacy_single` 垂直切片 **《雪落之前：后门的脚印》**，入口为 `return_to_snow_village`，共有四个阶段、两个场景、一个热点、一条线索和一件证物，`max_players: 1`。它没有 `media/` 或 `dm_guide/` 目录。本文后半部分为保留字段宽度而展示的旧谋杀故事示例，凡标为“说明性/旧版”的内容都不是当前 Snow Village 的真实路径或内容。
+>
+> **MP-0 边界：** 本文的 `multiplayer_v1` 小节描述 `engine/contracts/multiplayer_v1/authoring.py` 中的独立严格 Pydantic contract。当前 `ScriptPackageLoader` 不解析或接受这些字段；把 `multiplayer` 加入 `package.yml`，或把 `settlement` 加入 stage YAML，都会以 `INVALID_PACKAGE_SCHEMA` 拒绝。MP-0 没有接入多人房间运行时、数据库表/迁移、WebSocket 命令/事件或前端。`MULTIPLAYER_V1`、`ROOM_EVENTS_V1`、`AI_DM_V1` 功能标志默认均为 `false`，也不会改变 loader 支持范围。
 
 ---
 
@@ -89,127 +93,138 @@ stage_min: return_to_snow_village
 - 章节正文持久化到私有章节表，不自动进入 `script_knowledge` 或当前
   `character_knowledge` RAG 索引；后续只能由服务端依据玩家角色与已解锁章节读取。
 
+### 1.2 MP-0 独立 `multiplayer_v1` authoring contract
+
+> **不要把以下示例复制进当前剧本包。** 它们只演示独立模型的 JSON/YAML 形状；当前 loader 没有 `PackageManifest.multiplayer` 或 `StageDefinition.settlement` 映射，因 `extra="forbid"` 会拒绝这些键。
+
+所有 MP-0 authoring 模型继承 `ContractModel`，统一配置为 `strict=True`、`frozen=True`、`extra="forbid"`。未知字段和类型强制转换会被拒绝。
+
+#### 包级多人策略
+
+```yaml
+min_players: 2
+max_players: 2
+character_assignment: required
+start_policy: all_players_ready
+duplicate_characters: false
+```
+
+约束：`min_players`、`max_players` 都必须是 `>= 2` 的整数，且最小人数不能大于最大人数；`character_assignment` 只能是 `required`，`start_policy` 只能是 `all_players_ready`，`duplicate_characters` 只能为 `false`。
+
+#### 阶段组合模型
+
+`MultiplayerStageDefinition` 将角色章节、公共材料、讨论、结算和提示放在同一个 standalone 阶段结构中：
+
+```yaml
+id: act-1
+chapters:
+  detective-a: detective-a-act-1
+  suspect-b: suspect-b-act-1
+public_materials:
+  - id: crime-scene-photo
+    reveal_at: stage_enter
+  - id: witness-record
+    reveal_at: all_players_read
+  - id: vote-followup
+    reveal_at: outcome:suspect-b
+discussion:
+  suggested_minutes: 15
+  close_policy: all_players
+settlement:
+  mode: secret_vote
+  settlement_id: act-1-vote
+  question: "你认为本阶段最可疑的人是谁？"
+  options:
+    - id: detective-a
+      text: "侦探 A"
+    - id: suspect-b
+      text: "嫌疑人 B"
+  reveal: named_ballots
+  submission_change: forbidden
+  default_effect: record_and_continue
+hints:
+  - id: motive-chain
+    levels:
+      - "回顾两人的时间线。"
+      - "比较已经公开的材料。"
+      - "检查无法同时成立的陈述。"
+```
+
+局部校验包括：
+
+- `public_materials[].reveal_at` 只能是 `stage_enter`、`all_players_read`、`settlement_done` 或非空 `outcome:<id>`；
+- 同一阶段内公共材料 ID 与提示 ID 分别唯一；
+- `suggested_minutes` 省略时为 `null`，存在时必须大于 0；`close_policy` 默认且只能为 `all_players`；
+- 每个提示恰好包含 3 条有序非空文案；
+- 跨文件 material、chapter、outcome 引用尚不由 MP-0 standalone contract 验证。
+
+#### 阶段结算联合
+
+`StageSettlementDefinition` 以 `mode` 为 discriminator：
+
+| `mode` | 必填字段 | 默认值 |
+|---|---|---|
+| `none` | `mode` | `default_effect: record_and_continue` |
+| `secret_vote` | `settlement_id`、`question`、非空唯一 `options` | `reveal: named_ballots`、`submission_change: forbidden`、`default_effect: record_and_continue` |
+| `shared_choice` | `settlement_id`、`question`、非空唯一 `options` | `reveal: outcome_only`、`submission_change: allowed_before_complete`、`default_effect: record_and_continue` |
+| `final_judgment` | `settlement_id`、`question`、`answer_mode`、非空唯一 `options` | `reveal: named_ballots`、`submission_change: forbidden`、`default_effect: branch` |
+
+`answer_mode` 只能是 `shared_choice` 或 `individual_secret`。`mode: none` 不能携带 options 等额外字段。unknown mode、空/重复 option、空 question、旧字段名（如 `submission_change_policy`）都会被拒绝。
+
+再次强调：这些模型目前是 standalone contract，不是 loader schema，也没有运行时处理器或持久化语义。
+
 ---
 
 ## 2. package.yml — 剧本包元数据
 
 ```yaml
-# script-packages/snow-village/package.yml
-# ★ 必须：剧本包身份信息
+# 当前 script-packages/snow-village/package.yml
 metadata:
-  id: "snow-village"                  # 唯一标识，用于script_packages表
-  title: "雪乡连环杀人事件"             # 展示名
-  version: "1.0.0"                    # 语义化版本
-  author: "XXX剧本工作室"              # 剧本原作者
-  adapter: "你的名字"                  # AI版本改编者
+  id: "snow-village"
+  title: "雪落之前：后门的脚印"
+  version: "0.1.0"
 
-# ○ 推荐：基础信息
 info:
-  description: >
-    雪乡，一个被大雪覆盖的东北村庄。
-    新年将至，村子里却接连发生命案……
-  genre: ["悬疑", "推理", "惊悚"]      # 标签
-  difficulty: 3                        # 1-5 难度
-  duration_minutes: 120                # 推荐时长
-  min_players: 1                       # 最少真人玩家数
-  max_players: 1                       # 目前单人，后续可扩
+  description: "卓司元调查王氏杀猪菜后门异常的首个单人垂直切片。"
+  genre: ["悬疑", "互动小说"]
+  difficulty: 1
+  duration_minutes: 30
+  max_players: 1
 
-# ○ 推荐：视觉效果配置
-visual:
-  poster: "assets/posters/main.jpg"   # 剧本库封面
-  logo: null                           # 可选Logo
-  theme_color: "#1a1a2e"              # 主题色（影响前端UI）
-  font: "serif"                       # 字体风格
-
-# ○ 推荐：DM风格配置
-dm_config:
-  style: "immersive"                   # immersive / friendly / dramatic
-  voice_actor: "default"               # TTS音色
-  opening_speech: >
-    各位玩家，欢迎来到雪乡。
-    今天是除夕夜，村子里张灯结彩，
-    但一场命案正在悄然发生……
-
-# ○ 可选：Guard Agent附加规则
-guard_rules:
-  extra_forbidden_topics: []           # 额外禁止话题
-  character_knowledge_strictness: "normal"  # normal / strict / relaxed
-
-# ★ 必须：引擎加载所需
 engine:
-  min_engine_version: "1.0.0"
-  entry_stage: "prologue"              # 游戏从哪个stage开始
-  default_ending: "truth_revealed"     # 默认结局ID
+  entry_stage: "return_to_snow_village"
 ```
+
+当前包没有 `multiplayer`；它是 `legacy_single` 单人包。广义 loader schema 还允许 `metadata.author`、`metadata.adapter`、`info.min_players`、`visual`、`dm_config`、`guard_rules`、`engine.min_engine_version` 与 `engine.default_ending` 等可选字段，但不得据此把上面的 MP-0 standalone contract 嵌入 `package.yml`。
 
 ---
 
 ## 3. stages/_index.yml — 阶段顺序定义
 
 ```yaml
-# script-packages/snow-village/stages/_index.yml
-# ★ 必须：定义所有阶段及其顺序
-
+# 当前 script-packages/snow-village/stages/_index.yml
 stages:
-  - id: "prologue"                     # 阶段ID，全局唯一
-    name: "序章"                       # 展示名
-    sort_order: 0                      # 排序，进一不可逆
-  
-  - id: "act1_intro"
-    name: "第一幕·开场"
+  - id: "return_to_snow_village"
+    name: "炉火未熄"
+    sort_order: 0
+  - id: "investigate_back_alley"
+    name: "调查后巷"
     sort_order: 10
-  
-  - id: "act1_investigation"
-    name: "第一幕·第一轮搜证"
+  - id: "confront_wangdada"
+    name: "没有打开的门"
     sort_order: 20
-  
-  - id: "act1_event"
-    name: "第一幕·事件推进"
+  - id: "back_door_judgement"
+    name: "后门判断"
     sort_order: 30
-  
-  - id: "act1_confrontation"
-    name: "第一幕·对峙"
-    sort_order: 40
-  
-  - id: "act2_intro"
-    name: "第二幕·开启"
-    sort_order: 50
-  
-  - id: "act2_investigation"
-    name: "第二幕·搜证"
-    sort_order: 60
-  
-  - id: "fake_final"                   # ★ 支持假结局
-    name: "假·最终推理"
-    sort_order: 70
-    meta:
-      is_fake: true                    # 标记为假结局
-  
-  - id: "act3_online"
-    name: "线上剧本"
-    sort_order: 80
-  
-  - id: "true_final"
-    name: "真相揭示"
-    sort_order: 90
-  
-  - id: "epilogue"
-    name: "复盘"
-    sort_order: 100
 
-# ○ 可选：定义阶段组（如第一本/第二本）
 acts:
-  - id: "book1"
-    name: "第一本"
-    stages: ["prologue", "act1_intro", "act1_investigation", "act1_event", "act1_confrontation"]
-  
-  - id: "book2"
-    name: "第二本"
-    stages: ["act2_intro", "act2_investigation", "fake_final"]
-  
-  - id: "online"
-    name: "线上篇"
-    stages: ["act3_online", "true_final", "epilogue"]
+  - id: "back_door_footprints"
+    name: "后门的脚印"
+    stages:
+      - "return_to_snow_village"
+      - "investigate_back_alley"
+      - "confront_wangdada"
+      - "back_door_judgement"
 ```
 
 `stages/_index.yml` 是阶段顺序、展示名和 act 归属的唯一权威来源。索引中的 stage
@@ -227,8 +242,10 @@ acts:
 
 这是你**最常编辑**的文件类型。
 
+> **说明性/旧版示例：** 下列 `act1_investigation` 内容用于展示广义 stage 字段，不存在于当前《雪落之前：后门的脚印》。当前真实阶段以本节前的 `_index.yml` 快照和仓库文件为准。
+
 ```yaml
-# script-packages/snow-village/stages/act1_investigation.yml
+# 说明性/旧版，不是当前包：stages/act1_investigation.yml
 # ★ 必须：stage基础信息
 id: "act1_investigation"
 name: "第一幕·第一轮搜证"
@@ -272,23 +289,23 @@ available_actions:
   - id: "talk_to_npc"
     label: "对话角色"
     description: "与场景中的角色交谈"
-  
+
   - id: "examine_scene"
     label: "调查场景"
     description: "查看当前场景的可疑位置"
-  
+
   - id: "show_evidence"
     label: "出示证物"
     description: "向某个角色出示已获得的证物"
-  
+
   - id: "use_card"
     label: "使用卡牌"
     description: "使用技能卡或道具卡"
-  
+
   - id: "open_clue_board"
     label: "线索板"
     description: "查看已收集的线索"
-  
+
   - id: "request_advance"
     label: "请求推进"
     description: "询问DM是否可以进入下一阶段"
@@ -361,8 +378,10 @@ special_rules:
 
 ## 5. characters/_index.yml — 角色清单
 
+> **说明性/旧版示例：** 下列角色清单来自旧谋杀故事，不是当前包。当前包只有可玩角色 `zhuosiyuan`（卓司元）和 NPC `wangdada`（王大达）。
+
 ```yaml
-# script-packages/snow-village/characters/_index.yml
+# 说明性/旧版，不是当前包：characters/_index.yml
 # ★ 必须：角色清单
 
 characters:
@@ -371,13 +390,13 @@ characters:
     portrait: "assets/portraits/zhuosiyuan.jpg"
     playable: true                   # 是否可选为玩家角色
     order: 1                          # 显示顺序
-  
+
   - id: "cuikaiqiang"
     name: "崔铠强"
     portrait: "assets/portraits/cuikaiqiang.jpg"
     playable: true
     order: 2
-  
+
   - id: "chengjun"
     name: "程俊"
     portrait: "assets/portraits/chengjun.jpg"
@@ -401,8 +420,10 @@ npc_rules:
 
 ## 6. characters/<character-id>.yml — 单角色定义
 
+> **说明性/旧版示例：** 下列人物知识和反应仅展示字段形状，不是当前 `wangdada.yml` 的内容。
+
 ```yaml
-# script-packages/snow-village/characters/wangdada.yml
+# 说明性/旧版，不是当前包：characters/wangdada.yml
 # ★ 必须：角色 id 和名称
 id: "wangdada"
 name: "王大达"
@@ -448,7 +469,7 @@ knowledge:
     doesnt_know:
       - "命案已经发生"                # 此时还未发现尸体
       - "李白已失踪"
-  
+
   stage_act1_investigation:
     knows:
       - "昨晚听到了奇怪的声音"
@@ -456,7 +477,7 @@ knowledge:
     doesnt_know:
       - "尸体位置"
       - "凶手身份"
-  
+
   stage_act2_intro:
     knows:
       - "李白已死"
@@ -475,7 +496,7 @@ evidence_reactions:
       nervous: +30
     state_change:                     # 状态变化
       trust: -10
-      
+
   - evidence_id: "threatening_letter"
     stage_visible: "act2_intro"
     reaction_text: "（脸色苍白）你也收到了？我以为只有我……"
@@ -501,8 +522,10 @@ dialogue_strategy:
 
 ## 7. clues/ — 线索定义
 
+> **说明性/旧版示例：** 下列 `act1_round1` 不在当前包中。当前线索是 `back-door-first-set` 轮次中的 `clue-back-alley-note`（后巷便签）。
+
 ```yaml
-# script-packages/snow-village/clues/rounds/act1_round1.yml
+# 说明性/旧版，不是当前包：clues/rounds/act1_round1.yml
 # 线索轮次定义
 round_id: "act1_round1"
 name: "第一幕第一轮搜证"
@@ -539,8 +562,10 @@ clues:
 
 ## 8. scenes/ — 场景定义
 
+> **说明性/旧版示例：** 下列 `crime_scene` 不在当前包中。当前场景是 `restaurant-hall` 与 `back-alley`，唯一热点是 `back-door-traces`。
+
 ```yaml
-# script-packages/snow-village/scenes/crime_scene.yml
+# 说明性/旧版，不是当前包：scenes/crime_scene.yml
 id: "crime_scene"
 name: "案发现场"
 description: "雪乡村口饭店的后院，积雪覆盖的地面上隐约可见挣扎痕迹"
@@ -590,8 +615,10 @@ ambient:
 
 ## 9. evidences/ — 证物定义
 
+> **说明性/旧版示例：** 下列 `bloody_knife` 不在当前包中。当前唯一证物是 `evidence-back-door-image`（21:13 后门截图），发现位置为 `back-alley:back-door-traces`。
+
 ```yaml
-# script-packages/snow-village/evidences/bloody_knife.yml
+# 说明性/旧版，不是当前包：evidences/bloody_knife.yml
 id: "bloody_knife"
 name: "带血的刀"
 type: "key_evidence"                   # key_evidence / evidence / prop / skill_card
@@ -631,8 +658,10 @@ npc_reactions:
 
 ## 10. media/ — 多媒体定义
 
+> **说明性/旧版示例：** 当前 Snow Village 没有 `media/` 目录；下列资源清单只保留为广义 schema 参考。
+
 ```yaml
-# script-packages/snow-village/media/audio.yml
+# 说明性/旧版，不是当前包：media/audio.yml
 # 所有音频资源定义
 
 audio_assets:
@@ -690,7 +719,7 @@ image_assets:
     file: "assets/posters/main.jpg"
     type: "poster"
     usage: ["library_cover", "detail_header"]
-  
+
   - id: "scene_crime"
     file: "assets/scenes/crime_scene.jpg"
     type: "scene_bg"
@@ -701,8 +730,10 @@ image_assets:
 
 ## 11. dm_guide/ — DM资料（仅后台可见）
 
+> **说明性/旧版示例：** 当前 Snow Village 没有 `dm_guide/` 目录；本节旧谋杀真相、阶段笔记和演绎说明均不是当前包内容。
+
 ```yaml
-# script-packages/snow-village/dm_guide/truth.yml
+# 说明性/旧版，不是当前包：dm_guide/truth.yml
 # ★ 重要：此目录所有文件仅AI DM、Guard Agent、管理员可见
 # 不进入玩家Prompt
 
@@ -714,7 +745,7 @@ truth:
   murderer: "chengjun"
   victim: "libai"
   motive: "复仇"
-  
+
   timeline:
     - time: "18:00"
       event: "程俊以王大达身份进入饭店"
@@ -744,7 +775,7 @@ truth:
 ```
 
 ```yaml
-# script-packages/snow-village/dm_guide/stage_notes.yml
+# 说明性/旧版，不是当前包：dm_guide/stage_notes.yml
 # 带本要点：每个阶段的DM注意事项
 
 stage_notes:
@@ -754,30 +785,30 @@ stage_notes:
       DM以李白身份出现，自然发本。
       注意分发角色剧本后，趁玩家阅读时偷偷换人。
       确保不被玩家发现同一个DM在同框出现。
-    
+
     atmosphere: "轻松、过年氛围"
     key_moments:                       # 关键节点
       - action: "player_reading_done"
         dm_action: "提醒玩家收起剧本，开始第一幕"
-  
+
   - stage_id: "act1_event"
     dm_behavior: "广播后由谄媚→凶恶切换"
     notes: >
       播放村长广播后，DM应该瞬间变脸。
       从热情老板变成阴森变态。
-    
+
     atmosphere: "紧张、压迫感"
     prop_usage:                        # 道具使用
       - "围裙（暗示厨师的工具）"
       - "面具（第二幕使用）"
-  
+
   - stage_id: "fake_final"
     dm_behavior: "假复盘，泰然自若"
     notes: >
       假装这是最终复盘，给玩家发放问卷。
       暗中用手机录音玩家的讨论。
       选择戒备心低的玩家回答问题。
-    
+
     trap_mechanics:
       - "录音玩家的推理过程"
       - "假借问卷收集玩家签名"
@@ -790,12 +821,12 @@ stage_notes:
       呈现精神失常的状态。
       播放之前的录音。
       根据玩家选择播放不同的新闻结局。
-    
+
     atmosphere: "全黑，只有手机屏幕光"
 ```
 
 ```yaml
-# script-packages/snow-village/dm_guide/performance_guide.yml
+# 说明性/旧版，不是当前包：dm_guide/performance_guide.yml
 # 演绎要点
 
 performance:
@@ -804,24 +835,24 @@ performance:
       character: "李白（正常DM）"
       actor: "DM1"
       traits: ["热情", "专业", "稍微有点话痨"]
-    
+
     phase_2:
       character: "王大达（DM扮演）"
       actor: "DM2"
       traits: ["谄媚", "碎嘴", "东北口音"]
       pre_broadcast: "正常的饭店老板"
       post_broadcast: "恐惧但强装镇定"
-    
+
     phase_3:
       character: "王小达（戴面具）"
       actor: "DM2"
       traits: ["神秘", "压低声音说话"]
-    
+
     phase_4:
       character: "崔鹏（假复盘）"
       actor: "DM2"
       traits: ["专业", "泰然自若", "套话"]
-    
+
     phase_5:
       character: "程俊（真身）"
       actor: "DM2"
@@ -831,7 +862,7 @@ performance:
     - phase: "act1_intro"
       line: "欢迎各位来到雪乡！"
       emotion: "热情"
-    
+
     - phase: "true_final"
       line: "你们刚刚所说的一切……我都录了音。"
       emotion: "阴森冷笑"
@@ -841,8 +872,10 @@ performance:
 
 ## 12. endings.yml — 结局分支
 
+> **当前事实：** `script-packages/snow-village/endings.yml` 是 `endings: []`。最终阶段目前通过 `special_rules.judgement` 和 Final Submission API 评分，不依赖本节的旧结局条目。下列内容仅为说明性/旧版 schema 示例。
+
 ```yaml
-# script-packages/snow-village/endings.yml
+# 说明性/旧版，不是当前包：endings.yml
 # 结局分支定义
 
 endings:
@@ -859,7 +892,7 @@ endings:
           value: "revenge"
         - type: "key_evidence_used"
           min_count: 3
-    
+
     on_trigger:
       - action: "play_audio"
         asset_id: "ending_bgm_true"
@@ -870,11 +903,11 @@ endings:
       - action: "show_truth_summary"
       - action: "transition_to"
         stage_id: "epilogue"
-    
+
     outcome_text: >
       程俊被警方逮捕。雪乡的雪依旧在下，
       但这个除夕夜，没有人能真正安心过年……
-    
+
     rating_bonus:                     # 评分加成
       base_score: 100
       score_breakdown:
@@ -892,7 +925,7 @@ endings:
           field: "suspect"
         - type: "submission_incorrect"
           field: "motive"
-    
+
     on_trigger:
       - action: "play_audio"
         asset_id: "ending_bgm_dark"
@@ -902,7 +935,7 @@ endings:
         asset_id: "ending_2"
       - action: "transition_to"
         stage_id: "epilogue"
-    
+
     outcome_text: >
       真凶消失在雪夜中，这个案子成了悬案。
       但雪乡的恐怖传说，还在继续……
@@ -927,7 +960,7 @@ validation_rules:
     field_types:
       "metadata.id": "string, lowercase, hyphens"
       "info.difficulty": "integer 1-5"
-  
+
   stage:
     required_fields: ["id", "name", "entry_conditions", "exit_conditions", "available_actions"]
     index_file_parity: true                # stages/_index.yml 与 stage YAML 必须一一对应
@@ -935,17 +968,17 @@ validation_rules:
     condition_references_valid: true       # 检查引用的stage_id/clue_id/char_id是否存在
     event_actions_valid: true              # 检查action名称是否引擎支持
     event_payloads_valid: true             # 按 action 校验必需字段、类型和实体引用
-  
+
   character:
     required_fields: ["id", "name", "personality.summary", "knowledge"]
     index_file_parity: true                # characters/_index.yml 与角色 YAML 必须一一对应
     stage_knowledge_coverage:              # 检查每个stage是否都有知识定义
       warn_if_missing: true
-  
+
   clue:
     required_fields: ["id", "name", "description", "stage_visible"]
     image_exists: true                     # 检查引用的图片文件是否存在
-  
+
   evidence:
     required_fields: ["id", "name", "description.surface", "discovery.scene_id"]
     allowed_types: ["key_evidence", "evidence", "prop", "skill_card"]

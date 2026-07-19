@@ -1,0 +1,11 @@
+stages:
+  - id: "investigation"
+    name: "核对口供"
+    sort_order: 0
+  - id: "final-judgment"
+    name: "共同终判"
+    sort_order: 10
+acts:
+  - id: "two-accounts"
+    name: "两份口供"
+    stages: ["investigation", "final-judgment"]

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Annotated, ClassVar, Final, Literal, cast
+from uuid import UUID
 
 import jwt
 from fastapi import Depends
@@ -40,6 +41,10 @@ class SupabaseClaims(BaseModel):
     sub: str = Field(description="Supabase Auth user ID.")
     exp: int = Field(description="JWT expiration timestamp.")
     role: str | None = Field(default=None, description="Supabase Postgres role.")
+    is_anonymous: bool = Field(
+        default=False,
+        description="Whether Supabase Auth issued an anonymous-user access token.",
+    )
     app_metadata: SupabaseAppMetadata = Field(
         default_factory=SupabaseAppMetadata,
         description="Supabase server-managed authorization metadata.",
@@ -52,6 +57,7 @@ class CurrentUser:
 
     subject: str
     role: Literal["anonymous", "authenticated"]
+    is_anonymous: bool = False
     app_role: str | None = None
     app_roles: tuple[str, ...] = ()
 
@@ -62,6 +68,13 @@ class CurrentUser:
         return self.app_role in ADMIN_APP_ROLES or bool(
             ADMIN_APP_ROLES.intersection(self.app_roles)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedAnonymousPrincipal:
+    """仅携带经过验证的 Supabase anonymous principal UUID。"""
+
+    id: UUID
 
 
 # ── Supabase JWKS 校验器 ──
@@ -126,14 +139,61 @@ async def get_current_user(
     return CurrentUser(
         subject=claims.sub,
         role="authenticated",
+        is_anonymous=claims.is_anonymous,
         app_role=claims.app_metadata.role,
         app_roles=claims.app_metadata.roles,
     )
 
 
+async def get_verified_anonymous_principal(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(bearer_scheme),
+    ],
+) -> VerifiedAnonymousPrincipal:
+    """要求一个由 Supabase 签发且 subject 为 UUID 的 anonymous access token。"""
+
+    if credentials is None:
+        raise unauthorized("AUTH_REQUIRED", "多人游戏需要匿名身份凭证")
+    claims = get_jwt_verifier().verify(credentials.credentials)
+    try:
+        principal_id = UUID(claims.sub)
+    except ValueError as exc:
+        raise unauthorized("INVALID_USER_ID", "JWT 用户标识不是有效 UUID") from exc
+    if not claims.is_anonymous:
+        raise forbidden(
+            "ANONYMOUS_IDENTITY_REQUIRED",
+            "多人首版仅接受 Supabase anonymous 身份",
+        )
+    return VerifiedAnonymousPrincipal(id=principal_id)
+
+
+async def require_verified_anonymous_principal(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> VerifiedAnonymousPrincipal:
+    """将已验证的 optional auth 结果收窄为 multiplayer anonymous principal。"""
+
+    if current_user.role == "anonymous":
+        raise unauthorized("AUTH_REQUIRED", "多人游戏需要匿名身份凭证")
+    try:
+        principal_id = UUID(current_user.subject)
+    except ValueError as exc:
+        raise unauthorized("INVALID_USER_ID", "JWT 用户标识不是有效 UUID") from exc
+    if not current_user.is_anonymous:
+        raise forbidden(
+            "ANONYMOUS_IDENTITY_REQUIRED",
+            "多人首版仅接受 Supabase anonymous 身份",
+        )
+    return VerifiedAnonymousPrincipal(id=principal_id)
+
+
 # ── 路由依赖别名 ──
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+VerifiedAnonymousPrincipalDep = Annotated[
+    VerifiedAnonymousPrincipal,
+    Depends(require_verified_anonymous_principal),
+]
 
 
 async def require_admin_user(current_user: CurrentUserDep) -> CurrentUser:

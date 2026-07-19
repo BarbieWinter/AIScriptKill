@@ -1,0 +1,32 @@
+id: "final-judgment"
+name: "共同终判"
+sort_order: 10
+entry_conditions:
+  - type: "stage_completed"
+    stage_id: "investigation"
+exit_conditions: []
+available_actions: []
+available_characters: ["investigator", "insider"]
+chapters:
+  investigator: "investigator-final-judgment"
+  insider: "insider-final-judgment"
+public_materials: []
+discussion:
+  suggested_minutes: 8
+  close_policy: "all_players"
+settlement:
+  mode: "final_judgment"
+  settlement_id: "final-judgment"
+  question: "两人共同认可的案件判断是什么？"
+  answer_mode: "shared_choice"
+  options:
+    - id: "records-insufficient"
+      text: "公开记录不足以确定责任人"
+      outcome_id: "insufficient-evidence"
+    - id: "timeline-conflict"
+      text: "时间线冲突证明至少一份解释不完整"
+      outcome_id: "conflicting-accounts"
+  reveal: "named_ballots"
+  submission_change: "forbidden"
+  default_effect: "branch"
+hints: []

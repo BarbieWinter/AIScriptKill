@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from engine.api.errors import bad_request, not_found
+from engine.api.errors import bad_request, conflict, not_found
 from engine.api.middleware.auth import CurrentUser
 from engine.api.schemas import (
     ActionRequest,
@@ -44,7 +44,6 @@ from engine.services.session_mappers import (
     final_submission_result,
     judgement_definition,
     presentation_response,
-    restore_response,
     review_response,
     state_response,
     submission_result_payload,
@@ -108,12 +107,12 @@ async def restore_session(
     current_user: CurrentUser,
     db: AsyncSession,
 ) -> UpdateSessionResponse:
-    repository = SessionRepository(db)
-    session = await _load_session(repository, session_id, current_user)
-    restored = await repository.restore_checkpoint(session.id, payload.checkpoint_id)
-    if restored is None:
-        raise not_found("CHECKPOINT_NOT_FOUND", "未找到指定会话检查点")
-    return restore_response(restored, payload.checkpoint_id)
+    _session_uuid(session_id)
+    del payload, current_user, db
+    raise conflict(
+        "SESSION_RESTORE_UNAVAILABLE",
+        "会话检查点恢复当前不可用",
+    )
 
 
 # ── 游戏行动与最终提交 ──
@@ -315,6 +314,8 @@ def _player_id(current_user: CurrentUser) -> UUID | None:
 
 
 def _assert_session_access(session: StoredSession, current_user: CurrentUser) -> None:
+    if session.mode != "legacy_single":
+        raise not_found("SESSION_NOT_FOUND", "未找到指定游戏会话")
     if session.player_id is None:
         return
     if _player_id(current_user) == session.player_id:
