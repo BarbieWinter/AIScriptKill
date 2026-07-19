@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Check, UserRound } from "lucide-react";
@@ -16,6 +17,16 @@ const characterColors = [
   "#9e91b2",
   "#7fa6a1",
 ];
+
+const characterPortraits: Record<string, string> = {
+  zhuosiyuan: "/snow-village/characters/zhuosiyuan.png",
+  xiaomeng: "/snow-village/characters/xiaomeng.png",
+  wangqi: "/snow-village/characters/wangqi.png",
+  likaixin: "/snow-village/characters/likaixin.png",
+  cuikaiqiang: "/snow-village/characters/cuikaiqiang.png",
+  chengjun: "/snow-village/characters/chengjun.png",
+  chenji: "/snow-village/characters/chenji.png",
+};
 
 export default function CharacterSelectPage() {
   const router = useRouter();
@@ -151,6 +162,8 @@ export default function CharacterSelectPage() {
           {characters.map((character, index) => {
             const active = character.id === selectedCharacter.id;
             const color = characterColors[index % characterColors.length];
+            const portraitSrc =
+              characterPortraits[character.id] || character.portrait_url;
             return (
               <motion.button
                 type="button"
@@ -171,14 +184,24 @@ export default function CharacterSelectPage() {
                   </span>
                 )}
                 <span
-                  className="mb-3 grid h-16 w-16 place-items-center rounded-full border"
+                  className="mb-3 grid h-16 w-16 place-items-center overflow-hidden rounded-full border"
                   style={{
                     borderColor: `${color}66`,
                     backgroundColor: `${color}18`,
                     color,
                   }}
                 >
-                  <UserRound className="h-7 w-7" />
+                  {portraitSrc ? (
+                    <Image
+                      src={portraitSrc}
+                      alt={`${character.name}头像`}
+                      width={64}
+                      height={64}
+                      className="h-full w-full object-cover object-center"
+                    />
+                  ) : (
+                    <UserRound className="h-7 w-7" />
+                  )}
                 </span>
                 <strong className="text-sm font-medium">{character.name}</strong>
                 <span className="mt-1 line-clamp-2 min-h-8 text-xs leading-4 text-white/35">
@@ -195,8 +218,18 @@ export default function CharacterSelectPage() {
           animate={{ opacity: 1, y: 0 }}
           className="mx-auto grid w-full max-w-4xl gap-6 border-y border-white/10 py-7 md:grid-cols-[180px_1fr] md:items-center md:gap-10"
         >
-          <div className="mx-auto grid h-36 w-36 place-items-center rounded-full border md:h-40 md:w-40" style={{ borderColor: `${selectedColor}55`, backgroundColor: `${selectedColor}12`, color: selectedColor }}>
-            <UserRound className="h-14 w-14" />
+          <div className="mx-auto grid h-36 w-36 place-items-center overflow-hidden rounded-full border md:h-40 md:w-40" style={{ borderColor: `${selectedColor}55`, backgroundColor: `${selectedColor}12`, color: selectedColor }}>
+            {characterPortraits[selectedCharacter.id] || selectedCharacter.portrait_url ? (
+              <Image
+                src={characterPortraits[selectedCharacter.id] || selectedCharacter.portrait_url}
+                alt={`${selectedCharacter.name}头像`}
+                width={160}
+                height={160}
+                className="h-full w-full object-cover object-center"
+              />
+            ) : (
+              <UserRound className="h-14 w-14" />
+            )}
           </div>
           <div className="text-center md:text-left">
             <h2 className="text-3xl font-semibold">{selectedCharacter.name}</h2>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
@@ -10,7 +11,6 @@ import {
   Clock,
   Star,
   Play,
-  User,
   Quote,
   Headphones,
 } from "lucide-react";
@@ -28,6 +28,16 @@ const containerVariants = {
 const itemVariants = {
   hidden: { opacity: 0, y: 15 },
   show: { opacity: 1, y: 0 },
+};
+
+const characterPortraits: Record<string, string> = {
+  zhuosiyuan: "/snow-village/characters/zhuosiyuan.png",
+  xiaomeng: "/snow-village/characters/xiaomeng.png",
+  wangqi: "/snow-village/characters/wangqi.png",
+  likaixin: "/snow-village/characters/likaixin.png",
+  cuikaiqiang: "/snow-village/characters/cuikaiqiang.png",
+  chengjun: "/snow-village/characters/chengjun.png",
+  chenji: "/snow-village/characters/chenji.png",
 };
 
 export default function ScriptDetailPage() {
@@ -200,8 +210,14 @@ export default function ScriptDetailPage() {
                 onClick={() => setSelectedChar(char)}
                 className="group flex flex-col items-center rounded-xl border border-[var(--border)] p-3 md:p-4 transition-all hover:border-[var(--theme-primary)] hover:shadow-lg hover:shadow-[var(--theme-primary)]/10"
               >
-                <div className="mb-2 h-16 w-16 md:h-20 md:w-20 rounded-full bg-gradient-to-br from-[var(--theme-primary)]/30 to-[var(--theme-accent)]/30 flex items-center justify-center transition-transform group-hover:scale-105">
-                  <User className="h-8 w-8 text-white/30" />
+                <div className="mb-2 h-16 w-16 md:h-20 md:w-20 overflow-hidden rounded-full transition-transform group-hover:scale-105">
+                  <Image
+                    src={characterPortraits[char.id]}
+                    alt={`${char.name}头像`}
+                    width={80}
+                    height={80}
+                    className="h-full w-full object-cover object-center"
+                  />
                 </div>
                 <p className="text-xs md:text-sm font-bold">{char.name}</p>
                 <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
@@ -256,8 +272,14 @@ export default function ScriptDetailPage() {
               className="relative max-w-sm w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] p-6"
             >
               {/* 头像 */}
-              <div className="mx-auto mb-4 h-20 w-20 rounded-full bg-gradient-to-br from-[var(--theme-primary)]/30 to-[var(--theme-accent)]/30 flex items-center justify-center">
-                <User className="h-10 w-10 text-white/30" />
+              <div className="mx-auto mb-4 h-20 w-20 overflow-hidden rounded-full">
+                <Image
+                  src={characterPortraits[selectedChar.id]}
+                  alt={`${selectedChar.name}头像`}
+                  width={80}
+                  height={80}
+                  className="h-full w-full object-cover object-center"
+                />
               </div>
 
               <h3 className="text-xl font-bold text-center mb-1">
