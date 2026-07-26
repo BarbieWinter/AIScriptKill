@@ -148,6 +148,7 @@ export function useMansionEngine({
   const movePlayerTo = useCallback((position: DemoPoint) => {
     playerRef.current = { ...position };
     setPlayerSnapshot({ ...position });
+    updateForegroundFade(foregroundFadeElementsRef.current, position);
     cameraNeedsUpdateRef.current = true;
     playerRenderDirtyRef.current = true;
     interactionTargetsDirtyRef.current = true;
@@ -216,7 +217,10 @@ export function useMansionEngine({
 
   useEffect(() => {
     const root = viewportRef.current;
-    if (root) foregroundFadeElementsRef.current = collectForegroundFadeElements(root);
+    if (!root) return;
+    const elements = collectForegroundFadeElements(root);
+    foregroundFadeElementsRef.current = elements;
+    updateForegroundFade(elements, playerRef.current);
   }, [activeRoomId]);
 
   useEffect(() => {
@@ -261,6 +265,7 @@ export function useMansionEngine({
     let frame = 0;
     let last = performance.now();
     let lastMoving = false;
+    let lastSnapshotMoving = false;
     let lastEmittedMoving: boolean | null = null;
     let lastFacing: "left" | "right" = initialFacing;
     let lastFadeUpdate = 0;
@@ -389,7 +394,9 @@ export function useMansionEngine({
         lastFadeUpdate = now;
         updateForegroundFade(foregroundFadeElementsRef.current, player);
       }
-      if (isMoving && now - lastSnapshotRef.current >= UI_SNAPSHOT_INTERVAL) {
+      const snapshotMovementChanged = isMoving !== lastSnapshotMoving;
+      if (snapshotMovementChanged || (isMoving && now - lastSnapshotRef.current >= UI_SNAPSHOT_INTERVAL)) {
+        lastSnapshotMoving = isMoving;
         lastSnapshotRef.current = now;
         setPlayerSnapshot({ ...player });
       }
