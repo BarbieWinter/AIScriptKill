@@ -1,20 +1,21 @@
-# 多人联机架构与执行计划
+# 多人联机架构与执行计划（历史设计）
 
-> 状态：`APPROVED · MP-0 COMPLETE`
+> [!IMPORTANT]
+> 本文是多人 v1 的**原始设计计划**，其任务进度标记（MP-0～MP-8 的勾选状态）与
+> “当前实现”描述均已过期。当前完成度、产品边界与后续建设顺序以
+> [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md)
+> 为准。文中曾引用的 ADR 与阶段报告已随 `668d2f9` 从仓库删除。
+>
+> 保留本文的价值：第 2 节 AI DM 边界、第 5～9 节领域状态模型 / YAML 契约 /
+> 命令信封 / WebSocket 恢复协议 / 数据安全设计，仍是后续实时同步与 AI DM
+> 建设的蓝本。
+
 > 目标：`Multiplayer v1`
 > 玩家：首版严格 2 人，底层按玩家集合建模
 > 主持：公共 AI DM
-> 更新：`2026-07-17`
->
-> 本文同时描述“当前实现”和“目标架构”。未标记为 `[x]` 的任务均不是当前能力；
-> 当前实现事实以源码、[MP-0 基线报告](reports/mp-0-baseline-2026-07-17-bae4a55.md)
-> 和第 4 节的权威矩阵为准。
+> 原始撰写：`2026-07-17`
 
-配套领域语言见 [`../CONTEXT.md`](../CONTEXT.md)。关键边界见：
-
-- [`ADR-0001`](adr/0001-human-multiplayer-with-public-ai-dm.md)
-- [`ADR-0002`](adr/0002-shared-stage-not-search-game.md)
-- [`ADR-0003`](adr/0003-yaml-authority-for-stage-settlement.md)
+配套领域语言见 [`../CONTEXT.md`](../CONTEXT.md)。
 
 ---
 
@@ -365,9 +366,8 @@ projection/chat/discovery request transaction
 ```
 
 因此多人 Command Service 上线前，必须把 checkpoint、revision、event、outbox 和查询投影
-纳入一个可恢复的提交协议。MP-0 不完成该重构，但已通过
-[`ADR-0004`](adr/0004-canonical-runtime-restore-authority.md) 暂停错误的 projection-only
-PATCH restore，确保公开表面只有一条真实 continuation 恢复权威。
+纳入一个可恢复的提交协议。MP-0 不完成该重构，但已暂停错误的 projection-only
+PATCH restore（原 ADR-0004，文件已删除），确保公开表面只有一条真实 continuation 恢复权威。
 
 ### 4.1 目标分层（尚未实现）
 

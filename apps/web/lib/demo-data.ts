@@ -245,7 +245,7 @@ export const demoRooms: DemoRoom[] = [
   },
   {
     id: "private",
-    name: "私聊室",
+    name: "双人讨论室",
     bounds: { x: 1780, y: 60, width: 560, height: 560 },
     label: { x: 1870, y: 132 },
     priority: 2,

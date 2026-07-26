@@ -1,4 +1,10 @@
-# Sonnet 5 前端实现任务书
+# Sonnet 5 前端实现任务书（历史记录）
+
+> [!IMPORTANT]
+> 本文是旧单人前端的一次性实现任务书，仅作历史记录保留。它描述的页面结构与
+> 交互对应已移出方向的单人搜证玩法，不应作为新前端工作的输入。当前前端实现
+> 见 [`../openwiki/architecture/frontend.md`](../openwiki/architecture/frontend.md)，
+> 产品边界见 [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md)。
 
 > **你的任务**：基于现有项目骨架和本文档，实现 AI 沉浸式悬疑互动剧的完整前端。
 > **核心理念**：玩家打开的是一部"互动电影"，不是聊天软件。每一帧画面、每一次交互都要强化沉浸感。

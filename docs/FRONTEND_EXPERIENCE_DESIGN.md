@@ -1,4 +1,11 @@
-# 前端交互体验设计 (Frontend Experience Design)
+# 前端交互体验设计 (Frontend Experience Design)（历史设计）
+
+> [!IMPORTANT]
+> 本文是**旧单人产品**的体验设计。当前产品方向是多人共享房间 + 私有角色剧本 +
+> 公开讨论（见 [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md)）。
+> 三层沉浸法则、视觉氛围、状态驱动 UI 等设计原则仍指导多人舞台的呈现；
+> 但以 NPC 对话、场景热区搜证、线索板/证物背包为核心的页面结构对应已移出方向的
+> 单人玩法。当前前端实现见 [`../openwiki/architecture/frontend.md`](../openwiki/architecture/frontend.md)。
 
 > 核心目标：让玩家从"打开网页"到"完成复盘"的每一刻都沉浸在悬疑氛围中。
 > 技术栈：Next.js 14+ · shadcn/ui · Tailwind · Zustand · TanStack Query · Howler.js · Konva.js

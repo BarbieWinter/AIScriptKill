@@ -1,6 +1,11 @@
 # API 参考 (API Reference)
 
-> 当前 FastAPI 源码与 `script-packages/snow-village/` 的公开契约。示例使用现行单人垂直切片 **《雪落之前：后门的脚印》**，不描述旧版雪乡谋杀故事。
+> **适用范围：单人（`legacy_single`）接口。** 本文描述 FastAPI 单人会话契约，示例使用
+> 单人垂直切片 **《雪落之前：后门的脚印》**（`snow-village`），不描述旧版雪乡谋杀故事。
+>
+> **多人接口不在本文范围内。** 当前多人 HTTP contract、运行边界与变更入口见
+> [`../openwiki/architecture/backend.md`](../openwiki/architecture/backend.md) 和
+> 运行中的 OpenAPI (`/docs`)。
 
 ## 1. 基础信息
 

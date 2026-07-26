@@ -2,9 +2,20 @@
 
 > **这是你编排剧本的核心参考文档。** 每个剧本包是一个文件夹，遵循本规范定义的 YAML Schema。引擎根据这些配置执行游戏。
 >
-> **当前内容快照：** `script-packages/snow-village/` 是单人 `legacy_single` 垂直切片 **《雪落之前：后门的脚印》**，入口为 `return_to_snow_village`，共有四个阶段、两个场景、一个热点、一条线索和一件证物，`max_players: 1`。它没有 `media/` 或 `dm_guide/` 目录。本文后半部分为保留字段宽度而展示的旧谋杀故事示例，凡标为“说明性/旧版”的内容都不是当前 Snow Village 的真实路径或内容。
+> **当前内容快照：** 仓库现有两个剧本包。
+> `script-packages/mp1-two-player/`《两份口供》是双人多人包（`multiplayer.min/max_players: 2`），
+> 已支撑双人候选垂直切片从建房到复盘；
+> `script-packages/snow-village/`《雪落之前：后门的脚印》是单人 `legacy_single` 切片
+> （`max_players: 1`，入口 `return_to_snow_village`），保留为回归基线。
+> 本文后半部分为保留字段宽度而展示的旧谋杀故事示例，凡标为“说明性/旧版”的内容都不是任何当前包的真实路径或内容。
 >
-> **MP-0 边界：** 本文的 `multiplayer_v1` 小节描述 `engine/contracts/multiplayer_v1/authoring.py` 中的独立严格 Pydantic contract。当前 `ScriptPackageLoader` 不解析或接受这些字段；把 `multiplayer` 加入 `package.yml`，或把 `settlement` 加入 stage YAML，都会以 `INVALID_PACKAGE_SCHEMA` 拒绝。MP-0 没有接入多人房间运行时、数据库表/迁移、WebSocket 命令/事件或前端。`MULTIPLAYER_V1`、`ROOM_EVENTS_V1`、`AI_DM_V1` 功能标志默认均为 `false`，也不会改变 loader 支持范围。
+> **多人字段边界：** `multiplayer_v1` 小节描述当前严格 authoring contract；实际执行边界与
+> 变更入口见 [`../openwiki/domain/script-gameplay.md`](../openwiki/domain/script-gameplay.md)。
+>
+> **已知缺口（重要）：** authoring schema 与多人 runtime 尚未完全闭合——存在能通过导入校验
+> 但运行时必然卡死、复盘失败或字段被静默忽略的合法 YAML 组合。在这些缺口修复前，
+> 不应把本 Schema 当作包作者可完全依赖的稳定契约。完整缺口清单见
+> [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md) 第 10.3 节。
 
 ---
 
@@ -93,9 +104,9 @@ stage_min: return_to_snow_village
 - 章节正文持久化到私有章节表，不自动进入 `script_knowledge` 或当前
   `character_knowledge` RAG 索引；后续只能由服务端依据玩家角色与已解锁章节读取。
 
-### 1.2 MP-0 独立 `multiplayer_v1` authoring contract
+### 1.2 `multiplayer_v1` authoring contract
 
-> **不要把以下示例复制进当前剧本包。** 它们只演示独立模型的 JSON/YAML 形状；当前 loader 没有 `PackageManifest.multiplayer` 或 `StageDefinition.settlement` 映射，因 `extra="forbid"` 会拒绝这些键。
+> 以下示例说明多人包的严格 JSON/YAML 形状。声明多人策略的剧本包会在导入时接受并校验这些字段；当前 schema 与 runtime 尚未完全闭合，发布前仍需遵守文首已知缺口说明。
 
 所有 MP-0 authoring 模型继承 `ContractModel`，统一配置为 `strict=True`、`frozen=True`、`extra="forbid"`。未知字段和类型强制转换会被拒绝。
 
@@ -156,7 +167,7 @@ hints:
 - 同一阶段内公共材料 ID 与提示 ID 分别唯一；
 - `suggested_minutes` 省略时为 `null`，存在时必须大于 0；`close_policy` 默认且只能为 `all_players`；
 - 每个提示恰好包含 3 条有序非空文案；
-- 跨文件 material、chapter、outcome 引用尚不由 MP-0 standalone contract 验证。
+- authoring model 负责局部形状校验；跨文件 material、chapter、outcome 引用由完整剧本包校验统一检查。
 
 #### 阶段结算联合
 
@@ -171,7 +182,7 @@ hints:
 
 `answer_mode` 只能是 `shared_choice` 或 `individual_secret`。`mode: none` 不能携带 options 等额外字段。unknown mode、空/重复 option、空 question、旧字段名（如 `submission_change_policy`）都会被拒绝。
 
-再次强调：这些模型目前是 standalone contract，不是 loader schema，也没有运行时处理器或持久化语义。
+这些模型是多人剧本包的导入与运行输入；当前已支持的严格双人线性组合见仓库样例，尚未闭合的合法组合见文首链接的状态清单。
 
 ---
 
@@ -195,7 +206,7 @@ engine:
   entry_stage: "return_to_snow_village"
 ```
 
-当前包没有 `multiplayer`；它是 `legacy_single` 单人包。广义 loader schema 还允许 `metadata.author`、`metadata.adapter`、`info.min_players`、`visual`、`dm_config`、`guard_rules`、`engine.min_engine_version` 与 `engine.default_ending` 等可选字段，但不得据此把上面的 MP-0 standalone contract 嵌入 `package.yml`。
+上例 `snow-village` 没有 `multiplayer`，因此是 `legacy_single` 单人包；仓库中的 `mp1-two-player` 则声明包级多人策略，并使用本节的阶段 authoring contract。广义 loader schema 还允许 `metadata.author`、`metadata.adapter`、`info.min_players`、`visual`、`dm_config`、`guard_rules`、`engine.min_engine_version` 与 `engine.default_ending` 等可选字段。
 
 ---
 

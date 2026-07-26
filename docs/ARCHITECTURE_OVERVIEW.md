@@ -1,4 +1,12 @@
-# AI 沉浸式悬疑互动剧 — 系统架构总览
+# AI 沉浸式悬疑互动剧 — 系统架构总览（历史设计）
+
+> [!IMPORTANT]
+> 本文是项目最初**单人多 NPC 智能体方向**的架构设计。该玩法方向已移出当前产品
+> （见 [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md)）。
+> 仍然有效的部分：引擎与剧本包分离原则（第 1 节）、剧本包加载流程（第 5 节）、
+> 数据权限模型（第 8 节）、高可用与设计决策（第 9、11 节）。
+> 已过期的部分：NPC Agent 对话玩法（第 4、6 节）、以搜证为主的交互假设。
+> 当前实现结构见 [`../openwiki/architecture/system.md`](../openwiki/architecture/system.md)。
 
 > 版本 v1.0 | 配套文档：`SCRIPT_PACKAGE_SCHEMA.md` `CONDITION_DSL_REFERENCE.md` `API_REFERENCE.md` `FRONTEND_EXPERIENCE_DESIGN.md` `EXECUTION_PLAN.md`
 

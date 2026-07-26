@@ -43,7 +43,7 @@ Browser
 | 单人 Mock UI | `[MOCK]` | 本地场景、聊天、线索、提交和复盘 |
 | 单人 Live UI | `[LIVE]` | Session API、YAML presentation、LangGraph action |
 | 双人大厅 | `[LIVE]` | 匿名身份、邀请、选角、准备、启动 |
-| Durable command | `[LIVE]` | receipt、replay、event page、stale recovery |
+| Durable command | `[LIVE]` | receipt、replay、stale recovery；`/events` page 仅限 legacy single session |
 | Room outbox | `[PARTIAL]` | 表、事务写入和 publisher；无常驻 worker |
 | Slim M2 双人 gameplay | `[LIVE]` | HTTP polling、私有章节、讨论、结算、完成复盘 |
 | Gameplay WebSocket | `[PLANNED]` | 当前公开 WS 只有 legacy ping/pong |

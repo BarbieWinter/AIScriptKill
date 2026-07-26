@@ -16,7 +16,8 @@
 
 - [LIVE] **单人 action** — REST 已进入 YAML/LangGraph 运行路径。
 - [LIVE] **多人大厅** — 房间、邀请、选角、准备和启动已接线。
-- [LIVE] **持久命令基础** — receipt、event page 和 stale recovery 已实现。
+- [LIVE] **持久命令基础** — receipt 和 stale recovery 已实现；`GET /sessions/{id}/events`
+  page 当前只对 `legacy_single` 会话开放，多人客户端仍用快照 polling。
 - [LIVE] **Slim M2 gameplay** — reducer、持久命令、HTTP 快照与复盘已接线。
 - [LEGACY] **WebSocket** — 公开端点只有未认证的 ping/pong。
 - [SECURITY] **数据访问** — 浏览器只经 FastAPI 读取白名单投影。

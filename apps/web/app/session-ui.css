@@ -1,0 +1,151 @@
+/* ── 会话 UI 与多人浮层（GameplayPanelHost / MultiplayerMansionShell） ── */
+
+.mansion-demo .demo-session-dock { top: 270px; }
+/* ── Session / YAML gameplay overlays ── */
+.demo-gameplay-host {
+  --background: #0b0e0c;
+  --foreground: #ded6c0;
+  --panel-bg: #111512;
+  --accent: #20251f;
+  --muted: #343a32;
+  --muted-foreground: #918b7b;
+  --border: rgba(210, 195, 154, .14);
+  --theme-primary: #ae9056;
+  --theme-accent: #706047;
+  --warning: #c49b58;
+  --success: #7f9b7c;
+  --danger: #ad665f;
+  --info: #7f9691;
+  position: absolute;
+  inset: 0;
+  z-index: 38;
+  pointer-events: none;
+  user-select: text;
+}
+.demo-gameplay-host > * { pointer-events: auto; }
+
+.multiplayer-scene-presence {
+  position: absolute;
+  top: 82px;
+  right: 28px;
+  display: grid;
+  min-width: 148px;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(219,202,158,.1);
+  border-radius: 4px;
+  color: rgba(231,224,204,.72);
+  background: rgba(8,11,9,.94);
+  box-shadow: 0 12px 28px #0007;
+  font-size: 10px;
+}
+.multiplayer-scene-presence b { color: #d9c28a; font-weight: 500; }
+.multiplayer-scene-presence button {
+  margin-top: 3px;
+  border: 1px solid rgba(217,194,138,.2);
+  border-radius: 4px;
+  padding: 5px 7px;
+  color: #e8d8ae;
+  background: rgba(217,194,138,.08);
+  cursor: pointer;
+}
+.multiplayer-scene-error {
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  display: flex;
+  max-width: min(560px, calc(100vw - 36px));
+  transform: translateX(-50%);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid rgba(252,165,165,.25);
+  border-radius: 8px;
+  color: #fee2e2;
+  background: rgba(55,20,20,.94);
+  box-shadow: 0 12px 30px #0008;
+  font-size: 11px;
+}
+.multiplayer-scene-error svg { width: 14px; height: 14px; flex: none; }
+.multiplayer-scene-error button { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #fecaca; }
+.demo-gameplay-host input,
+.demo-gameplay-host textarea,
+.demo-gameplay-host article,
+.demo-gameplay-host [role="dialog"] { user-select: text; }
+
+.demo-session-dock { position: absolute; right: 28px; top: 82px; display: grid; gap: 5px; width: 148px; }
+.demo-session-dock button { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; min-height: 38px; padding: 0 10px; border: 1px solid rgba(219,202,158,.1); border-radius: 4px; color: rgba(231,224,204,.65); background: rgba(8,11,9,.94); box-shadow: 0 12px 28px #0007; cursor: pointer; text-align: left; font-size: 10px; }
+.demo-session-dock button:hover { color: #f0e6cb; border-color: rgba(201,170,105,.35); background: rgba(25,29,24,.86); }
+.demo-session-dock button.is-primary { color: #f1e2b9; border-color: rgba(195,158,84,.35); background: rgba(103,76,33,.7); }
+.demo-session-dock svg { width: 14px; height: 14px; }
+.demo-session-dock b { min-width: 18px; padding: 2px 4px; border-radius: 9px; color: #d9c28a; background: rgba(187,155,89,.14); font: 9px/1.2 monospace; text-align: center; }
+.demo-dock-backpack { color: #c9b071; font-size: 18px; line-height: 1; }
+
+.demo-session-chat { position: absolute; z-index: 55; right: 20px; bottom: 52px; display: flex; flex-direction: column; width: min(620px, calc(100vw - 40px)); height: min(430px, 55vh); overflow: hidden; border: 1px solid rgba(213,196,153,.16); border-radius: 6px; color: var(--foreground); background: linear-gradient(145deg, rgba(20,24,20,.97), rgba(8,11,9,.98)); box-shadow: 0 28px 80px #000c; backdrop-filter: blur(18px); }
+.demo-session-chat header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.demo-session-chat header span, .demo-session-chat header strong { display: block; }
+.demo-session-chat header span { margin-bottom: 4px; color: #aa8d55; font-size: 8px; letter-spacing: .2em; }
+.demo-session-chat header strong { font: 500 13px/1.3 "Songti SC", serif; }
+.demo-session-chat header button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); color: #999282; background: transparent; cursor: pointer; }
+.demo-session-chat header svg { width: 14px; }
+.demo-session-chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 13px 16px; }
+.demo-session-chat-messages article { max-width: 84%; margin-bottom: 11px; }
+.demo-session-chat-messages article.is-player { margin-left: auto; text-align: right; }
+.demo-session-chat-messages article > span { font-size: 9px; letter-spacing: .08em; }
+.demo-session-chat-messages article p { margin: 4px 0 0; padding: 9px 11px; border: 1px solid rgba(255,255,255,.045); border-radius: 3px 10px 10px; color: rgba(231,225,208,.76); background: rgba(255,255,255,.035); font: 12px/1.65 "Songti SC", serif; text-align: left; }
+.demo-session-chat-messages article.is-player p { border-radius: 10px 3px 10px 10px; background: rgba(173,143,83,.12); }
+.demo-session-empty { margin: 70px auto; color: var(--muted-foreground); font-size: 11px; text-align: center; }
+.demo-session-chat-controls { display: grid; grid-template-columns: 110px 1fr 38px auto; gap: 6px; padding: 10px; border-top: 1px solid var(--border); background: rgba(4,6,5,.45); }
+.demo-session-chat-controls select,
+.demo-session-chat-controls input { min-width: 0; height: 38px; border: 1px solid var(--border); border-radius: 3px; color: var(--foreground); background: #171b17; outline: none; font-size: 11px; }
+.demo-session-chat-controls select { padding: 0 8px; }
+.demo-session-chat-controls input { padding: 0 11px; }
+.demo-session-chat-controls input:focus { border-color: rgba(192,158,91,.55); }
+.demo-session-chat-controls button { display: grid; place-items: center; min-width: 38px; border: 1px solid rgba(192,158,91,.24); border-radius: 3px; color: #e1c987; background: rgba(121,91,43,.35); cursor: pointer; }
+.demo-session-chat-controls button:disabled { opacity: .35; cursor: default; }
+.demo-session-chat-controls button svg { width: 14px; }
+.demo-session-chat-controls .demo-session-advance { padding: 0 12px; color: #bbb3a0; background: transparent; font-size: 10px; }
+
+.demo-mock-warning,
+.demo-presentation-warning { position: absolute; left: 50%; top: 18px; translate: -50% 0; padding: 7px 12px; border: 1px solid rgba(203,158,84,.22); border-radius: 3px; color: rgba(235,211,157,.75); background: rgba(61,44,20,.74); font: 8px/1.2 monospace; letter-spacing: .1em; box-shadow: 0 12px 28px #0007; backdrop-filter: blur(10px); }
+.demo-presentation-warning { top: auto; bottom: 49px; max-width: 520px; color: rgba(217,211,194,.6); border-color: rgba(255,255,255,.08); background: rgba(8,10,9,.72); text-align: center; }
+
+.demo-session-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: 100vw; height: 100svh; color: #d8d1bd; background: radial-gradient(circle at 50% 42%, #222820, #080a09 62%); }
+.demo-session-state strong { font: 500 18px/1.4 "Songti SC", serif; letter-spacing: .08em; }
+.demo-session-state span { max-width: 440px; color: rgba(216,209,189,.42); font-size: 11px; text-align: center; }
+.demo-session-state button { margin-top: 8px; padding: 9px 16px; border: 1px solid rgba(201,172,108,.3); color: #dbc68f; background: rgba(80,61,28,.38); cursor: pointer; }
+.demo-session-loader { width: 30px; height: 30px; border: 1px solid rgba(207,182,123,.2); border-top-color: #c8a75e; border-radius: 50%; animation: demo-session-spin .8s linear infinite; }
+@keyframes demo-session-spin { to { rotate: 360deg; } }
+
+.demo-session-launcher { position: absolute; z-index: 40; left: 28px; bottom: 62px; width: min(390px, calc(100vw - 40px)); padding: 18px; border: 1px solid rgba(208,190,145,.15); border-radius: 5px; color: #d9d2bf; background: rgba(11,14,12,.88); box-shadow: 0 25px 65px #000b; backdrop-filter: blur(14px); pointer-events: auto; user-select: text; }
+.demo-session-launcher > span { color: #a98c54; font: 8px/1 monospace; letter-spacing: .2em; }
+.demo-session-launcher h2 { margin: 8px 0 6px; font: 500 20px/1.3 "Songti SC", serif; }
+.demo-session-launcher > p { margin: 0 0 14px; color: rgba(220,213,193,.48); font: 11px/1.7 "Songti SC", serif; }
+.demo-session-launch-actions { display: flex; gap: 7px; }
+.demo-session-launch-actions button { display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1; min-height: 38px; border: 1px solid rgba(213,196,153,.14); border-radius: 3px; color: rgba(229,221,200,.65); background: rgba(255,255,255,.035); cursor: pointer; font-size: 10px; }
+.demo-session-launch-actions button.is-primary { color: #e6d8b2; border-color: rgba(193,159,89,.34); background: rgba(112,82,34,.48); }
+.demo-session-launch-actions svg { width: 13px; }
+.demo-session-launcher label { display: block; margin-top: 12px; }
+.demo-session-launcher label > span { display: block; margin-bottom: 5px; color: rgba(220,213,193,.38); font-size: 8px; letter-spacing: .08em; }
+.demo-session-launcher label > div { display: grid; grid-template-columns: 1fr 36px; }
+.demo-session-launcher input { min-width: 0; height: 36px; padding: 0 10px; border: 1px solid rgba(213,196,153,.12); border-right: 0; color: #d8d1bd; background: #0b0e0c; outline: none; font: 10px/1 monospace; }
+.demo-session-launcher label button { display: grid; place-items: center; border: 1px solid rgba(213,196,153,.12); color: #c9ad70; background: #171b17; cursor: pointer; }
+.demo-session-launcher label button:disabled { opacity: .3; }
+.demo-session-launcher label svg { width: 13px; }
+.demo-session-launcher small { display: flex; align-items: flex-start; gap: 6px; margin-top: 9px; color: rgba(220,213,193,.32); font-size: 8px; line-height: 1.5; }
+.demo-session-launcher small svg { flex: 0 0 auto; width: 11px; }
+
+
+@media (max-width: 760px) {
+  .demo-session-dock { top: auto; right: 14px; bottom: 54px; grid-template-columns: repeat(5, 42px); width: auto; }
+  .demo-session-dock button { display: grid; grid-template-columns: 1fr; place-items: center; width: 42px; height: 42px; min-height: 0; padding: 0; }
+  .demo-session-dock button span:not(.demo-dock-backpack), .demo-session-dock button b { display: none; }
+  .demo-session-chat { right: 10px; bottom: 106px; width: calc(100vw - 20px); height: min(500px, 62vh); }
+  .demo-session-chat-controls { grid-template-columns: 95px 1fr 38px; }
+  .demo-session-chat-controls .demo-session-advance { grid-column: 1 / -1; height: 34px; }
+  .demo-session-launcher { left: 14px; right: 14px; bottom: 56px; width: auto; }
+  .demo-session-launch-actions { flex-direction: column; }
+  .demo-mock-warning { top: 66px; }
+  .mansion-demo .demo-session-dock { top: auto; }
+  .multiplayer-scene-presence { top: 74px; right: 14px; min-width: 124px; }
+}

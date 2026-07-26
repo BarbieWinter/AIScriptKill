@@ -1,9 +1,12 @@
-# 执行计划书 (Execution Plan)
+# 执行计划书 (Execution Plan)（历史任务书）
 
 > [!IMPORTANT]
-> 产品路线已调整为“多人真人优先 + AI 辅助 DM”。新的权威计划见
-> [`MULTIPLAYER_ARCHITECTURE_PLAN.md`](MULTIPLAYER_ARCHITECTURE_PLAN.md)。
-> 本文保留原始 T-1～T-5 任务历史，其中单人 NPC/Agent 路线不再代表当前实施顺序。
+> 产品路线已调整为“多人真人优先 + AI 辅助 DM”。当前状态与后续建设顺序以
+> [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md)
+> 第 12–13 节为准；[`MULTIPLAYER_ARCHITECTURE_PLAN.md`](MULTIPLAYER_ARCHITECTURE_PLAN.md)
+> 是多人 v1 的历史设计计划。本文保留原始 T-1～T-5 任务历史，其中单人 NPC/Agent
+> 路线不再代表当前实施顺序；附录 B 的通用执行要求（注释规范、引擎/剧本分离红线、
+> 防剧透红线）仍然有效。
 
 > **用途**：本文档将整个项目拆解为可独立分配给AI执行的任务。每个任务有明确的输入、输出、验收标准和依赖关系。
 > **配套文档**：执行任务前必读 `ARCHITECTURE_OVERVIEW.md`；具体Schema参考 `SCRIPT_PACKAGE_SCHEMA.md`；API契约参考 `API_REFERENCE.md`；前端设计参考 `FRONTEND_EXPERIENCE_DESIGN.md`。

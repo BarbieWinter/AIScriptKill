@@ -1,6 +1,10 @@
 # 条件 DSL 参考 (Condition DSL Reference)
 
 > 引擎内置的通用条件表达式语言。所有剧本共享同一套条件类型，用于定义阶段推进、事件触发、结局分支等逻辑。
+>
+> **适用范围：** 该 DSL 服务单人 `legacy_single` 路径。多人 `multiplayer_v1` 使用独立的
+> 确定性运行契约；authoring 入口见 [`SCRIPT_PACKAGE_SCHEMA.md`](SCRIPT_PACKAGE_SCHEMA.md)，
+> 当前执行边界见 [`../openwiki/domain/script-gameplay.md`](../openwiki/domain/script-gameplay.md)。
 
 ---
 
