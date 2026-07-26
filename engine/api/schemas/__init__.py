@@ -24,7 +24,10 @@ from engine.api.schemas.multiplayer_rooms import (
     CreateRoomInviteRequest,
     CreateRoomInviteResponse,
     CurrentMultiplayerSession,
+    GameplaySnapshotV1,
     LobbySnapshotV1,
+    RoomSnapshotV1,
+    UpdateScenePresenceRequest,
 )
 from engine.api.schemas.packages import (
     PackageImportResponse,
@@ -84,6 +87,7 @@ __all__ = [
     "EvidenceViewedResponse",
     "EvidenceReaction",
     "FinalSubmissionRequest",
+    "GameplaySnapshotV1",
     "LobbySnapshotV1",
     "NpcResponse",
     "PackageImportResponse",
@@ -93,11 +97,13 @@ __all__ = [
     "PackageUpdateResponse",
     "PlayableCharacterSummary",
     "ReviewResponse",
+    "RoomSnapshotV1",
     "SceneResult",
     "SessionPresentationResponse",
     "SessionStateResponse",
     "StageTransition",
     "SubmissionResult",
+    "UpdateScenePresenceRequest",
     "UpdateSessionRequest",
     "UpdateSessionResponse",
 ]

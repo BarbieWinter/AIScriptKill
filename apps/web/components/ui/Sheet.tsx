@@ -119,6 +119,7 @@ export function Sheet({
               <h2 className="text-lg font-bold">{title}</h2>
               <button
                 onClick={onClose}
+                aria-label="关闭"
                 className="rounded-lg p-1.5 transition-colors hover:bg-[var(--accent)]"
               >
                 <X className="h-5 w-5" />

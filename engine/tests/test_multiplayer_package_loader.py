@@ -81,11 +81,25 @@ def test_load_real_two_player_package_preserves_normalized_multiplayer_authoring
     assert final_settlement["mode"] == "final_judgment"
     assert final_settlement["answer_mode"] == "shared_choice"
     assert final_settlement["tie_outcome_id"] is None
+    assert final_settlement["submission_change"] == "allowed_before_complete"
+    assert final_settlement["reveal"] == "outcome_only"
+    assert {ending.id for ending in package.endings} == {
+        "insufficient-evidence",
+        "conflicting-accounts",
+    }
+    assert package.stages[1].definition["public_materials"] == [
+        {"id": "case-reconstruction", "reveal_at": "settlement_done"},
+        {"id": "limited-finding", "reveal_at": "outcome:conflicting-accounts"},
+        {"id": "unsupported-finding", "reveal_at": "outcome:insufficient-evidence"},
+    ]
+    truth = package.dm_guide["truth"]
+    assert isinstance(truth, dict)
+    assert "知情人于二十点零五分违规使用备用钥匙" in str(truth)
 
     insider_chapter = next(
         chapter for chapter in package.chapters if chapter.id == "insider-investigation"
     )
-    assert "你可以隐瞒自己提前读过值班记录这一事实" in insider_chapter.content
+    assert "是否承认违规进入由你决定" in insider_chapter.content
     public_text = str(package.package.config) + "".join(
         str(stage.definition) + str(character.definition)
         for stage, character in zip(
@@ -94,7 +108,7 @@ def test_load_real_two_player_package_preserves_normalized_multiplayer_authoring
             strict=True,
         )
     )
-    assert "你可以隐瞒自己提前读过值班记录这一事实" not in public_text
+    assert "是否承认违规进入由你决定" not in public_text
 
 
 def test_legacy_packages_skip_multiplayer_validation_and_keep_stage_shape() -> None:
@@ -258,8 +272,8 @@ def test_outcome_material_trigger_accepts_option_and_tie_outcomes_from_same_stag
 def test_shared_final_judgment_forbids_tie_outcome() -> None:
     files = _fixture_files()
     files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
-        '  reveal: "named_ballots"',
-        '  tie_outcome_id: "final-tie"\n  reveal: "named_ballots"',
+        '  reveal: "outcome_only"',
+        '  tie_outcome_id: "final-tie"\n  reveal: "outcome_only"',
     )
 
     with pytest.raises(PackageArchiveError) as exc_info:

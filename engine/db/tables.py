@@ -285,6 +285,11 @@ room_members = Table(
     Column("ready_at", DateTime(timezone=True)),
     Column("joined_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("left_at", DateTime(timezone=True)),
+    Column("scene_x", Float()),
+    Column("scene_y", Float()),
+    Column("scene_facing", Text),
+    Column("scene_moving", Boolean),
+    Column("scene_updated_at", DateTime(timezone=True)),
     CheckConstraint("room_role IN ('host', 'player')", name="room_members_role_check"),
     CheckConstraint(
         "membership_status IN ('joined', 'left', 'kicked')",
@@ -298,6 +303,14 @@ room_members = Table(
     CheckConstraint(
         "membership_status = 'joined' OR ready_at IS NULL",
         name="room_members_ready_check",
+    ),
+    CheckConstraint(
+        "(scene_x IS NULL AND scene_y IS NULL AND scene_facing IS NULL "
+        "AND scene_moving IS NULL AND scene_updated_at IS NULL) OR "
+        "(scene_x BETWEEN 17 AND 2383 AND scene_y BETWEEN 17 AND 1583 "
+        "AND scene_facing IN ('left', 'right') AND scene_moving IS NOT NULL "
+        "AND scene_updated_at IS NOT NULL)",
+        name="room_members_scene_presence_check",
     ),
     UniqueConstraint(
         "session_id",
@@ -513,6 +526,26 @@ Index(
     postgresql_where=session_checkpoints.c.command_id.is_not(None),
 )
 
+session_command_identities = Table(
+    "session_command_identities",
+    metadata,
+    Column("command_id", UUID(as_uuid=True), primary_key=True),
+    Column("session_id", UUID(as_uuid=True), nullable=False),
+    Column("actor_principal_id", UUID(as_uuid=True)),
+    Column("actor_member_id", UUID(as_uuid=True)),
+    Column("request_sha256", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "request_sha256 ~ '^[0-9a-f]{64}$'",
+        name="session_command_identities_request_hash_check",
+    ),
+    CheckConstraint(
+        "((actor_member_id IS NULL AND actor_principal_id IS NULL) OR "
+        "(actor_member_id IS NOT NULL AND actor_principal_id IS NOT NULL))",
+        name="session_command_identities_actor_check",
+    ),
+)
+
 session_command_receipts = Table(
     "session_command_receipts",
     metadata,
@@ -549,6 +582,7 @@ session_command_receipts = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("completed_at", DateTime(timezone=True)),
+    UniqueConstraint("command_id", name="uq_session_command_receipts_command"),
     UniqueConstraint(
         "session_id", "command_id", name="uq_session_command_receipts_session_command"
     ),
@@ -653,6 +687,7 @@ session_events = Table(
     Column("payload", JSONB, nullable=False),
     Column("state_sha256", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("session_id", "id", name="uq_session_events_session_id"),
     UniqueConstraint("session_id", "sequence", name="uq_session_events_session_sequence"),
     UniqueConstraint("session_id", "command_id", name="uq_session_events_session_command"),
     ForeignKeyConstraint(
@@ -671,6 +706,41 @@ session_events = Table(
     ),
 )
 Index("idx_session_events_session_sequence", session_events.c.session_id, session_events.c.sequence)
+
+room_outbox = Table(
+    "room_outbox",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column(
+        "session_id",
+        UUID(as_uuid=True),
+        ForeignKey("game_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("room_event_id", UUID(as_uuid=True), nullable=False),
+    Column("topic", Text, nullable=False),
+    Column("attempts", Integer, nullable=False, server_default=text("0")),
+    Column("available_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("published_at", DateTime(timezone=True)),
+    Column("last_error", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    ForeignKeyConstraint(
+        ["session_id", "room_event_id"],
+        ["session_events.session_id", "session_events.id"],
+        name="fk_room_outbox_session_event",
+        ondelete="CASCADE",
+    ),
+    UniqueConstraint("room_event_id", "topic", name="uq_room_outbox_event_topic"),
+    CheckConstraint("length(btrim(topic)) > 0", name="room_outbox_topic_check"),
+    CheckConstraint("attempts >= 0", name="room_outbox_attempts_check"),
+)
+Index(
+    "idx_room_outbox_pending",
+    room_outbox.c.available_at,
+    room_outbox.c.id,
+    postgresql_where=room_outbox.c.published_at.is_(None),
+)
 
 session_checkpoint_writes = Table(
     "session_checkpoint_writes",

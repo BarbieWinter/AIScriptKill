@@ -1,204 +1,148 @@
 # 系统架构
 
-## 架构意图
-
-`/docs/ARCHITECTURE_OVERVIEW.md` 描述一个可复用 Script Engine 加载可插拔 Script Package：游戏规则属于引擎，故事、阶段、线索、角色、场景、媒体和 DM 指引属于 YAML/资产。`/doc/剧本系统设计.md` 补充产品边界：AI 可以在固定谜题内表演和控场，但不应改写凶手、动机或关键证据。
-
-## 当前运行形态
-
-当前单人 live 垂直切片已经打通 REST、YAML、LangGraph、checkpoint 和受控前端展示。MP-1 已加入
-无网络双人状态机；MP-2 已集成 persistence/snapshot/auth/schema、room repository/service/routes 与 HTTP
-lobby frontend，并通过应用层验证。真实 PostgreSQL/live-stack gates 仍未完成，因此 MP-2 不是 release-ready。
+[← OpenWiki](../quickstart.md) · [后端](backend.md) · [前端](frontend.md) ·
+[领域](../domain/script-gameplay.md) · [运维](../operations/data-and-deployment.md)
 
 ```text
-Next.js web app
-  -> /api/v1 REST
-  -> FastAPI route/service/repository
-  -> published package reconstruction
-  -> LangGraph ScriptEngine + checkpoint saver + NPC/RAG
-  -> session/chat/discovery projection
-  -> Supabase/Postgres
-
-WebSocket
-  -> /api/v1/ws/{session_id}
-  -> 仅未认证 ping/pong 心跳
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SYSTEM :: CURRENT IMPLEMENTATION                                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ FRONTEND   Next.js 15 / React 19                                             │
+│ API        FastAPI / strict participant projections                          │
+│ RUNTIME    LangGraph single-player + pure multiplayer reducer                │
+│ DATA       Supabase Postgres / immutable multiplayer package snapshot        │
+│ DELIVERY   HTTP active; gameplay WebSocket not implemented                   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-真实后端入口是 `engine/api/main.py`。真实前端入口 `apps/web/app/page.tsx` 重定向到 `/library`；全应用 provider/layout 位于 `apps/web/app/layout.tsx`。
-
-## 前端路由和运行模式
-
-当前路由库存：
+## 总览
 
 ```text
-/library
-/library/[id]
-/play/[sessionId]/select
-/play/[sessionId]
-/play/[sessionId]/review
-/demo
-/demo/live/[sessionId]
-/demo/mock/[sessionId]
-/multiplayer
-/invite/[token]
-/play/[sessionId]/lobby
+Browser
+  |
+  +-- single-player Mock ------------------------> in-memory Mock engine
+  |
+  +-- single-player Live -- HTTP ---------------> FastAPI
+  |                                                |
+  |                                                +-- package/runtime services
+  |                                                +-- LangGraph + checkpoint
+  |                                                +-- Postgres projections
+  |
+  +-- multiplayer -- HTTP polling --------------> room/gameplay service
+                                                   |
+                                                   +-- frozen package snapshot
+                                                   +-- deterministic reducer
+                                                   +-- durable receipt/events
+                                                   +-- participant-safe snapshot/review
 ```
 
-两套玩法外壳要明确区分：
+## 能力状态
 
-- `/demo/live/[sessionId]`：当前统一 live 验收路径。`LiveSessionClient` 调用真实 Session API，`GameSessionBoundary` 从七项资源 hydration，`DemoGameShell` 使用后端 presentation 的 YAML 场景/热点和真实 LangGraph 动作。
-- `/demo/mock/[sessionId]`：使用同一个 `GameSessionBoundary` 和 `DemoGameShell`，仅替换成浏览器内 `MockSessionClient`；刷新会重置。
-- `/demo`：视觉 demo 和会话启动器，可创建 live `snow-village`/`zhuosiyuan` 会话、恢复已有 UUID 或启动 mock。
-- `/play/[sessionId]`：旧玩法页。它仍依赖全局 `isMockMode()`、`mockScenes`、直接 Mock engine/Mock WebSocket，并在 live 模式使用硬编码的 `back-alley` 热点；不能代表统一 live 数据边界。
-- `/play/[sessionId]/select`：路由段在进入会话前仍语义上是 script 路径，但当前实现固定调用 `api.createSession("snow-village", "zhuosiyuan", "卓司元")`，再跳转后端返回的 session UUID，不再生成本地 session id。
-- `/multiplayer`、`/invite/[token]`、`/play/[sessionId]/lobby`：MP-2 HTTP-only frontend。匿名 session
-  bootstrap、current/create、invite accept、lobby polling 和 active placeholder 已实现；room backend 已接线。
-  mocked-contract Playwright 的 1 passed 不是 live backend E2E。
+| 能力 | 状态 | 当前边界 |
+|---|---|---|
+| 单人 Mock UI | `[MOCK]` | 本地场景、聊天、线索、提交和复盘 |
+| 单人 Live UI | `[LIVE]` | Session API、YAML presentation、LangGraph action |
+| 双人大厅 | `[LIVE]` | 匿名身份、邀请、选角、准备、启动 |
+| Durable command | `[LIVE]` | receipt、replay、event page、stale recovery |
+| Room outbox | `[PARTIAL]` | 表、事务写入和 publisher；无常驻 worker |
+| Slim M2 双人 gameplay | `[LIVE]` | HTTP polling、私有章节、讨论、结算、完成复盘 |
+| Gameplay WebSocket | `[PLANNED]` | 当前公开 WS 只有 legacy ping/pong |
+| 公共 AI DM | `[PLANNED]` | flag 存在，未接多人运行时 |
 
-`apps/web/lib/api.ts` 和 `apps/web/lib/ws.ts` 仍服务旧 `/play` 路径。统一 demo 使用 `apps/web/lib/game/types.ts`、`session-client.ts` 和 `components/game/GameSessionBoundary.tsx`，以 `source + sessionId` 隔离 store 和 client。
+## 权威边界
 
-参见[前端架构](frontend.md)。
+### 内容
 
-## FastAPI 路由库存
+- `script-packages/snow-village`：单人 Live 垂直切片。
+- `script-packages/mp1-two-player`：Slim M3 真人试玩候选双人包。
+- Mock 数据仅用于前端体验，不覆盖 authored package。
 
-`/api/v1` 下当前暴露：
+### 状态
 
-- Sessions：
-  - `POST /sessions`
-  - `GET /sessions/{session_id}`
-  - `PATCH /sessions/{session_id}`，当前固定 409 `SESSION_RESTORE_UNAVAILABLE`
-  - `GET /sessions/{session_id}/presentation`
-  - `GET /sessions/{session_id}/clues`
-  - `GET /sessions/{session_id}/evidences`
-  - `POST /sessions/{session_id}/evidences/{evidence_id}/viewed`
-  - `GET /sessions/{session_id}/character-chapters`
-  - `GET /sessions/{session_id}/character-chapters/{chapter_id}`
-  - `GET /sessions/{session_id}/characters`
-  - `GET /sessions/{session_id}/chat-history`
-  - `GET /sessions/{session_id}/cards`
-  - `GET /sessions/{session_id}/review`
-- MP-2 strict contract（已接线；真实数据库/live-stack gate 未运行）：
-  - `GET /sessions/current`
-  - `POST /sessions/{session_id}/invites`
-  - `DELETE /sessions/{session_id}/invites/{invite_id}`
-  - `POST /session-invites/{token}/accept`
-  - `GET /sessions/{session_id}/snapshot`
-  - `POST /sessions/{session_id}/commands`
-- Actions：
-  - `POST /sessions/{session_id}/actions`
-  - `POST /sessions/{session_id}/final-submission`
-- Packages：
-  - `POST /packages`
-  - `PATCH /packages/{package_id}`
-  - `GET /packages`
-  - `GET /packages/{package_id}`
-- WebSocket：`/ws/{session_id}`，只有心跳。
-- Health：`/health`、`/health/db`。
+- 单人 Live continuation 优先来自 LangGraph checkpoint。
+- `game_sessions.state` 是查询投影，不是完整历史。
+- 多人 `GameStateV2` 是 canonical materialized state。
+- 当前多人状态只保存当前阶段，不伪造已离开阶段的私有票型历史。
 
-Legacy 认证依赖保持可选；包导入/状态变更要求管理员。MP-2 使用独立严格依赖，要求 verified Supabase
-anonymous JWT、UUID `sub` 与 `is_anonymous=true`，再以 principal → membership 授权。Legacy
-`player_id=NULL` 的“知道 UUID 可访问”行为不能用于多人房间。
+### 隐私
 
-参见[后端架构](backend.md)。
+[SECURITY] 浏览器不能直接读取剧本私密表、RAG、DM truth 或其他玩家状态。
 
-## 剧本包导入和运行期
+- 单人资源由 FastAPI 按 session、角色、阶段和 discovery 投影。
+- 多人大厅由 verified anonymous principal 映射 membership。
+- participant snapshot 只包含请求者自己的 `private_state`。
+- completed review 只能读取房间冻结包，并保持 authored reveal 粒度。
 
-剧本包导入路径：
+## 关键数据流
+
+### 单人 Live
 
 ```text
-zip 或 package directory
-  -> import_service.py
-  -> package_loader.py 及 package_* 子模块
-  -> strict YAML + strict character chapter Markdown frontmatter
-  -> package_import_repository.py
-  -> normalized script_* tables
-```
-
-运行期 action 路径：
-
-```text
-actions route
+POST /sessions/{id}/actions
   -> session_service.perform_action
-  -> runtime_session.LangGraphRuntimeActionExecutor
-  -> per-session PostgreSQL advisory lock
-  -> runtime_package_repository.get_runtime_package
-  -> dedicated checkpoint AsyncSession
-  -> ScriptEngine.from_package + RagRetriever + NPC responder
-  -> restore latest graph checkpoint or bootstrap projection
-  -> runtime_action_mappers/runtime_state_mappers
-  -> game_sessions/chat_messages/session_discoveries projection
+  -> LangGraphRuntimeActionExecutor
+  -> advisory lock
+  -> frozen published package reconstruction
+  -> checkpoint restore/bootstrap
+  -> YAML StateGraph action
+  -> checkpoint commit
+  -> session/chat/discovery projection commit
 ```
 
-`engine/services/action_mappers.py` 中的旧固定动作不是生产 `/actions` 路径。当前 REST mapper 会编码热点、NPC、证物和推进 target，并返回真实状态差量和推进条件。
+[CAUTION] advisory lock、checkpoint 和业务投影并非同一数据库事务。幂等投影
+降低重放风险，但不等于原子 event-sourcing 系统。
 
-同会话写入由事务级 advisory lock 跨进程串行化，但锁连接、checkpoint saver 和请求投影各自提交，不是单一原子多人事务。`engine_message_id` 唯一索引和 discovery upsert 支持投影幂等；故障恢复仍需考虑 checkpoint 已提交、投影尚未提交的窗口。
-
-## 展示和人物章节数据路径
-
-### Presentation
-
-`GET /sessions/{id}/presentation` 从已发布规范化包重建当前阶段和场景，只返回安全字段：
-
-- 当前 stage id/name/actions/characters。
-- scene id/name、公开 description、ambient color 和浏览器安全背景 URL。
-- 包内有序 public hotspots 的 id/label/坐标/尺寸。
-- 可选 judgment question 和有序 options。
-
-它不返回 hotspot `on_click`、私有/DM-only 热点或 `correct_option`。点击后由客户端提交 `examine_scene`，规则仍在服务端 YAML/StateGraph 执行。
-
-### Character chapters
+### 多人 HTTP gameplay
 
 ```text
-character_scripts/*.md
-  -> strict frontmatter import
-  -> script_character_chapters
-  -> game_start 或 unlock_character_chapter 事件
-  -> session_discoveries unlocked/viewed
-  -> 按 player_character_id + session discovery 授权 list/read
+anonymous JWT
+  -> room membership
+  -> lobby or gameplay snapshot
+  -> revision + durable receipt coordinator
+  -> deterministic reducer
+  -> GameStateV2 + ordered public event
+  -> participant-safe snapshot / completed review
 ```
 
-章节正文不自动进入普通 `script_knowledge` RAG 索引。章节 API 和 NPC RAG 是两个独立授权面。
+聊天事件推进 `event_head_sequence` 但不推进 room revision；状态 mutation 同时推进
+revision 和 event sequence。秘密结算在全部提交前只返回提交成员列表和自己的选择。
+正常完成时释放 principal reservation，复盘仍要求原 room membership。
 
-## 数据平台
+## Slim M2 验证边界
 
-`supabase/migrations/` 包含：
+[PASS] 当前切片已经验证：
 
-- 基础剧本包、运行时、向量、RLS、索引、权限和 schema 注释迁移。
-- FastAPI data-access boundary，撤销 anon/authenticated 直接表权限。
-- checkpoint idempotency 和 pending writes。
-- `script_character_chapters` 与 character-chapter discovery 支持。
-- `text-embedding-v4` 使用的 1024 维 `script_knowledge.embedding`。
-- `chat_messages.engine_message_id` 投影幂等约束。
-- MP-2 mode-aware `game_sessions` 扩展，以及 members、assignments、invites、required members、principal
-  reservations 五张 service-role-only 表。
+- 两名真实匿名玩家创建、邀请、选角、准备和启动。
+- 每人只收到自己的逐阶段章节，公共材料按节点揭晓。
+- 只追加公开讨论、结束确认/撤销和秘密投票统一揭晓。
+- 显式同步推进、共同最终判断、authored ending 和 completed-only review。
+- durable receipt 重放、revision 冲突刷新、完成时 reservation 释放。
 
-`script_knowledge` 不是“未来 RAG”占位表。当前已实现 package chunking/indexing、deterministic/DashScope embedding provider、vector + BM25 候选、rerank、阶段/角色/已解锁线索权限过滤和 provider factory。
+明确推迟：
 
-`supabase/seed/dev_seed.sql` 仍是旧 Phase 1 数据和 1536 维向量，和当前 1024 维 schema、`script-packages/snow-village` YAML 内容不一致。它不能作为当前 live 垂直切片的权威内容。
+- gameplay WebSocket、presence、Redis 和 outbox 常驻 worker。
+- 共同沉浸地图、远端 avatar pose 和跨日浏览器恢复验收。
+- 未完成对局结束 UI、公共 AI DM、正式负载与多实例稳定性。
+- 真实玩家趣味性验证；技术通关不等于内容已经有趣。
 
-## AI、RAG、媒体和 LangGraph
+## 路由归属
 
-已实现并进入生产单人 action 路径的部分：
+| 路由族 | 所有者 | 状态 |
+|---|---|---|
+| `/library`, `/play/...` | 单人前端 | `[LIVE]` / `[MOCK]` |
+| `/multiplayer`, `/invite/...` | 多人大厅 | `[LIVE]` |
+| `/play/{room}/lobby` | 多人大厅 | `[LIVE]` |
+| `/demo/*` | 兼容重定向 | `[LEGACY]` |
+| `/api/v1/sessions/*` | FastAPI session surface | `[LIVE]` |
+| `/api/v1/ws/*` | 心跳端点 | `[LEGACY]` |
 
-- LangGraph StateGraph、条件 DSL、事件总线和 PostgreSQL checkpoint saver。
-- REST action -> runtime mapper -> StateGraph -> projection。
-- `RagRetriever` 和授权检索。
-- OpenAI-compatible NPC 生成；配置不完整、provider/RAG 失败或输出过滤失败时使用确定性 fallback。
+完整路由与模型以 `engine/api/routes/`、`apps/web/app/` 和生成的 OpenAPI 为准，
+不在本页复制枚举。
 
-仍未形成公开运行时入口的部分：
+## 刻意不做
 
-- AI-DM、Guard、Hint 的完整产品编排。
-- WebSocket gameplay events/replay/presence/resync。
-- MP-2 真实数据库/live-stack gates、后续 revision event/outbox 和完整多人 gameplay。
-- 媒体签名 URL/代理下载与完整 orchestrator。
-
-`MULTIPLAYER_V1` 是 MP-2 fail-closed gate；`ROOM_EVENTS_V1` 和 `AI_DM_V1` 仍没有运行时消费方。即使
-打开 multiplayer flag，也不能替代尚未完成的真实数据库和 live-stack 验收。
-
-## 重要横切约束
-
-- 防剧透：浏览器无表权限；FastAPI 根据 stage、character、discovery 和白名单字段做投影，RLS 提供纵深防御。
-- 权威内容：当前单人 vertical slice 以可导入 `script-packages/snow-village` YAML/Markdown 为准；Mock 仅供 UI 预览。
-- 权威状态：live action 以最新 LangGraph checkpoint 为首选，有限 session JSONB 是查询投影和无 checkpoint 时的 bootstrap。
-- 事务边界：checkpoint 和投影不是一个原子提交，不能套用尚未实现的多人 event/outbox 原子性描述。
-- WebSocket 心跳不是多人事件通道。
+- 不为 Slim M1 引入通用剧情 branch graph。
+- 不用 WebSocket 代替尚未验证的 HTTP polling 产品体验。
+- 不从私有 submission 反推更详细的历史 reveal。
+- 不让 AI 决定结局、阶段推进、解锁或 canonical state patch。
+- 不把 outbox 表的存在描述成已部署的异步消息平台。

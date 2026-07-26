@@ -1,19 +1,29 @@
+import { createUuid } from "@/lib/uuid";
 import { getAnonymousAccessToken } from "@/lib/auth/anonymous-session";
 import type {
   AcceptInviteResponse,
+  CompletedReviewV1,
   CreateInviteResponse,
   CreateMultiplayerRoomResponse,
   CurrentMultiplayerRoom,
-  LobbyCommandInput,
-  LobbyCommandResponse,
-  LobbySnapshotV1,
   MultiplayerApiErrorBody,
+  PreparedRoomCommand,
+  RoomCommandInput,
+  RoomCommandResponse,
+  RoomSnapshotV1,
+  ScenePresenceInput,
 } from "./types";
 
 const API_BASE = "/api/v1";
 
-export function lobbySnapshotKey(sessionId: string) {
-  return ["multiplayer", "lobby-snapshot", sessionId] as const;
+export function roomSnapshotKey(sessionId: string) {
+  return ["multiplayer", "room-snapshot", sessionId] as const;
+}
+
+export const lobbySnapshotKey = roomSnapshotKey;
+
+export function multiplayerReviewKey(sessionId: string) {
+  return ["multiplayer", "review", sessionId] as const;
 }
 
 export class MultiplayerClientError extends Error {
@@ -31,7 +41,7 @@ export class MultiplayerClientError extends Error {
 type TokenProvider = () => Promise<string>;
 
 type RequestOptions = {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
 };
@@ -113,23 +123,48 @@ export class MultiplayerRoomClient {
     });
   }
 
-  getSnapshot(sessionId: string, signal?: AbortSignal): Promise<LobbySnapshotV1> {
+  getSnapshot(sessionId: string, signal?: AbortSignal): Promise<RoomSnapshotV1> {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/snapshot`, { signal });
   }
 
-  async sendCommand(
+  getReview(sessionId: string, signal?: AbortSignal): Promise<CompletedReviewV1> {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/review`, { signal });
+  }
+
+  updateScenePresence(
     sessionId: string,
-    command: LobbyCommandInput,
+    presence: ScenePresenceInput,
     signal?: AbortSignal,
-  ): Promise<LobbyCommandResponse> {
-    const response = await this.request<LobbyCommandResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/commands`,
-      {
-        method: "POST",
-        body: { ...command, command_id: crypto.randomUUID() },
-        signal,
-      },
-    );
+  ): Promise<void> {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/scene-presence`, {
+      method: "PUT",
+      body: presence,
+      signal,
+    });
+  }
+
+  prepareCommand(command: RoomCommandInput): PreparedRoomCommand {
+    return { ...command, command_id: createUuid() } as PreparedRoomCommand;
+  }
+
+  async sendPreparedCommand(
+    sessionId: string,
+    command: PreparedRoomCommand,
+    signal?: AbortSignal,
+  ): Promise<RoomCommandResponse> {
+    let response: RoomCommandResponse;
+    try {
+      response = await this.request<RoomCommandResponse>(
+        `/sessions/${encodeURIComponent(sessionId)}/commands`,
+        { method: "POST", body: command, signal },
+      );
+    } catch (error) {
+      if (signal?.aborted || error instanceof MultiplayerClientError) throw error;
+      response = await this.request<RoomCommandResponse>(
+        `/sessions/${encodeURIComponent(sessionId)}/commands`,
+        { method: "POST", body: command, signal },
+      );
+    }
 
     if (response.status === "rejected") {
       throw new MultiplayerClientError(
@@ -140,6 +175,14 @@ export class MultiplayerRoomClient {
       );
     }
     return response;
+  }
+
+  sendCommand(
+    sessionId: string,
+    command: RoomCommandInput,
+    signal?: AbortSignal,
+  ): Promise<RoomCommandResponse> {
+    return this.sendPreparedCommand(sessionId, this.prepareCommand(command), signal);
   }
 }
 

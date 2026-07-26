@@ -65,7 +65,6 @@ class ActionRequest(ApiModel):
         return self
 
 
-
 class NpcResponse(ApiModel):
     """返回交谈动作生成的确定性 NPC 结果。"""
 

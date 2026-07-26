@@ -12,17 +12,18 @@ import {
 } from "@/lib/multiplayer/error-messages";
 import {
   createMultiplayerRoomClient,
-  lobbySnapshotKey,
+  roomSnapshotKey,
 } from "@/lib/multiplayer/room-client";
+import { MultiplayerMansionShell } from "./MultiplayerMansionShell";
 import { LobbyShell } from "./LobbyShell";
 
 export function LobbyBoundary({ sessionId }: { sessionId: string }) {
   const client = useMemo(() => createMultiplayerRoomClient(), []);
   const snapshot = useQuery({
-    queryKey: lobbySnapshotKey(sessionId),
+    queryKey: roomSnapshotKey(sessionId),
     queryFn: ({ signal }) => client.getSnapshot(sessionId, signal),
     retry: shouldRetryMultiplayer,
-    refetchInterval: (query) => query.state.data?.status === "lobby" ? 2_000 : false,
+    refetchInterval: 2_000,
     refetchOnWindowFocus: true,
   });
 
@@ -37,7 +38,7 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
     );
   }
 
-  if (snapshot.isError || !snapshot.data) {
+  if (!snapshot.data) {
     const code = multiplayerErrorCode(snapshot.error);
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#080a0c] px-5 text-[#e8e2d5]">
@@ -64,5 +65,26 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
     );
   }
 
-  return <LobbyShell client={client} snapshot={snapshot.data} />;
+  const syncWarning = snapshot.isError ? (
+    <div role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-xl border border-amber-200/25 bg-[#211b10]/95 px-4 py-3 text-sm text-amber-50 shadow-2xl backdrop-blur">
+      <div className="flex items-center gap-2">
+        <CircleAlert className="h-4 w-4 shrink-0 text-amber-200" />
+        <span>同步暂时中断，正在显示上次成功状态。</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => snapshot.refetch()}
+        disabled={snapshot.isFetching}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-100/20 px-3 py-1.5 text-xs disabled:opacity-50"
+      >
+        <RotateCcw className={`h-3.5 w-3.5 ${snapshot.isFetching ? "animate-spin" : ""}`} />
+        重试同步
+      </button>
+    </div>
+  ) : null;
+
+  if (snapshot.data.status === "lobby") {
+    return <>{syncWarning}<LobbyShell client={client} snapshot={snapshot.data} /></>;
+  }
+  return <>{syncWarning}<MultiplayerMansionShell client={client} snapshot={snapshot.data} /></>;
 }

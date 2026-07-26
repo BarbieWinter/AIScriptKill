@@ -77,3 +77,4 @@ make lint-web
 - `docs/API_REFERENCE.md` — 当前 REST 与 WebSocket 契约
 - `docs/FRONTEND_EXPERIENCE_DESIGN.md` — 前端交互体验设计
 - `docs/EXECUTION_PLAN.md` — 执行计划书
+- `docs/MULTIPLAYER_ARCHITECTURE_PLAN.md` — 多人联机架构与执行计划书

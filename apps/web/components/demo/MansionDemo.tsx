@@ -40,6 +40,7 @@ import {
   type DemoArticle,
   type DemoCharacter,
   type DemoFurniture,
+  type SceneCharacter,
   type DemoHotspot,
   type DemoPoint,
   type DemoRect,
@@ -76,6 +77,22 @@ type DemoSeat = DemoFurniture & {
   seat: NonNullable<DemoFurniture["seat"]>;
 };
 
+export interface SceneAvatar {
+  id: string;
+  characterId: string;
+  name: string;
+  x: number;
+  y: number;
+  facing: "left" | "right";
+  moving?: boolean;
+  online?: boolean;
+}
+
+export interface LocalScenePose extends DemoPoint {
+  facing: "left" | "right";
+  moving: boolean;
+}
+
 export interface MansionDemoProps {
   sessionHotspots?: DemoSessionHotspot[];
   interactionBlocked?: boolean;
@@ -83,12 +100,21 @@ export interface MansionDemoProps {
   onInvestigate?: (sceneId: string, hotspotId: string) => void | Promise<void>;
   overlay?: ReactNode;
   playerName?: string;
+  playerCharacterId?: string;
+  remoteAvatars?: SceneAvatar[];
+  onPlayerPose?: (pose: LocalScenePose) => void;
   stageName?: string;
   statusLabel?: string;
+  objectiveText?: string;
+  includeDemoContent?: boolean;
+  journalLabel?: string;
+  onOpenJournal?: () => void;
+  initialPlayerPosition?: DemoPoint;
 }
 
 function hotspotActionLabel(hotspot: WorldHotspot) {
-  return hotspot.kind === "article" ? "阅读" : "调查";
+  if (hotspot.kind === "article") return "阅读";
+  return hotspot.actionLabel ?? "调查";
 }
 
 interface CameraState {
@@ -160,7 +186,7 @@ function isInteractiveTarget(target: EventTarget | null) {
   return Boolean(target.closest("button, a, input, textarea, select, [contenteditable='true']"));
 }
 
-function characterStyle(character: DemoCharacter, position: DemoPoint = character): CSSProperties {
+function characterStyle(character: SceneCharacter, position: DemoPoint = character): CSSProperties {
   return {
     "--character-width": `${character.silhouette.width}px`,
     "--character-height": `${character.silhouette.height}px`,
@@ -182,8 +208,11 @@ function characterStyle(character: DemoCharacter, position: DemoPoint = characte
 }
 
 interface CharacterSpriteProps {
-  character: DemoCharacter;
+  character: SceneCharacter;
+  avatarCharacterId?: string;
   player?: boolean;
+  online?: boolean;
+  moving?: boolean;
   elementRef?: React.RefObject<HTMLDivElement | null>;
   position?: DemoPoint;
   seatedFacing?: DemoSeat["seat"]["facing"];
@@ -211,7 +240,10 @@ function sceneRenderBounds(roomId: DemoRoom["id"]): DemoRect {
 
 const CharacterSprite = memo(function CharacterSprite({
   character,
+  avatarCharacterId,
   player = false,
+  online = true,
+  moving = false,
   elementRef,
   position,
   seatedFacing,
@@ -219,11 +251,15 @@ const CharacterSprite = memo(function CharacterSprite({
   return (
     <div
       ref={elementRef}
-      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} is-facing-${character.initialFacing} ${seatedFacing ? "is-seated" : ""}`}
+      className={`demo-character ${player ? "demo-character-player" : "demo-character-npc"} ${online ? "is-online" : "is-offline"} ${moving ? "is-moving" : ""} is-facing-${character.initialFacing} ${seatedFacing ? "is-seated" : ""}`}
       data-character-id={character.id}
+      data-avatar-character-id={avatarCharacterId}
+      data-scene-x={position?.x ?? character.x}
+      data-scene-y={position?.y ?? character.y}
       data-outfit={character.outfit}
       data-accessory={character.accessory}
       data-seat-facing={seatedFacing}
+      data-online={online ? "true" : "false"}
       style={characterStyle(character, position)}
     >
       <span className="demo-character-selection" />
@@ -258,25 +294,50 @@ const doorLabels: Record<string, string> = {
   "archive-door": "档案室",
 };
 
+function multiplayerAvatarTemplate(characterId: string): DemoCharacter {
+  if (characterId === "investigator") return demoCharacters[1];
+  if (characterId === "insider") return demoCharacters[2];
+  return demoCharacters[0];
+}
+
+function sceneCharacterForAvatar(avatar: SceneAvatar): SceneCharacter {
+  const template = multiplayerAvatarTemplate(avatar.characterId);
+  return {
+    ...template,
+    id: avatar.id,
+    name: avatar.name,
+    x: avatar.x,
+    y: avatar.y,
+    initialFacing: avatar.facing,
+  };
+}
+
 const StaticScene = memo(function StaticScene({
   activeHotspotId,
   hotspots,
   interactionPending,
   onInteract,
   activeRoomId,
+  characters,
 }: {
   activeHotspotId: string | null;
   hotspots: WorldHotspot[];
   interactionPending: boolean;
   onInteract: (hotspot: WorldHotspot) => void;
   activeRoomId: DemoRoom["id"];
+  characters: Array<{
+    character: SceneCharacter;
+    avatarCharacterId?: string;
+    moving: boolean;
+    online: boolean;
+  }>;
 }) {
   const renderBounds = sceneRenderBounds(activeRoomId);
   const visibleWalls = demoWalls.filter((wall) => intersects(wall, renderBounds));
   const visibleFurniture = demoFurniture.filter((entity) => intersects(entity, renderBounds));
   const visibleDoors = demoDoorFrames.filter((door) => intersects({ x: door.x, y: door.y, width: door.width, height: door.height }, renderBounds));
   const visibleHotspots = hotspots.filter((hotspot) => contains(renderBounds, hotspot));
-  const visibleCharacters = demoCharacters.slice(1).filter((character) => contains(renderBounds, character));
+  const visibleCharacters = characters.filter(({ character }) => contains(renderBounds, character));
 
   return (
     <>
@@ -356,6 +417,7 @@ const StaticScene = memo(function StaticScene({
           <button
             type="button"
             key={hotspot.id}
+            data-hotspot-id={hotspot.id}
             className={`demo-hotspot ${hotspot.kind === "session" ? "is-session" : ""} ${activeHotspotId === hotspot.id ? "is-active" : ""}`}
             style={{ left: hotspot.x, top: hotspot.y, zIndex: sceneZ(hotspot.y) }}
             onClick={() => onInteract(hotspot)}
@@ -368,8 +430,14 @@ const StaticScene = memo(function StaticScene({
           </button>
         ))}
 
-        {visibleCharacters.map((character) => (
-          <CharacterSprite key={character.id} character={character} />
+        {visibleCharacters.map(({ character, avatarCharacterId, moving, online }) => (
+          <CharacterSprite
+            key={character.id}
+            character={character}
+            avatarCharacterId={avatarCharacterId}
+            moving={moving}
+            online={online}
+          />
         ))}
       </div>
     </>
@@ -436,15 +504,24 @@ export function MansionDemo({
   onInvestigate,
   overlay,
   playerName,
+  playerCharacterId,
+  remoteAvatars = [],
+  onPlayerPose,
   stageName,
   statusLabel,
+  objectiveText,
+  includeDemoContent = true,
+  journalLabel = "手记",
+  onOpenJournal,
+  initialPlayerPosition,
 }: MansionDemoProps = {}) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const cameraElementRef = useRef<HTMLDivElement>(null);
   const playerElementRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef(new Set<string>());
   const touchRef = useRef({ x: 0, y: 0 });
-  const playerRef = useRef<DemoPoint>({ x: demoCharacters[0].x, y: demoCharacters[0].y });
+  const initialPosition = initialPlayerPosition ?? demoCharacters[0];
+  const playerRef = useRef<DemoPoint>({ x: initialPosition.x, y: initialPosition.y });
   const viewportSizeRef = useRef({ width: 1280, height: 720 });
   const blockedRef = useRef(false);
   const activeHotspotRef = useRef<string | null>(null);
@@ -453,13 +530,15 @@ export function MansionDemo({
   const wakeLoopRef = useRef<() => void>(() => undefined);
   const reducedMotionRef = useRef(false);
   const lastSnapshotRef = useRef(0);
+  const onPlayerPoseRef = useRef(onPlayerPose);
+  const lastPoseEmissionRef = useRef(0);
   const cameraNeedsUpdateRef = useRef(true);
   const cameraRef = useRef<CameraState>({
-    x: demoCharacters[0].x,
-    y: demoCharacters[0].y,
+    x: initialPosition.x,
+    y: initialPosition.y,
     zoom: 1,
-    targetX: demoCharacters[0].x,
-    targetY: demoCharacters[0].y,
+    targetX: initialPosition.x,
+    targetY: initialPosition.y,
     targetZoom: 1,
     lookX: 0,
     lookY: 0,
@@ -479,18 +558,44 @@ export function MansionDemo({
   const [showHelp, setShowHelp] = useState(true);
   const [muted, setMuted] = useState(false);
 
+  const sceneCharacters = useMemo(
+    () => includeDemoContent
+      ? demoCharacters.slice(1).map((character) => ({
+          character,
+          avatarCharacterId: character.id,
+          moving: false,
+          online: true,
+        }))
+      : remoteAvatars.map((avatar) => ({
+          character: sceneCharacterForAvatar(avatar),
+          avatarCharacterId: avatar.characterId,
+          moving: Boolean(avatar.moving),
+          online: avatar.online !== false,
+        })),
+    [includeDemoContent, remoteAvatars],
+  );
   const worldHotspots = useMemo<WorldHotspot[]>(
     () => [
-      ...demoHotspots.map((hotspot) => ({ ...hotspot, kind: "article" as const })),
+      ...(includeDemoContent
+        ? demoHotspots.map((hotspot) => ({ ...hotspot, kind: "article" as const }))
+        : []),
       ...sessionHotspots.map((hotspot) => ({ ...hotspot, kind: "session" as const })),
     ],
-    [sessionHotspots],
+    [includeDemoContent, sessionHotspots],
   );
   const worldHotspotsRef = useRef(worldHotspots);
-  const playerCharacter = useMemo(
-    () => ({ ...demoCharacters[0], name: playerName || demoCharacters[0].name }),
-    [playerName],
-  );
+  const playerCharacter = useMemo(() => {
+    const template = multiplayerAvatarTemplate(playerCharacterId ?? "");
+    return {
+      ...template,
+      id: playerCharacterId ? `self-${playerCharacterId}` : template.id,
+      name: playerName || template.name,
+    };
+  }, [playerCharacterId, playerName]);
+
+  useEffect(() => {
+    onPlayerPoseRef.current = onPlayerPose;
+  }, [onPlayerPose]);
 
   useEffect(() => {
     worldHotspotsRef.current = worldHotspots;
@@ -639,7 +744,8 @@ export function MansionDemo({
     let frame = 0;
     let last = performance.now();
     let lastMoving = false;
-    let lastFacing: "left" | "right" = demoCharacters[0].initialFacing;
+    let lastEmittedMoving: boolean | null = null;
+    let lastFacing: "left" | "right" = playerCharacter.initialFacing;
     let lastRenderedFacing = lastFacing;
     let lastFadeUpdate = 0;
 
@@ -859,6 +965,19 @@ export function MansionDemo({
         lastSnapshotRef.current = now;
         setPlayerSnapshot({ ...player });
       }
+      if (
+        onPlayerPoseRef.current
+        && (isMoving !== lastEmittedMoving || now - lastPoseEmissionRef.current >= UI_SNAPSHOT_INTERVAL)
+      ) {
+        lastPoseEmissionRef.current = now;
+        lastEmittedMoving = isMoving;
+        onPlayerPoseRef.current({
+          x: player.x,
+          y: player.y,
+          facing: lastFacing,
+          moving: isMoving,
+        });
+      }
       if (isMoving || cameraAnimating) frame = requestAnimationFrame(loop);
     };
 
@@ -872,7 +991,7 @@ export function MansionDemo({
       wakeLoopRef.current = () => undefined;
       cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [playerCharacter.initialFacing]);
 
   const nearestHotspot = activeHotspotId
     ? worldHotspots.find((hotspot) => hotspot.id === activeHotspotId) ?? null
@@ -905,7 +1024,14 @@ export function MansionDemo({
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="mansion-demo" ref={viewportRef} data-room={activeRoomId} data-seated={seatedChairId ? "true" : undefined}>
+      <main
+        className="mansion-demo"
+        ref={viewportRef}
+        data-player-x={Math.round(playerSnapshot.x)}
+        data-player-y={Math.round(playerSnapshot.y)}
+        data-room={activeRoomId}
+        data-seated={seatedChairId ? "true" : undefined}
+      >
         <div ref={cameraElementRef} className="demo-world-camera">
           <div className="demo-world" style={{ width: DEMO_WORLD_WIDTH, height: DEMO_WORLD_HEIGHT }}>
             <StaticScene
@@ -914,9 +1040,11 @@ export function MansionDemo({
               interactionPending={interactionPending}
               onInteract={interactWithHotspot}
               activeRoomId={activeRoomId}
+              characters={sceneCharacters}
             />
             <CharacterSprite
               character={playerCharacter}
+              avatarCharacterId={playerCharacterId}
               player
               elementRef={playerElementRef}
               position={seatedChair?.seat.position ?? playerRef.current}
@@ -957,7 +1085,7 @@ export function MansionDemo({
                 }}
               />
             ))}
-            {demoCharacters.slice(1).map((character) => (
+            {sceneCharacters.map(({ character }) => (
               <i
                 key={character.id}
                 className="demo-corner-person"
@@ -984,7 +1112,11 @@ export function MansionDemo({
           </div>
           <nav className="demo-hud-actions" aria-label="游戏界面操作">
             <button type="button" onClick={() => setShowMap(true)}><MapIcon /><span>地图</span></button>
-            <button type="button" onClick={() => setShowJournal(true)}><BookOpen /><span>手记</span></button>
+            <button
+              type="button"
+              aria-label={journalLabel}
+              onClick={() => onOpenJournal ? onOpenJournal() : setShowJournal(true)}
+            ><BookOpen /><span>{journalLabel}</span></button>
             <button type="button" onClick={() => setMuted((value) => !value)}>{muted ? <X /> : <Volume2 />}<span>{muted ? "静音" : "环境音"}</span></button>
             <button type="button" onClick={() => setShowHelp((value) => !value)}><Menu /><span>操作</span></button>
           </nav>
@@ -992,7 +1124,7 @@ export function MansionDemo({
 
         <aside className="demo-objective-card">
           <span>{stageName ? `当前阶段 · ${stageName}` : `探索模式 · ${activeRoom.name}`}</span>
-          <p>{stageName ? "在精致地图中靠近发光热点，调查 YAML 剧本当前允许的内容。" : "在旧剧场中自由行走，靠近发光标记阅读静态剧情组件。"}</p>
+          <p>{objectiveText ?? (stageName ? "在精致地图中靠近发光热点，调查 YAML 剧本当前允许的内容。" : "在旧剧场中自由行走，靠近发光标记阅读静态剧情组件。")}</p>
           <div><Footprints /> WASD / 方向键移动</div>
         </aside>
 
@@ -1081,7 +1213,7 @@ export function MansionDemo({
         </AnimatePresence>
 
         <AnimatePresence>
-          {showJournal && (
+          {showJournal && includeDemoContent && (
             <motion.div className="demo-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowJournal(false)}>
               <motion.section className="demo-journal" initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} onClick={(event) => event.stopPropagation()}>
                 <header><div><span>静态数据组件</span><h2>已发现的手记</h2></div><button type="button" onClick={() => setShowJournal(false)}><X /></button></header>

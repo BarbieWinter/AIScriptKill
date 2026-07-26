@@ -18,8 +18,8 @@ type Invite = {
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const characters = [
-  { id: "detective-a", name: "侦探甲" },
-  { id: "detective-b", name: "侦探乙" },
+  { id: "detective-a", name: "侦探甲", public_description: "负责核对现场时间线" },
+  { id: "detective-b", name: "侦探乙", public_description: "熟悉值班室内部流程" },
 ];
 
 function json(route: Route, body: unknown, status = 200) {
@@ -144,6 +144,45 @@ function createMockRoomApi() {
 
       if (pathname === `/api/v1/sessions/${sessionId}/snapshot` && method === "GET") {
         const orderedMembers = [...members.values()];
+        if (status === "active") {
+          return json(route, {
+            snapshot_version: 1,
+            session_id: sessionId,
+            mode: "multiplayer_v1",
+            status: "active",
+            revision,
+            event_head_sequence: revision,
+            package: { script_id: "mp1-two-player", title: "双人测试剧本", version: "1.0.0" },
+            self_member_id: member.member_id,
+            stage_id: "investigation",
+            stage_name: "核对口供",
+            phase: "read",
+            suggested_discussion_minutes: 12,
+            players: orderedMembers.map((candidate) => ({
+              member_id: candidate.member_id,
+              character_id: candidate.character_id,
+              character_name: characters.find((character) => character.id === candidate.character_id)?.name,
+              scene_x: candidate.character_id === "investigator" ? 1455 : 945,
+              scene_y: 970,
+              scene_facing: candidate.character_id === "investigator" ? "left" : "right",
+              scene_moving: false,
+              scene_online: true,
+            })),
+            read_member_ids: [],
+            discussion_close_member_ids: [],
+            chapters: [{
+              id: `${member.character_id}-investigation`,
+              title: "第一章",
+              content: "只属于当前角色的测试章节。",
+            }],
+            public_materials: [],
+            discussion_messages: [],
+            settlement: null,
+            hints: [],
+            can_advance: false,
+            ending_id: null,
+          });
+        }
         return json(route, {
           session_id: sessionId,
           mode: "multiplayer_v1",
@@ -196,6 +235,11 @@ function createMockRoomApi() {
         return route.fulfill({ status: 204 });
       }
 
+      if (pathname === `/api/v1/sessions/${sessionId}/scene-presence` && method === "PUT") {
+        const body = request.postDataJSON();
+        expect(Object.keys(body).sort()).toEqual(["facing", "moving", "x", "y"]);
+        return route.fulfill({ status: 204, body: "" });
+      }
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
         const body = request.postDataJSON();
         expect(body.command_id).toMatch(/^[0-9a-f-]{36}$/i);
@@ -245,6 +289,9 @@ async function createPlayerPage(
   identity: Identity,
 ) {
   const context = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+  await context.addInitScript(() => {
+    Object.defineProperty(Crypto.prototype, "randomUUID", { value: undefined, configurable: true });
+  });
   const token = await installAnonymousAuth(context, identity);
   const page = await context.newPage();
   const webSockets: string[] = [];
@@ -276,6 +323,8 @@ test("two anonymous players can join, select, ready, and atomically start withou
 
     await host.page.getByRole("button", { name: "创建 15 分钟邀请" }).click();
     await expect(host.page.getByTestId("invite-url")).toContainText("/invite/join-token-2");
+    await host.page.reload();
+    await expect(host.page.getByTestId("invite-url")).toContainText("/invite/join-token-2");
     await host.page.getByRole("button", { name: "复制邀请链接" }).click();
     await expect(host.page.getByRole("button", { name: "已复制" })).toBeVisible();
     await host.page.getByRole("button", { name: "撤销邀请 invite-2" }).click();
@@ -304,8 +353,14 @@ test("two anonymous players can join, select, ready, and atomically start withou
 
     await expect(host.page.getByRole("button", { name: "开始游戏" })).toBeEnabled({ timeout: 5_000 });
     await host.page.getByRole("button", { name: "开始游戏" }).click();
-    await expect(host.page.getByRole("heading", { name: "房间已原子启动" })).toBeVisible();
-    await expect(host.page.getByText(/多人游戏运行时将在 MP-6 提供/)).toBeVisible();
+    await expect(host.page.locator(".mansion-demo")).toBeVisible();
+    await expect(host.page.getByRole("heading", { name: "核对口供" })).toHaveCount(0);
+    const scene = host.page.locator(".mansion-demo");
+    const initialY = Number(await scene.getAttribute("data-player-y"));
+    await host.page.keyboard.down("KeyW");
+    await host.page.waitForTimeout(450);
+    await host.page.keyboard.up("KeyW");
+    await expect.poll(async () => Number(await scene.getAttribute("data-player-y"))).toBeLessThan(initialY);
 
     expect(host.webSockets).toEqual([]);
     expect(guest.webSockets).toEqual([]);

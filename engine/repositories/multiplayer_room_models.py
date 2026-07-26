@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 RoomRole = Literal["host", "player"]
-RoomStatus = Literal["lobby", "active"]
+RoomStatus = Literal["lobby", "active", "completed", "closed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,12 +15,15 @@ class StoredMultiplayerRoom:
     script_id: str
     status: RoomStatus
     revision: int
+    event_head_sequence: int
     state_schema_version: int
+    state: dict[str, object]
     runtime_package_version: str
     runtime_package_snapshot: dict[str, object]
     runtime_package_sha256: str
     created_at: datetime
     started_at: datetime | None
+    closed_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,11 @@ class StoredRoomMember:
     room_role: RoomRole
     ready_at: datetime | None
     joined_at: datetime
+    scene_x: float | None = None
+    scene_y: float | None = None
+    scene_facing: Literal["left", "right"] | None = None
+    scene_moving: bool | None = None
+    scene_updated_at: datetime | None = None
 
     @property
     def ready(self) -> bool:

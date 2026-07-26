@@ -1,0 +1,22 @@
+round_id: "final-reconstruction"
+name: "终局重建"
+stage_visible: "final-judgment"
+clues:
+  - id: "case-reconstruction"
+    name: "核验后的时间线"
+    stage_visible: "final-judgment"
+    description: "20:05，知情人用备用钥匙从维修门进入；20:10，调查员抵达并看守走廊入口；20:20，室内钥匙串落地；20:21，知情人持钥匙从正门离开。门锁始终完好，现有材料不能证明有人损毁记录。"
+    key_clue: true
+    importance: 5
+  - id: "limited-finding"
+    name: "有限责任认定"
+    stage_visible: "final-judgment"
+    description: "你们把已经证实的违规进入与尚无证据的破门、损毁指控分开，保留了清晰的责任边界。"
+    key_clue: false
+    importance: 3
+  - id: "unsupported-finding"
+    name: "越过证据边界"
+    stage_visible: "final-judgment"
+    description: "你们作出了更重的指控，但核验后的时间线显示门锁完好，金属声来自钥匙掉落；该结论超出了现有证据。"
+    key_clue: false
+    importance: 3

@@ -108,14 +108,21 @@ class FinalJudgmentSettlementDefinition(_SettlementWithOptions):
     default_effect: SettlementEffect = SettlementEffect.BRANCH
 
     @model_validator(mode="after")
-    def validate_tie_outcome(self) -> Self:
+    def validate_answer_mode(self) -> Self:
         if self.answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET:
             if self.tie_outcome_id is None:
                 raise ValueError("individual-secret final judgment requires a tie outcome id")
             if self.tie_outcome_id in {option.outcome_id for option in self.options}:
                 raise ValueError("tie outcome id must be distinct from option outcome ids")
-        elif self.tie_outcome_id is not None:
-            raise ValueError("shared-choice final judgment must not declare a tie outcome id")
+            if self.submission_change is not SubmissionChangePolicy.FORBIDDEN:
+                raise ValueError("individual-secret final judgment submissions must be locked")
+        else:
+            if self.tie_outcome_id is not None:
+                raise ValueError("shared-choice final judgment must not declare a tie outcome id")
+            if self.submission_change is not SubmissionChangePolicy.ALLOWED_BEFORE_COMPLETE:
+                raise ValueError(
+                    "shared-choice final judgment must allow candidate changes before completion"
+                )
         return self
 
 

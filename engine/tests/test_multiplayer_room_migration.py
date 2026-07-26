@@ -21,6 +21,12 @@ MIGRATION = (
     / "migrations"
     / "20260718000000_multiplayer_rooms.sql"
 )
+FORWARD_PRESENCE_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260723010000_multiplayer_scene_presence.sql"
+)
 ROOM_TABLE_NAMES = {
     "room_members",
     "room_character_assignments",
@@ -186,6 +192,28 @@ def test_room_constraints_cover_hash_limits_ready_and_required_member_order() ->
     assert checks_by_table["room_required_members"]["room_required_members_ordinal_check"] == (
         "ordinal >= 0"
     )
+
+
+def test_scene_presence_is_latest_value_metadata_on_existing_member_table() -> None:
+    sql = " ".join(
+        re.sub(
+            r"--[^\n]*",
+            "",
+            FORWARD_PRESENCE_MIGRATION.read_text(encoding="utf-8"),
+        )
+        .lower()
+        .split()
+    )
+
+    for column in ("scene_x", "scene_y", "scene_facing", "scene_moving", "scene_updated_at"):
+        assert column in room_members.c
+        assert f"add column {column}" in sql
+    assert "room_members_scene_presence_check" in sql
+    assert "scene_x between 17 and 2383" in sql
+    assert "scene_y between 17 and 1583" in sql
+    assert "scene_facing in ('left', 'right')" in sql
+    assert "comment on column public.room_members.scene_x" in sql
+    assert "never gameplay authority" in sql
 
 
 def _normalized_sql() -> str:

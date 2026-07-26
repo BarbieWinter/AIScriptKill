@@ -31,6 +31,7 @@ export interface DemoSessionHotspot extends DemoPoint {
   id: string;
   sceneId: string;
   label: string;
+  actionLabel?: string;
   width?: number;
   height?: number;
 }
@@ -83,8 +84,8 @@ export interface DemoDoorFrame {
   orientation: "horizontal" | "vertical";
 }
 
-export interface DemoCharacter extends DemoPoint {
-  id: "player" | "linmo" | "suyin";
+export interface SceneCharacter extends DemoPoint {
+  id: string;
   name: string;
   initialFacing: "left" | "right";
   outfit: "short-coat" | "long-coat" | "soft-jacket";
@@ -110,6 +111,10 @@ export interface DemoCharacter extends DemoPoint {
     delaySeconds: number;
   };
 }
+
+export type DemoCharacter = SceneCharacter & {
+  id: "player" | "linmo" | "suyin";
+};
 
 export const DEMO_WORLD_WIDTH = 2400;
 export const DEMO_WORLD_HEIGHT = 1600;

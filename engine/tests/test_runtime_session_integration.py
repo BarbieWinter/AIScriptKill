@@ -39,9 +39,7 @@ def test_initial_game_state_preserves_rest_projection_without_using_it_as_contin
             viewed_evidences=["knife"],
             unlocked_character_chapters=["chapter-1"],
             read_character_chapters=["chapter-1"],
-            evidences_shown_to_npcs=[
-                {"evidence_id": "knife", "character_id": "npc"}
-            ],
+            evidences_shown_to_npcs=[{"evidence_id": "knife", "character_id": "npc"}],
             current_scene="main_hall",
         )
     )
@@ -52,9 +50,7 @@ def test_initial_game_state_preserves_rest_projection_without_using_it_as_contin
     assert state["available_actions"] == ["talk_to_npc"]
     assert state["viewed_evidences"] == ["knife"]
     assert state["read_character_chapters"] == ["chapter-1"]
-    assert state["evidences_shown_to_npcs"] == [
-        {"evidence_id": "knife", "character_id": "npc"}
-    ]
+    assert state["evidences_shown_to_npcs"] == [{"evidence_id": "knife", "character_id": "npc"}]
     assert state["completed_events"] == []
     assert state["performed_actions"] == []
 
@@ -68,21 +64,15 @@ def test_monotonic_projection_progress_merges_into_restored_full_state() -> None
         viewed_evidences=["knife"],
         unlocked_character_chapters=["chapter-1"],
         read_character_chapters=["chapter-1"],
-        evidences_shown_to_npcs=[
-            {"evidence_id": "knife", "character_id": "npc"}
-        ],
+        evidences_shown_to_npcs=[{"evidence_id": "knife", "character_id": "npc"}],
     )
 
     merged = synchronize_monotonic_progress(restored, projection)
 
-    assert merged["performed_actions"] == [
-        {"action_id": "open_clue_board", "target": None}
-    ]
+    assert merged["performed_actions"] == [{"action_id": "open_clue_board", "target": None}]
     assert merged["viewed_evidences"] == ["knife"]
     assert merged["read_character_chapters"] == ["chapter-1"]
-    assert merged["evidences_shown_to_npcs"] == [
-        {"evidence_id": "knife", "character_id": "npc"}
-    ]
+    assert merged["evidences_shown_to_npcs"] == [{"evidence_id": "knife", "character_id": "npc"}]
 
 
 def test_project_runtime_state_preserves_names_and_visible_graph_fields() -> None:
@@ -91,9 +81,7 @@ def test_project_runtime_state_preserves_names_and_visible_graph_fields() -> Non
     state["current_stage"] = "act1"
     state["available_actions"] = ["open_clue_board"]
     state["pending_media"] = [{"id": "intro", "type": "bgm", "status": "queued"}]
-    state["evidences_shown_to_npcs"] = [
-        {"evidence_id": "knife", "character_id": "npc"}
-    ]
+    state["evidences_shown_to_npcs"] = [{"evidence_id": "knife", "character_id": "npc"}]
 
     projected = project_runtime_state(state, session.state, stage_name="第一幕")
 
@@ -101,24 +89,32 @@ def test_project_runtime_state_preserves_names_and_visible_graph_fields() -> Non
     assert projected.stage_name == "第一幕"
     assert projected.available_actions == ["open_clue_board"]
     assert projected.pending_media == [{"id": "intro", "type": "bgm", "status": "queued"}]
-    assert projected.evidences_shown_to_npcs == [
-        {"evidence_id": "knife", "character_id": "npc"}
-    ]
+    assert projected.evidences_shown_to_npcs == [{"evidence_id": "knife", "character_id": "npc"}]
 
 
 def test_rest_action_mapper_encodes_core_targets() -> None:
-    assert runtime_action_input(
-        ActionRequest(action="talk_to_npc", character_id="npc", message="你见到了谁？")
-    ).target == "npc"
-    assert runtime_action_input(
-        ActionRequest(action="examine_scene", scene_id="main_hall", hotspot_id="door")
-    ).target == "main_hall:door"
-    assert runtime_action_input(
-        ActionRequest(action="show_evidence", evidence_id="knife", character_id="npc")
-    ).target == "knife:npc"
-    assert runtime_action_input(
-        ActionRequest(action="request_advance", reason="玩家界面说明")
-    ).target == "request_advance"
+    assert (
+        runtime_action_input(
+            ActionRequest(action="talk_to_npc", character_id="npc", message="你见到了谁？")
+        ).target
+        == "npc"
+    )
+    assert (
+        runtime_action_input(
+            ActionRequest(action="examine_scene", scene_id="main_hall", hotspot_id="door")
+        ).target
+        == "main_hall:door"
+    )
+    assert (
+        runtime_action_input(
+            ActionRequest(action="show_evidence", evidence_id="knife", character_id="npc")
+        ).target
+        == "knife:npc"
+    )
+    assert (
+        runtime_action_input(ActionRequest(action="request_advance", reason="玩家界面说明")).target
+        == "request_advance"
+    )
     assert runtime_action_input(ActionRequest(action="open_clue_board")).target is None
 
 

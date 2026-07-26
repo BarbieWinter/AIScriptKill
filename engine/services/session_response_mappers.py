@@ -109,7 +109,7 @@ def presentation_response(
             name=scene.name,
             description=_optional_text(scene.definition.get("description")),
             ambient_color=_scene_ambient_color(scene.definition),
-            background_url=_browser_safe_url(scene.background_url),
+            background_url=browser_safe_url(scene.background_url),
             hotspots=_public_hotspots(scene.definition.get("hotspots")),
         ),
         judgement=(
@@ -234,7 +234,8 @@ def _scene_ambient_color(definition: Mapping[str, object]) -> str | None:
     return _optional_text(cast(Mapping[object, object], visual).get("ambient_color"))
 
 
-def _browser_safe_url(value: str | None) -> str | None:
+def browser_safe_url(value: str | None) -> str | None:
+    """Return only relative or absolute HTTP URLs that a browser may request."""
     if value is None:
         return None
     if value.startswith("/") and not value.startswith("//"):

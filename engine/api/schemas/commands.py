@@ -30,7 +30,7 @@ class CommandReceiptResponse(ApiModel):
     revision: int = Field(ge=0)
     event_sequence_from: int | None = Field(default=None, ge=1)
     event_sequence_to: int | None = Field(default=None, ge=1)
-    result: ActionResponse | None = None
+    result: ActionResponse | dict[str, object] | None = None
     error_code: str | None = None
     error_details: dict[str, object] = Field(default_factory=dict)
 

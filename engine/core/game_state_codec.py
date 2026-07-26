@@ -50,9 +50,7 @@ def game_state_from_mapping(raw: Mapping[str, JsonValue]) -> GameState:
         raw.get("viewed_evidences"),
         state["discovered_evidences"],
     )
-    state["unlocked_character_chapters"] = _text_list(
-        raw.get("unlocked_character_chapters")
-    )
+    state["unlocked_character_chapters"] = _text_list(raw.get("unlocked_character_chapters"))
     state["read_character_chapters"] = _subset_text_list(
         raw.get("read_character_chapters"),
         state["unlocked_character_chapters"],

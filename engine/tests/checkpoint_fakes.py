@@ -110,9 +110,7 @@ class MemoryCheckpointSession:
             ),
             30,
         )
-        self.lease_renewals.append(
-            (session_id, command_id, command_attempt, lease_seconds)
-        )
+        self.lease_renewals.append((session_id, command_id, command_attempt, lease_seconds))
         return [{"command_id": command_id}]
 
     def _insert(
@@ -244,8 +242,7 @@ class MemoryCheckpointSession:
                 rows = [
                     row
                     for row in rows
-                    if row.command_attempt is not None
-                    and row.command_attempt <= command_attempt
+                    if row.command_attempt is not None and row.command_attempt <= command_attempt
                 ]
             else:
                 rows = [row for row in rows if row.command_attempt == command_attempt]

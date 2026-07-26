@@ -347,9 +347,7 @@ async def test_npc_responder_only_authorizes_presented_and_viewed_evidence_react
     assert "这把刀不是后门的证据" not in generator.system_prompt
 
     state["viewed_evidences"].append("knife")
-    state["evidences_shown_to_npcs"].append(
-        {"evidence_id": "knife", "character_id": "wangdada"}
-    )
+    state["evidences_shown_to_npcs"].append({"evidence_id": "knife", "character_id": "wangdada"})
     await responder.respond(
         state,
         package,

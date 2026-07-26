@@ -1,101 +1,148 @@
 # 前端架构
 
-## 技术栈和应用外壳
-
-前端位于 `apps/web`。`apps/web/package.json` 定义了一个 Next.js 15、React 19、TypeScript 应用，并使用 Zustand、TanStack Query、framer-motion、Howler、Konva/react-konva、sonner、lucide-react 和 Tailwind 相关工具。
-
-`apps/web/app/layout.tsx` 使用 TanStack Query provider 包裹应用，并加载来自 `apps/web/app/globals.css` 的全局样式。`apps/web/app/page.tsx` 会把访问者重定向到 `/library`。
-
-设计意图见 `/docs/FRONTEND_EXPERIENCE_DESIGN.md` 和 `/docs/SONNET5_HANDOFF.md`：应用应该像沉浸式互动电影，使用场景背景、克制的覆盖层、音频/动画反馈和围绕谜题的流程，而不是通用聊天 UI。
-
-## 路由图
-
-当前页面还包括 MP-2 HTTP lobby 基础：
-
-- `/multiplayer`：复用/建立 Supabase anonymous session，查询 nullable current room，创建或恢复
-  `mp1-two-player` lobby。
-- `/invite/[token]`：只提交一次 invite accept；成功后 `router.replace()` 到 lobby，避免 token 保留在
-  active URL/history。
-- `/play/[sessionId]/lobby`：React Query 读取安全 snapshot，仅在 `lobby` 每 2 秒 polling；`active` 停止
-  polling 并显示 MP-6 placeholder。
-
-Legacy/单人页面：
-
-- `/library`：`apps/web/app/library/page.tsx`。展示硬编码的雪村剧本库体验，而不是查询真实剧本包。
-- `/library/[id]`：`apps/web/app/library/[id]/page.tsx`。调用 `api.getPackage(scriptId)`，并用 Mock 角色预览渲染详情；live 模式依赖后端 `GET /packages/{id}`。
-- `/play/[sessionId]/select`：`apps/web/app/play/[sessionId]/select/page.tsx`。路由段名是 `sessionId`，但页面实际把它当作 script id，并在选角后创建本地 `session-{Date.now()}` 路由。
-- `/play/[sessionId]`：`apps/web/app/play/[sessionId]/page.tsx`。主玩法屏幕。live 模式从后端读取 session 并连接真实 WebSocket 心跳；Mock 模式仍使用 `getMockEngine`、`mockScenes` 和 `MockWsClient`。
-- `/play/[sessionId]/review`：`apps/web/app/play/[sessionId]/review/page.tsx`。调用 `api.getReview(sessionId)`，渲染分数、正确性、遗漏线索、线索覆盖率、玩家路径和动作。
-
-设计文档中的预期产品流程是：
-
 ```text
-/library -> /library/{script_id} -> /play/{script_id}/select -> /play/{session_id} -> /play/{session_id}/review
+┌─ OPENWIKI PAGE ──────────────────────────────────────────────────────────────┐
+│ KIND      reference                                                          │
+│ SCOPE     Next.js routes, clients, stores, Mock and multiplayer lobby        │
+│ VERIFIED  2026-07-23 @ WORKTREE                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 状态管理
+[Home](../quickstart.md) / [Architecture](system.md) / **Frontend**
 
-`apps/web/stores/gameStore.ts` 是玩法 UI 状态的共享 Zustand store。它跟踪：
+前端位于 `apps/web`，使用 Next.js 15、React 19、TypeScript、TanStack Query
+和 Zustand。
 
-- 会话身份：`sessionId`、`scriptId`、`playerCharacterId`。
-- 进度：`currentStage`、`currentScene`、可用动作、角色、场景。
-- 玩家发现：已解锁线索、已发现证据、卡牌。
-- 聊天状态：消息和输入指示器。
-- 媒体状态：当前 BGM 和播放标志。
-- UI 状态：活跃面板、选中的热点、转场。
+## 一览
 
-该 store 只在内存中。刷新页面会丢失状态，除非 Mock 引擎或后端重新加载路径能重建它。
+- [LIVE] **选角流程** — 动态加载角色并调用 `api.createSession()`。
+- [LIVE] **单人 Live shell** — 读取真实 Session API 和 presentation。
+- [MOCK] **单人 Mock shell** — 使用同一游戏外壳和浏览器内 client。
+- [LIVE] **多人大厅** — 匿名身份、邀请、选角、准备和启动。
+- [LIVE] **多人 gameplay** — active/completed 房间使用 HTTP polling 可完整通关。
+- [LEGACY] **demo routes** — `/demo/*` 只重定向到当前 `/play/*` 路由。
 
-## API 和 WebSocket 边界
+## 路由
 
-`apps/web/lib/api.ts` 是真实/Mock REST 客户端。它的方法覆盖会话创建/获取/更新、动作、最终提交、线索、证据、角色、聊天历史、卡牌、复盘、剧本包列表和剧本包详情。在浏览器中，除非 `NEXT_PUBLIC_USE_MOCK === "false"`，否则默认启用 Mock 模式。
+```text
+/
+  -> /library
 
-`apps/web/lib/ws.ts` 是真实 WebSocket 客户端。它优先使用 `NEXT_PUBLIC_WS_URL`，否则连接同一浏览器 host 下的 `/api/v1/ws/{sessionId}`，按 `message.type` 分发事件，自动重连，并每 30 秒发送一次 `session.ping`。
+/library
+  -> /library/{scriptId}
+  -> /play/{scriptId}/select
+  -> /play/{scriptId}/{gameSessionId}
+  -> /play/{scriptId}/review
 
-`apps/web/lib/mock-ws.ts` 为 Mock 模式模拟更丰富的玩法事件。后端 WebSocket 目前只接受 `session.ping` 并发出 `session.pong`，所以不要期待真实服务端事件已经与 Mock 对齐。
+/multiplayer
+  -> /invite/{token}
+  -> /play/{roomSessionId}/lobby
+```
 
-### MP-2 lobby client boundary
+选角页的目录名仍是 `[sessionId]`，但该段在创建会话前表示 `scriptId`。页面会：
 
-`apps/web/lib/auth/anonymous-session.ts` 复用有效 Supabase session、按需 refresh，只在没有 session 时
-`signInAnonymously()`，并去重并发 bootstrap。`apps/web/lib/multiplayer/room-client.ts` 为 MP-2 请求附加
-bearer token；legacy API client 不变。
+1. 调用 `api.getPlayableCharacters(scriptId)`；
+2. 调用 `api.createSession(scriptId, characterId, characterName)`；
+3. 跳转到 `/play/{scriptId}/{gameSessionId}`。
 
-大厅只允许本人 assign/unassign 与 ready/unready。host 可创建、复制和撤销 15 分钟邀请并 start；本地
-start 按钮要求房间满员、角色完整且互异、全员 ready 且服务端 `can_start=true`。revision mismatch
-只 invalidates snapshot，不自动重放 mutation。大厅不挂载 legacy gameplay store，也不建立 application
-WebSocket。
+[CAUTION] 不要再使用已删除的 `apps/web/app/play/[sessionId]/page.tsx` 作为
+当前 gameplay 入口。
 
-`apps/web/e2e/multiplayer-lobby.spec.ts` 使用三个独立 browser contexts，但 Supabase Auth 和全部 room HTTP
-均由测试内存 mock。它的 1 passed 是 mocked-contract browser evidence，不是 real Supabase/FastAPI/
-PostgreSQL E2E。后端 room repository/service/routes 已接线并通过应用层验证，但真实 live-stack gate 尚未运行。
+## Client 与状态
 
-## 玩法 UI 组成
+### 单人
 
-主玩法页大致按这些层组织体验：
+`apps/web/lib/api.ts` 仍提供全局 Mock/Live API wrapper：
 
-- 通过 `SceneBackground` 实现全屏背景。
-- 通过 `SceneHotspots` 实现场景热点交互。
-- 顶部动作/导航栏。
-- 通过 `ChatPanel` 实现底部聊天/视觉小说面板。
-- `ClueBoard`、`EvidenceBackpack`、`FinalSubmission` 和 `TruthReveal` 的 modal 或 sheet 式覆盖层。
-- `StageTransition`、闪光/紧张感视觉效果和 toast 反馈。
+```text
+NEXT_PUBLIC_USE_MOCK != "false"  -> Mock
+NEXT_PUBLIC_USE_MOCK == "false"  -> Live
+```
 
-多个组件会直接调用 Mock 引擎，包括 `ChatPanel`、`SceneHotspots`、`EvidenceBackpack` 和 `FinalSubmission`。因此当前玩法界面对 UX 迭代有用，但还不能代表完整真实后端玩法事件集成。
+`GameSessionBoundary` 根据 `source + sessionId` 创建 client/runtime，并把服务端资源
+装载到会话级 Zustand store。`DemoGameShell` 负责场景、面板和互动展示。
 
-## Mock 数据领域
+`make dev` 与 `make dev-web` 默认显式使用 Mock；Live 联调需执行：
 
-`apps/web/lib/mock-data.ts` 包含一套较完整的雪村场景：剧本包元数据、角色、阶段、场景、热点、线索、证据、对话反应、阶段推进、最终评分和复盘生成。它目前是仓库中最完整的可执行游戏内容。
+```bash
+NEXT_PUBLIC_USE_MOCK=false make dev
+```
 
-有一个已知内容不一致：Mock 最终评分把 `chengjun` 视为正确，而游戏页的真相揭示文案称 `wangdada` 是真正凶手。把 Mock 内容当作规范剧本包数据之前，需要先解决这个问题。
+### 多人房间与 gameplay
 
-## 变更指引
+`apps/web/lib/auth/anonymous-session.ts` 建立或刷新 Supabase anonymous session。
+`apps/web/lib/multiplayer/room-client.ts` 为请求附加 bearer token，并提供 current、
+create、invite、联合 snapshot、完整 room command 和 completed review 方法。
 
-修改剧本库、详情或复盘页面时，明确页面应该继续保持 Mock 友好，还是通过 `apps/web/lib/api.ts` 转为真实优先。
+`LobbyBoundary` 在 `lobby`、`active` 与 `completed` 状态每 2 秒 polling；completed 仍需刷新同伴的展示位置，只有 presence 写入会在 completed 停止。
+首次读取失败显示阻塞错误；已有缓存时的轮询中断保留当前页面并显示可重试提示。它按
+`status` discriminated union 分派：
 
-修改主玩法时，明确集成目标：
+```text
+lobby                 -> LobbyShell
+active / completed    -> MultiplayerMansionShell
+```
 
-- 仅 Mock UX：更新 `mock-data.ts`、`mock-ws.ts` 和直接组件调用。
-- 真实集成：通过 `api.performAction` 或 `WsClient` 路由动作，用真实响应更新 store，并考虑后端当前有限的动作和 WebSocket 行为。
-- 产品路由正确性：考虑重命名或重构 `/play/[sessionId]/select`，因为它在会话存在前接收的是 script id。
+`MultiplayerMansionShell` 复用 `MansionDemo` 的本地移动、碰撞、镜头与近距离交互，但不把
+多人快照写入单人 Zustand store。角色章、公开档案、讨论室、圆桌判断与 completed-only
+复盘由 participant-safe snapshot 映射成阶段热点和覆盖面板；多人模式不加载 `demoArticles`
+等静态故事 fixture。两个角色分别映射到不同 outfit/accessory/palette；本地 pose 约每 500ms
+合并为一次 authenticated HTTP PUT，服务端只保存该成员的最新展示位置，另一端从 2 秒快照
+polling 中渲染真实同伴。坐标不进入 `GameStateV2`、revision 或 event，不能成为剧情或物理权威。
+失败的讨论发送保留草稿；复盘可重试；网络结果不确定时，client 复用同一 `command_id` 重试一次；
+revision mismatch 只刷新，不自动重放 stale intent。
 
-添加视觉功能时，应对齐 `/docs/FRONTEND_EXPERIENCE_DESIGN.md` 和现有组件风格，而不是创建另一套设计语言。
+旧 `GameplayShell` 仅保留为尚未删除的诊断实现，不再是 active multiplayer 产品入口。
+
+## UI 所有权
+
+| 区域 | 状态所有者 | 数据来源 |
+|---|---|---|
+| 单人 Live | `GameSessionRuntime` | FastAPI Session API |
+| 单人 Mock | `MockSessionClient` | `mock-data.ts` |
+| 多人房间 | TanStack Query | room/gameplay HTTP API |
+| 多人 completed review | TanStack Query | member-only review API |
+
+[CAUTION] `mock-data.ts` 是 UI fixture，不是 authored package。修改 Mock 故事不能
+替代修改 `script-packages/`。
+
+## 浏览器验证
+
+- Route-mocked Playwright 覆盖大厅启动、真实键盘移动、不同角色外观，以及双 browser context 中双向位置可见。
+- `multiplayer-gameplay.spec.ts` 的 mock 会把每个 JWT identity 的 PUT pose 写入 latest-value store，
+  再通过另一端的 snapshot polling 验证 host→guest 与 guest→host 坐标变化；同时验证 presence body
+  不含 `member_id` 或 `character_id`，且两位玩家仍只收到自己的 participant-safe 章节。
+- `multiplayer-lobby.spec.ts` 验证房间启动后进入 `MansionDemo`、键盘移动有效且没有 gameplay WebSocket。
+- `multiplayer-lobby.live.spec.ts` 是无 Mock 的真实 anonymous identity 技术闭环；真实 PostgreSQL/API
+  环境应用最新迁移后，应再次执行场景定位器与双向移动回归。
+- Slim M2/M3 浏览器闭环刻意不使用 gameplay WebSocket。
+
+## 边界
+
+- **包含：** 页面路由、client、store、polling 和 UI 数据所有权。
+- **不包含：** 后端 reducer、数据库迁移和完整视觉设计规格。
+- [SECURITY] **身份** — 邀请 token 不应保留在成功后的 active URL/history。
+- [CAUTION] **WebSocket** — 单人 client 的心跳不提供多人 gameplay events。
+
+## 变更导航
+
+| 修改目标 | 首先查看 | 验证入口 |
+|---|---|---|
+| 路由流程 | `apps/web/app/` | `npm --prefix apps/web run build` |
+| 单人 client | `lib/game/session-client.ts` | legacy recovery spec |
+| 多人房间/gameplay | `components/multiplayer/` | lobby + gameplay specs |
+| 真实双人通关 | `multiplayer-lobby.live.spec.ts` | `make test-mp2-live` |
+| Mock 内容 | `lib/mock-data.ts` | Mock 页面手工/浏览器测试 |
+| 启动模式 | `Makefile`, `lib/api.ts` | `make -n dev-web` |
+
+## 权威来源
+
+- **路由：** `apps/web/app/`。
+- **单人运行时：** `apps/web/lib/game/`, `apps/web/components/demo/`。
+- **多人大厅：** `apps/web/lib/multiplayer/`, `components/multiplayer/`。
+- **设计：** `docs/FRONTEND_EXPERIENCE_DESIGN.md` 只描述总体体验意图。
+
+---
+
+[Previous: Backend](backend.md) · [Home](../quickstart.md) ·
+[Next: Gameplay](../domain/script-gameplay.md)

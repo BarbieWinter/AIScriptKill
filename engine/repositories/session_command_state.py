@@ -41,8 +41,7 @@ def game_state_from_payload(value: object, expected_sha256: str) -> GameState:
         raise ValueError("stored command base state is not an object")
     raw = cast(Mapping[object, object], value)
     payload: dict[str, JsonValue] = {
-        str(key): json_value(item, f"command_base_state.{key}")
-        for key, item in raw.items()
+        str(key): json_value(item, f"command_base_state.{key}") for key, item in raw.items()
     }
     encoded = json.dumps(
         payload,

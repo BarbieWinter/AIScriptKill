@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         description="Comma-separated frontend origins allowed by CORS.",
     )
     rate_limit_per_minute: int = Field(
-        default=120,
+        default=360,
         alias="RATE_LIMIT_PER_MINUTE",
         ge=1,
         description="Per-client request limit for the API gateway skeleton.",

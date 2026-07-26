@@ -61,8 +61,8 @@ def _settlements() -> list[dict[str, object]]:
             "question": "最终判断是什么？",
             "answer_mode": "shared_choice",
             "options": [{"id": "suspect-a", "text": "指认甲", "outcome_id": "accuse-a"}],
-            "reveal": "named_ballots",
-            "submission_change": "forbidden",
+            "reveal": "outcome_only",
+            "submission_change": "allowed_before_complete",
             "default_effect": "branch",
         },
     ]
@@ -161,6 +161,9 @@ def test_settlement_definitions_reject_invalid_local_shapes() -> None:
     shared_final_with_tie["tie_outcome_id"] = "tie"
     individual_final_without_tie = _settlements()[3]
     individual_final_without_tie["answer_mode"] = "individual_secret"
+    individual_final_without_tie["submission_change"] = "forbidden"
+    shared_final_locked = _settlements()[3]
+    shared_final_locked["submission_change"] = "forbidden"
 
     invalid_definitions: list[dict[str, object]] = [
         duplicate_options,
@@ -173,6 +176,7 @@ def test_settlement_definitions_reject_invalid_local_shapes() -> None:
         final_without_answer_mode,
         shared_final_with_tie,
         individual_final_without_tie,
+        shared_final_locked,
         {"mode": "future_mode"},
         {"mode": "none", "options": []},
     ]
@@ -185,6 +189,7 @@ def test_individual_secret_final_judgment_requires_distinct_tie_outcome() -> Non
     definition = _settlements()[3]
     definition["answer_mode"] = "individual_secret"
     definition["tie_outcome_id"] = "judgment-tie"
+    definition["submission_change"] = "forbidden"
 
     settlement = STAGE_SETTLEMENT_ADAPTER.validate_json(json.dumps(definition))
 

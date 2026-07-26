@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.engine import RowMapping
+from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from engine.db.tables import (
@@ -21,6 +21,7 @@ from engine.db.tables import (
     room_required_members,
 )
 from engine.repositories.multiplayer_room_models import (
+    RoomStatus,
     StoredMultiplayerRoom,
     StoredRoomAssignment,
     StoredRoomInvite,
@@ -32,12 +33,15 @@ _ROOM_COLUMNS = (
     game_sessions.c.script_id,
     game_sessions.c.status,
     game_sessions.c.revision,
+    game_sessions.c.event_head_sequence,
     game_sessions.c.state_schema_version,
+    game_sessions.c.state,
     game_sessions.c.runtime_package_version,
     game_sessions.c.runtime_package_snapshot,
     game_sessions.c.runtime_package_sha256,
     game_sessions.c.created_at,
     game_sessions.c.started_at,
+    game_sessions.c.closed_at,
 )
 _MEMBER_COLUMNS = (
     room_members.c.id,
@@ -46,6 +50,11 @@ _MEMBER_COLUMNS = (
     room_members.c.room_role,
     room_members.c.ready_at,
     room_members.c.joined_at,
+    room_members.c.scene_x,
+    room_members.c.scene_y,
+    room_members.c.scene_facing,
+    room_members.c.scene_moving,
+    room_members.c.scene_updated_at,
 )
 _ASSIGNMENT_COLUMNS = (
     room_character_assignments.c.session_id,
@@ -131,6 +140,23 @@ class MultiplayerRoomRepository:
         )
         statement = statement.with_for_update(read=read)
         row = (await self.db.execute(statement)).mappings().one_or_none()
+        return _room_from_row(row) if row is not None else None
+
+    async def get_room(self, session_id: UUID) -> StoredMultiplayerRoom | None:
+        """Load a multiplayer room without serializing presentation-only reads or writes."""
+
+        row = (
+            (
+                await self.db.execute(
+                    select(*_ROOM_COLUMNS).where(
+                        game_sessions.c.id == session_id,
+                        game_sessions.c.mode == "multiplayer_v1",
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
         return _room_from_row(row) if row is not None else None
 
     async def current_room(self, principal_id: UUID) -> StoredMultiplayerRoom | None:
@@ -232,6 +258,42 @@ class MultiplayerRoomRepository:
             .all()
         )
         return tuple(_member_from_row(row) for row in rows)
+
+    async def update_scene_presence(
+        self,
+        *,
+        session_id: UUID,
+        principal_id: UUID,
+        x: float,
+        y: float,
+        facing: str,
+        moving: bool,
+    ) -> StoredRoomMember | None:
+        """Replace only the authenticated joined member's latest non-authoritative pose."""
+
+        row = (
+            (
+                await self.db.execute(
+                    update(room_members)
+                    .where(
+                        room_members.c.session_id == session_id,
+                        room_members.c.principal_id == principal_id,
+                        room_members.c.membership_status == "joined",
+                    )
+                    .values(
+                        scene_x=x,
+                        scene_y=y,
+                        scene_facing=facing,
+                        scene_moving=moving,
+                        scene_updated_at=func.now(),
+                    )
+                    .returning(*_MEMBER_COLUMNS)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _member_from_row(row) if row is not None else None
 
     async def assignments(self, session_id: UUID) -> tuple[StoredRoomAssignment, ...]:
         rows = (
@@ -463,6 +525,20 @@ class MultiplayerRoomRepository:
             .values(revoked_at=func.now())
         )
 
+    async def increment_event_head(self, session_id: UUID) -> int:
+        value = (
+            await self.db.execute(
+                update(game_sessions)
+                .where(game_sessions.c.id == session_id)
+                .values(
+                    event_head_sequence=game_sessions.c.event_head_sequence + 1,
+                    updated_at=func.now(),
+                )
+                .returning(game_sessions.c.event_head_sequence)
+            )
+        ).scalar_one()
+        return int(value)
+
     async def increment_revision(self, session_id: UUID) -> int:
         value = (
             await self.db.execute(
@@ -497,6 +573,46 @@ class MultiplayerRoomRepository:
             ],
         )
 
+    async def replace_game_state(
+        self,
+        *,
+        session_id: UUID,
+        state: Mapping[str, object],
+        revision: int,
+        event_head_sequence: int,
+        status: RoomStatus,
+    ) -> None:
+        result = cast(
+            CursorResult[object],
+            await self.db.execute(
+                update(game_sessions)
+                .where(
+                    game_sessions.c.id == session_id,
+                    game_sessions.c.mode == "multiplayer_v1",
+                )
+                .values(
+                    state=dict(state),
+                    status=status,
+                    revision=revision,
+                    event_head_sequence=event_head_sequence,
+                    state_schema_version=2,
+                    closed_at=func.now() if status in ("completed", "closed") else None,
+                    updated_at=func.now(),
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            raise MultiplayerRoomStorageError("room.state_update")
+        if status in ("completed", "closed"):
+            await self.release_reservations(session_id)
+
+    async def release_reservations(self, session_id: UUID) -> None:
+        await self.db.execute(
+            delete(room_principal_reservations).where(
+                room_principal_reservations.c.session_id == session_id
+            )
+        )
+
     async def activate_room(
         self,
         *,
@@ -520,9 +636,10 @@ class MultiplayerRoomRepository:
 
 def _room_from_row(row: RowMapping) -> StoredMultiplayerRoom:
     status = str(row["status"])
-    if status not in ("lobby", "active"):
+    if status not in ("lobby", "active", "completed", "closed"):
         raise MultiplayerRoomStorageError("room.status")
     snapshot = _mapping(row["runtime_package_snapshot"])
+    state = _mapping(row["state"])
     schema_version = row["state_schema_version"]
     package_version = row["runtime_package_version"]
     package_sha256 = row["runtime_package_sha256"]
@@ -537,12 +654,15 @@ def _room_from_row(row: RowMapping) -> StoredMultiplayerRoom:
         script_id=str(row["script_id"]),
         status=status,
         revision=int(row["revision"]),
+        event_head_sequence=int(row["event_head_sequence"]),
         state_schema_version=schema_version,
+        state=state,
         runtime_package_version=package_version,
         runtime_package_snapshot=snapshot,
         runtime_package_sha256=package_sha256,
         created_at=cast(datetime, row["created_at"]),
         started_at=cast(datetime | None, row["started_at"]),
+        closed_at=cast(datetime | None, row["closed_at"]),
     )
 
 
@@ -550,6 +670,9 @@ def _member_from_row(row: RowMapping) -> StoredRoomMember:
     role = str(row["room_role"])
     if role not in ("host", "player"):
         raise MultiplayerRoomStorageError("member.room_role")
+    facing = row["scene_facing"]
+    if facing not in (None, "left", "right"):
+        raise MultiplayerRoomStorageError("member.scene_facing")
     return StoredRoomMember(
         id=cast(UUID, row["id"]),
         session_id=cast(UUID, row["session_id"]),
@@ -557,6 +680,11 @@ def _member_from_row(row: RowMapping) -> StoredRoomMember:
         room_role=role,
         ready_at=cast(datetime | None, row["ready_at"]),
         joined_at=cast(datetime, row["joined_at"]),
+        scene_x=float(row["scene_x"]) if row["scene_x"] is not None else None,
+        scene_y=float(row["scene_y"]) if row["scene_y"] is not None else None,
+        scene_facing=facing,
+        scene_moving=cast(bool | None, row["scene_moving"]),
+        scene_updated_at=cast(datetime | None, row["scene_updated_at"]),
     )
 
 

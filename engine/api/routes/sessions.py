@@ -36,18 +36,22 @@ from engine.api.schemas.multiplayer_rooms import (
     CreateRoomInviteRequest,
     CreateRoomInviteResponse,
     CurrentMultiplayerSession,
-    LobbySnapshotV1,
+    RoomSnapshotV1,
+    UpdateScenePresenceRequest,
 )
 from engine.contracts.multiplayer_v1.commands import CommandResultV1, MultiplayerCommand
+from engine.contracts.multiplayer_v1.reviews import CompletedReviewV1
 from engine.db.session import SessionDep
 from engine.services.multiplayer_room_service import (
     accept_room_invite,
     create_multiplayer_session,
     create_room_invite,
-    execute_lobby_command,
+    execute_room_command,
     get_current_multiplayer_session,
-    get_lobby_snapshot,
+    get_multiplayer_review_if_present,
+    get_room_snapshot,
     revoke_room_invite,
+    update_scene_presence,
 )
 from engine.services.session_commands import (
     get_command_receipt,
@@ -209,12 +213,12 @@ async def revoke_invite(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{session_id}/snapshot", response_model=LobbySnapshotV1)
-async def get_room_snapshot(
+@router.get("/{session_id}/snapshot", response_model=RoomSnapshotV1)
+async def get_room_snapshot_route(
     session_id: str,
     principal: VerifiedAnonymousPrincipalDep,
     db: SessionDep,
-) -> LobbySnapshotV1:
+) -> RoomSnapshotV1:
     """返回不含 principal、token、package 定义或私有章节的安全房间投影。
 
     Args:
@@ -229,7 +233,36 @@ async def get_room_snapshot(
         ApiError: 房间、成员、固定 package 或 feature gate 校验失败。
     """
 
-    return await get_lobby_snapshot(session_id, principal, db)
+    return await get_room_snapshot(session_id, principal, db)
+
+
+@router.put(
+    "/{session_id}/scene-presence",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def put_scene_presence(
+    session_id: str,
+    payload: UpdateScenePresenceRequest,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> Response:
+    """保存经过认证参与者最新的非权威场景位置。
+
+    Args:
+        session_id: 已开始多人房间的 UUID。
+        payload: 仅含世界坐标、朝向和移动标志的严格展示状态。
+        principal: 经过验证的 anonymous principal；成员与角色由服务端推导。
+        db: 请求作用域数据库会话。
+
+    Returns:
+        无响应体的 204 响应。
+
+    Raises:
+        ApiError: 房间未开始、身份非参与者、状态损坏或 feature gate 校验失败。
+    """
+
+    await update_scene_presence(session_id, payload, principal, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{session_id}/commands", response_model=CommandResultV1)
@@ -239,7 +272,7 @@ async def post_room_command(
     principal: VerifiedAnonymousPrincipalDep,
     db: SessionDep,
 ) -> CommandResultV1:
-    """解析完整多人命令 union，并仅执行 MP-2 lobby 命令。
+    """解析完整多人命令 union，并执行持久化的大厅命令。
 
     Args:
         session_id: 多人房间 UUID。
@@ -248,13 +281,13 @@ async def post_room_command(
         db: 请求作用域数据库会话。
 
     Returns:
-        MP-2 非持久幂等的 accepted command result。
+        可持久重放的 accepted 或 rejected command result。
 
     Raises:
         ApiError: 非大厅命令、revision、权限、状态或 feature gate 校验失败。
     """
 
-    return await execute_lobby_command(session_id, command, principal, db)
+    return await execute_room_command(session_id, command, principal, db)
 
 
 @router.get(
@@ -596,12 +629,15 @@ async def list_cards(
     return await get_cards(session_id, current_user, db)
 
 
-@router.get("/{session_id}/review", response_model=ReviewResponse)
+@router.get(
+    "/{session_id}/review",
+    response_model=ReviewResponse | CompletedReviewV1,
+)
 async def get_review(
     session_id: str,
     current_user: CurrentUserDep,
     db: SessionDep,
-) -> ReviewResponse:
+) -> ReviewResponse | CompletedReviewV1:
     """返回可访问游戏会话的复盘表示。
 
     Args:
@@ -616,4 +652,11 @@ async def get_review(
         ApiError: 会话缺失或不可访问时抛出 `INVALID_TOKEN`、
             `INVALID_SESSION_ID`、`INVALID_USER_ID` 或 `SESSION_NOT_FOUND`。
     """
+    multiplayer_review = await get_multiplayer_review_if_present(
+        session_id,
+        current_user,
+        db,
+    )
+    if multiplayer_review is not None:
+        return multiplayer_review
     return await get_session_review(session_id, current_user, db)

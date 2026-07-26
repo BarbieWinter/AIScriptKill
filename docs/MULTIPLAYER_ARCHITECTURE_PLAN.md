@@ -739,7 +739,6 @@ Lobby
 
 Stage
   stage.confirm_read
-  stage.revoke_read
   discussion.send_message
   discussion.confirm_close
   discussion.revoke_close

@@ -15,6 +15,11 @@ from engine.api.middleware.auth import (
 from engine.api.schemas.multiplayer_rooms import (
     CreateMultiplayerSessionRequest,
     LobbySnapshotV1,
+    UpdateScenePresenceRequest,
+)
+from engine.contracts.multiplayer_v1.commands import (
+    AssignCharacterCommand,
+    SendDiscussionMessagePayload,
 )
 from engine.services.multiplayer_feature import require_multiplayer_enabled
 
@@ -113,6 +118,35 @@ def test_multiplayer_feature_gate_fails_closed(monkeypatch: pytest.MonkeyPatch) 
     assert exc_info.value.error.code == "MULTIPLAYER_DISABLED"
 
 
+def test_lobby_command_parses_browser_uuid_string() -> None:
+    command_id = uuid4()
+
+    command = AssignCharacterCommand.model_validate(
+        {
+            "command_id": str(command_id),
+            "expected_revision": 0,
+            "type": "room.assign_character",
+            "payload": {"character_id": "investigator"},
+        }
+    )
+
+    assert command.command_id == command_id
+
+
+def test_discussion_payload_parses_browser_uuid_string() -> None:
+    message_id = uuid4()
+
+    payload = SendDiscussionMessagePayload.model_validate(
+        {
+            "stage_id": "investigation",
+            "message_id": str(message_id),
+            "text": "测试消息",
+        }
+    )
+
+    assert payload.message_id == message_id
+
+
 def test_multiplayer_create_schema_rejects_actor_spoofing() -> None:
     with pytest.raises(ValidationError):
         CreateMultiplayerSessionRequest.model_validate(
@@ -153,7 +187,12 @@ def test_lobby_snapshot_schema_has_no_private_authority_fields() -> None:
                 }
             ],
             "characters": [
-                {"id": "investigator", "name": "调查员", "assigned_member_id": None}
+                {
+                    "id": "investigator",
+                    "name": "调查员",
+                    "public_description": "负责核对异常记录",
+                    "assigned_member_id": None,
+                }
             ],
             "capabilities": {
                 "can_invite": True,
@@ -169,3 +208,30 @@ def test_lobby_snapshot_schema_has_no_private_authority_fields() -> None:
     assert "principal_id" not in str(serialized)
     assert "runtime_package_snapshot" not in str(serialized)
     assert "chapters" not in str(serialized)
+
+
+def test_scene_presence_schema_rejects_identity_spoofing_and_invalid_coordinates() -> None:
+    valid = {
+        "x": 1200,
+        "y": 970.5,
+        "facing": "left",
+        "moving": True,
+    }
+    parsed = UpdateScenePresenceRequest.model_validate(valid)
+    assert parsed.x == 1200
+    assert parsed.y == 970.5
+
+    for extra in ("member_id", "principal_id", "character_id", "updated_at", "revision"):
+        with pytest.raises(ValidationError):
+            UpdateScenePresenceRequest.model_validate({**valid, extra: str(uuid4())})
+
+    for invalid in (
+        {**valid, "x": -1},
+        {**valid, "x": 2400},
+        {**valid, "y": float("inf")},
+        {**valid, "x": "1200"},
+        {**valid, "facing": "up"},
+        {**valid, "moving": 1},
+    ):
+        with pytest.raises(ValidationError):
+            UpdateScenePresenceRequest.model_validate(invalid)

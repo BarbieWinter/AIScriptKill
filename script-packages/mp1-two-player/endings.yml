@@ -1,0 +1,13 @@
+endings:
+  - id: "conflicting-accounts"
+    name: "责任止于证据"
+    condition:
+      type: "always"
+    on_trigger: []
+    outcome_text: "你们确认知情人未经登记进入并隐瞒事实，同时拒绝把备用钥匙和金属声夸大成破门或损毁记录的证据。"
+  - id: "insufficient-evidence"
+    name: "越过证据边界"
+    condition:
+      type: "always"
+    on_trigger: []
+    outcome_text: "你们作出了破门并损毁记录的重指控；完整时间线随后表明，门锁始终完好，金属声来自掉落的钥匙。"

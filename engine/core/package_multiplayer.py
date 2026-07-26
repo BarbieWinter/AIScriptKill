@@ -44,9 +44,7 @@ def split_stage_mapping(
     multiplayer_raw: JsonMapping = {"id": raw.get("id")}
     for key in MULTIPLAYER_STAGE_KEYS:
         multiplayer_raw[key] = raw[key]
-    stage = MULTIPLAYER_STAGE_ADAPTER.validate_json(
-        json.dumps(multiplayer_raw, ensure_ascii=False)
-    )
+    stage = MULTIPLAYER_STAGE_ADAPTER.validate_json(json.dumps(multiplayer_raw, ensure_ascii=False))
     normalized = cast(
         JsonMapping,
         MULTIPLAYER_STAGE_ADAPTER.dump_python(stage, mode="json"),
@@ -114,6 +112,7 @@ def validate_multiplayer_package(
                 material_ids,
             )
         _validate_outcome_triggers(stage)
+        _validate_final_judgment_endings(stage, package)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +224,15 @@ def multiplayer_stage_from_package(package: ScriptPackageImport, stage_id: str) 
     raise PackageMultiplayerError(f"stage.{stage_id}")
 
 
+def multiplayer_stage_contract(
+    package: ScriptPackageImport,
+    stage_id: str,
+) -> MultiplayerStageDefinition:
+    """Return one validated stage as the standalone multiplayer contract."""
+
+    return _multiplayer_stage(multiplayer_stage_from_package(package, stage_id).definition)
+
+
 def multiplayer_stage_definition(package: ScriptPackageImport, stage_id: str) -> JsonMapping:
     """Return a defensive copy of one validated stage's runtime definition."""
 
@@ -283,6 +291,28 @@ def _validate_outcome_triggers(stage: MultiplayerStageDefinition) -> None:
             f"stage {stage.id} 的公共材料 outcome trigger",
             outcome_id,
             frozenset(declared_outcomes),
+        )
+
+
+def _validate_final_judgment_endings(
+    stage: MultiplayerStageDefinition,
+    package: ScriptPackageImport,
+) -> None:
+    settlement = stage.settlement
+    if not isinstance(settlement, FinalJudgmentSettlementDefinition):
+        return
+    ending_ids = frozenset(ending.id for ending in package.endings)
+    for option in settlement.options:
+        ensure_reference(
+            f"stage {stage.id} 的 final judgment outcome",
+            option.outcome_id,
+            ending_ids,
+        )
+    if settlement.tie_outcome_id is not None:
+        ensure_reference(
+            f"stage {stage.id} 的 final judgment tie outcome",
+            settlement.tie_outcome_id,
+            ending_ids,
         )
 
 

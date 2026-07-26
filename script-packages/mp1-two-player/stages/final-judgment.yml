@@ -10,23 +10,29 @@ available_characters: ["investigator", "insider"]
 chapters:
   investigator: "investigator-final-judgment"
   insider: "insider-final-judgment"
-public_materials: []
+public_materials:
+  - id: "case-reconstruction"
+    reveal_at: "settlement_done"
+  - id: "limited-finding"
+    reveal_at: "outcome:conflicting-accounts"
+  - id: "unsupported-finding"
+    reveal_at: "outcome:insufficient-evidence"
 discussion:
-  suggested_minutes: 8
+  suggested_minutes: 6
   close_policy: "all_players"
 settlement:
   mode: "final_judgment"
   settlement_id: "final-judgment"
-  question: "两人共同认可的案件判断是什么？"
+  question: "现有材料与公开口供支持哪一道责任边界？"
   answer_mode: "shared_choice"
   options:
-    - id: "records-insufficient"
-      text: "公开记录不足以确定责任人"
-      outcome_id: "insufficient-evidence"
     - id: "timeline-conflict"
-      text: "时间线冲突证明至少一份解释不完整"
+      text: "认定知情人违规进入并隐瞒，但没有证据证明其破门或损毁记录"
       outcome_id: "conflicting-accounts"
-  reveal: "named_ballots"
-  submission_change: "forbidden"
+    - id: "records-insufficient"
+      text: "认定知情人在二十点二十分强行进入，并故意损毁值班记录"
+      outcome_id: "insufficient-evidence"
+  reveal: "outcome_only"
+  submission_change: "allowed_before_complete"
   default_effect: "branch"
 hints: []

@@ -1,3 +1,4 @@
+import { createUuid } from "@/lib/uuid";
 import type {
   ActionResponse,
   ActionType,
@@ -444,7 +445,7 @@ export class SessionRuntime implements GameSessionRuntime {
     const envelope: DurableActionEnvelope = {
       action,
       ...params,
-      command_id: crypto.randomUUID(),
+      command_id: createUuid(),
       expected_revision: this.store.getState().revision,
     };
     const operation = this.submitEnvelope(envelope)

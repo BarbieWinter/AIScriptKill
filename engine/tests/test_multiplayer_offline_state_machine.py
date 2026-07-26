@@ -26,7 +26,6 @@ from engine.contracts.multiplayer_v1.commands import (
     HintRequestCommand,
     HintRequestPayload,
     RevokeDiscussionCloseCommand,
-    RevokeReadCommand,
     StageCommandPayload,
     SubmitSettlementCommand,
     SubmitSettlementPayload,
@@ -50,9 +49,11 @@ from engine.contracts.multiplayer_v1.vocabulary import (
     SettlementMode,
     SettlementReveal,
     StagePhase,
+    SubmissionChangePolicy,
 )
 from engine.core.multiplayer_state_machine import (
     InvalidStageTransitionError,
+    complete_final_judgment,
     enter_next_stage,
     initialize_stage_runtime,
     reduce_stage_command,
@@ -147,6 +148,11 @@ def _final_stage(answer_mode: FinalAnswerMode) -> MultiplayerStageDefinition:
             answer_mode=answer_mode,
             options=_options(),
             tie_outcome_id="tie" if answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET else None,
+            submission_change=(
+                SubmissionChangePolicy.FORBIDDEN
+                if answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET
+                else SubmissionChangePolicy.ALLOWED_BEFORE_COMPLETE
+            ),
         ),
         hints=(),
     )
@@ -346,7 +352,7 @@ def test_state_contract_validates_hint_and_revealed_ballot_shapes() -> None:
         )
 
 
-def test_read_barrier_is_revocable_pure_and_order_independent() -> None:
+def test_read_barrier_is_locked_pure_and_order_independent() -> None:
     definition = _secret_stage()
     initial = _state(definition)
     initial_json = initial.model_dump_json()
@@ -358,18 +364,8 @@ def test_read_barrier_is_revocable_pure_and_order_independent() -> None:
     assert after_a.room_revision == initial.room_revision
     assert initial.model_dump_json() == initial_json
 
-    revoked = reduce_stage_command(
-        after_a,
-        RevokeReadCommand(
-            command_id=COMMAND_ID,
-            expected_revision=7,
-            type="stage.revoke_read",
-            payload=StageCommandPayload(stage_id=definition.id),
-        ),
-        actor_member_id="member-a",
-        definition=definition,
-    )
-    assert revoked.stage.read_member_ids == ()
+    repeated = _confirm_read(after_a, definition, "member-a")
+    assert repeated == after_a
 
     a_then_b = _confirm_read(after_a, definition, "member-b")
     after_b = _confirm_read(initial, definition, "member-b")
@@ -380,17 +376,7 @@ def test_read_barrier_is_revocable_pure_and_order_independent() -> None:
     assert a_then_b.stage.revealed_material_ids == ("read-clue", "opening")
 
     with pytest.raises(InvalidStageTransitionError, match="read phase"):
-        reduce_stage_command(
-            a_then_b,
-            RevokeReadCommand(
-                command_id=COMMAND_ID,
-                expected_revision=7,
-                type="stage.revoke_read",
-                payload=StageCommandPayload(stage_id=definition.id),
-            ),
-            actor_member_id="member-a",
-            definition=definition,
-        )
+        _confirm_read(a_then_b, definition, "member-a")
 
 
 def test_reducer_rejects_untrusted_actor_and_mismatched_ids() -> None:
@@ -652,7 +638,7 @@ def test_shared_choice_exposes_candidate_and_switching_resets_confirmations() ->
     assert completed.revealed_ballots == ()
 
 
-def test_final_judgment_dispatches_by_answer_mode_and_branch_cannot_auto_advance() -> None:
+def test_final_judgment_dispatches_and_completes_with_matching_ending() -> None:
     individual = _final_stage(FinalAnswerMode.INDIVIDUAL_SECRET)
     individual_settling = _to_settle(individual)
     with pytest.raises(InvalidStageTransitionError, match="shared choice"):
@@ -675,6 +661,27 @@ def test_final_judgment_dispatches_by_answer_mode_and_branch_cannot_auto_advance
         "member-b",
         "option-a",
     )
+
+    completed = complete_final_judgment(
+        shared_revealed,
+        definition=shared,
+        ending_ids=("alpha", "beta"),
+    )
+
+    assert completed.room.status is RoomStatus.COMPLETED
+    assert completed.ending_id == "alpha"
+    assert completed.stage.phase is StagePhase.REVEAL
+    assert completed.stage.settlement is not None
+    assert completed.stage.settlement.outcome_id == completed.ending_id
+    assert shared_revealed.room.status is RoomStatus.ACTIVE
+    assert shared_revealed.ending_id is None
+
+    with pytest.raises(InvalidStageTransitionError, match="authored ending"):
+        complete_final_judgment(
+            shared_revealed,
+            definition=shared,
+            ending_ids=("other-ending",),
+        )
     with pytest.raises(InvalidStageTransitionError, match="branch"):
         enter_next_stage(
             shared_revealed,

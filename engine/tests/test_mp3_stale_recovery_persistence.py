@@ -41,8 +41,7 @@ REQUEST_SHA256 = "b" * 64
 
 def test_stale_recovery_schema_pairs_private_base_state_and_processing_lease() -> None:
     sql = " ".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted(MIGRATION_ROOT.glob("*.sql"))
+        path.read_text(encoding="utf-8") for path in sorted(MIGRATION_ROOT.glob("*.sql"))
     ).lower()
     normalized = " ".join(sql.split())
 
@@ -79,9 +78,7 @@ def test_stale_recovery_schema_pairs_private_base_state_and_processing_lease() -
     assert "lease_expires_at IS NOT NULL" in lease_check
 
     processing_indexes = [
-        index
-        for index in session_command_receipts.indexes
-        if _processing_index(index)
+        index for index in session_command_receipts.indexes if _processing_index(index)
     ]
     assert any(index.unique for index in processing_indexes)
     assert any(

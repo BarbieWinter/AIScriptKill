@@ -1,12 +1,12 @@
 metadata:
   id: "mp1-two-player"
   title: "两份口供"
-  version: "1.0.0"
+  version: "1.1.0"
 info:
   description: "两名真人玩家分别掌握不对称信息，在两阶段内完成讨论、秘密投票与共同终判。"
   genre: ["悬疑", "双人推理"]
   difficulty: 2
-  duration_minutes: 45
+  duration_minutes: 20
   min_players: 2
   max_players: 2
 multiplayer:

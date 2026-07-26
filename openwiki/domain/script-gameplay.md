@@ -1,232 +1,246 @@
 # 剧本与玩法领域
 
-## 产品边界
+```text
+┌─ OPENWIKI PAGE ──────────────────────────────────────────────────────────────┐
+│ KIND      reference                                                          │
+│ SCOPE     Domain rules, package lifecycle, single and multiplayer gameplay   │
+│ VERIFIED  2026-07-22 @ WORKTREE                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-核心领域是固定剧本的 AI 互动悬疑。`/doc/剧本系统设计.md` 描述的原则仍有效：高质量谜题和事实边界是确定性的，AI 负责受控表达和沉浸感。
+[Home](../quickstart.md) / **Domain** / **Gameplay and Packages**
+
+本页维护当前领域规则和剧本包工作流；AI 负责受控表达，不拥有事实写权限。
+
+## 产品边界
 
 AI 可以：
 
-- 扮演当前阶段允许的 NPC。
-- 在角色知识和会话已授权材料范围内自然回答。
-- 使用经过阶段/角色/线索权限过滤的 RAG 片段。
+- 扮演当前阶段允许的 NPC 或公共 DM 表达层。
+- 使用经过阶段、角色和 discovery 权限过滤的知识。
+- 在固定事实边界内调整措辞、节奏和提示表达。
 
-AI 不应：
+AI 不可以：
 
-- 改变正确判断、动机或关键证据。
-- 发明主线事实。
-- 泄露未来阶段、其他角色私有材料、DM 指引或未发现内容。
-- 决定解锁、阶段切换、评分或状态 patch；这些由 YAML/StateGraph 确定。
+- 改变凶手、动机、关键证据、正确结局或 authored outcome。
+- 泄露其他角色章节、未来阶段、DM truth 或未揭晓 submission。
+- 直接决定解锁、阶段推进、结算或 canonical state patch。
 
-这一边界由剧本包 schema、条件/事件运行时、API 投影、RAG permissions 和 NPC 本地输出过滤共同实现。
+[SECURITY] 规则由 package、条件、事件、reducer 和服务端投影执行，不能依赖
+prompt 自律替代授权。
 
-## 主要领域概念
-
-### 剧本包
-
-剧本包是内容单元。后端支持 zip 导入，也支持 `load_package_directory()` 复用同一加载流程。归档必须恰好有一个 `package.yml`，并通过 strict Pydantic 模型、引用校验和资产校验。
-
-必需内容：
-
-- `package.yml`：`metadata.id/title/version` 和 `engine.entry_stage`。
-- `stages/`：至少一个阶段 YAML。
-- `characters/`：至少一个角色 YAML。
-
-可选且 loader 已支持：
-
-- `stages/_index.yml`：阶段/幕顺序。
-- `characters/_index.yml`：可玩性和排序。
-- `character_scripts/<character-id>/<chapter-id>.md`：严格 frontmatter 的角色私有 Markdown 章节。
-- `clues/rounds/*.yml`、`evidences/*.yml`、`scenes/*.yml`。
-- `media/*.yml`。
-- `endings.yml`。
-- `dm_guide/*.yml`，只写入服务端私有表，不进入公开 package config。
-- `assets/`，可上传私有 Storage，并把 YAML 本地路径重写为 `storage://` 定位符。
-
-`engine/core/package_records.py` 将内容转换为 package/stage/character/chapter/clue/evidence/scene/media/ending 记录。`runtime_package_repository.py` 可从已发布规范化数据库行重建同一 `ScriptPackageImport` 给生产 StateGraph 使用。
-
-### 阶段和动作
-
-阶段是受控推进单元，定义：
-
-- entry/exit conditions。
-- available actions/characters/scenes。
-- stage-entry、clue-discovered 等事件。
-- 可选 judgment 等 special rules。
-
-生产 REST action 已连接 `LangGraphRuntimeActionExecutor`，不再使用旧固定 action mapper。`runtime_action_mappers.py` 把 REST 载荷编码为 core action target：
-
-- `talk_to_npc` -> character id + player text。
-- `examine_scene` -> scene/hotspot target。
-- `show_evidence` -> `evidence_id:character_id`。
-- `use_card`、`open_clue_board`、`request_advance` -> 各自窄 target。
-
-`ScriptEngine` 校验当前阶段是否允许 action/target，执行 YAML 事件和条件，写入 checkpoint，再投影 session/chat/discoveries。非法动作返回稳定错误码，不会静默 no-op。
-
-### 角色和 NPC
-
-角色可为玩家、NPC 或 DM alter ego。导入记录包含可玩性、DM 标记、排序、identity、personality、分阶段 knowledge、evidence reactions 和 dialogue strategy。
-
-生产 NPC 路径位于 `engine/agents/npc_agent.py`：
-
-- 配置完整时调用 OpenAI-compatible Chat Completions。
-- 只把当前角色、阶段、包内已授权 knowledge、有限历史和 `RagRetriever` 返回的授权片段放入 prompt。
-- 证物 reaction 只有在证物已查看、已向该 NPC 出示、阶段和条件均满足时才进入允许事实。
-- provider/RAG 失败、配置不完整、输出为空/过长、出现 forbidden term 或未授权时间值时，返回确定性 fallback：`我只能说自己亲眼见过、亲耳听到的，没把握的事不能乱讲。`
-
-这已不是固定“王大达风格”占位回复，但本地过滤只覆盖明确约束，不应被描述为通用语义证明或已实现 AI-DM/多人裁判。
-
-### 线索和证据
-
-- 线索存储于 `script_clues`，通过 `session_discoveries(entity_type='clue')` 解锁。
-- 证据存储于 `script_evidences`，发现状态也在 discoveries；`POST .../evidences/{id}/viewed` 将其从 `unlocked` 单调升级为 `viewed`。
-- 向 NPC 出示证据记录于 GameState/session 投影；NPC evidence reaction 还要求证据已查看。
-
-浏览器不能直接读表。FastAPI 结合 session discovery、阶段和角色做授权和字段投影。
-
-### 场景、热点和媒体
-
-场景 YAML 包含背景、公开描述、视觉元数据和热点。当前真实后端已实现 `GET .../presentation`：从当前已发布场景白名单返回 id/name/description/ambient color、浏览器安全背景 URL及有序 public hotspots。
-
-热点只公开 id、label、x/y、width/height；private/DM-only 项和 `on_click` 规则不会返回。前端点击后提交 scene/hotspot id，由服务端 StateGraph 执行 `clue_discover`、`evidence_discover`、`dm_narrate` 等 YAML 事件。
-
-媒体 schema 和导入已支持 `bgm`、`story`、`sfx`、`voice`、`image`、`video`。私有 Storage 的 `storage://` 定位符不是浏览器 URL；签名 URL/代理下载和完整 media orchestrator 仍未实现。
-
-### 人物章节
-
-人物章节采用：
+## 剧本包
 
 ```text
-character_scripts/<character-id>/<chapter-id>.md
+package.yml
+stages/
+characters/
+character_scripts/        optional private chapters
+clues/                    optional
+scenes/                   optional
+evidences/                optional
+media/                    optional
+endings.yml               optional
+DM guide files            optional server-only truth
+assets/                   optional
 ```
 
-文件必须是 UTF-8，包含严格 YAML frontmatter 和非空 Markdown 正文；路径中的 character/chapter id 必须与 frontmatter 一致。frontmatter 声明：
+加载流程：
 
-- `character_id`、`chapter_id`、`order`、`title`。
-- 固定 `visibility: character_only`。
-- `release.type: game_start`，或 `release.type: rule` + `rule_id`。
-- 可选 `stage_min`。
+```text
+zip or directory
+  -> strict archive and YAML/Markdown parsing
+  -> stable records
+  -> ID/reference/asset validation
+  -> multiplayer-specific validation when enabled
+  -> optional asset upload
+  -> normalized database import or immutable room snapshot
+```
 
-导入写入 service-role-only 的 `script_character_chapters`。开局事件或 `unlock_character_chapter` 只会为当前玩家角色发放匹配章节，并在 `session_discoveries(entity_type='character_chapter')` 记录 `unlocked`。list/read API 同时要求：
+必需内容是 `package.yml`、至少一个 stage 和至少一个 character。严格模型拒绝
+未知字段；缺失引用、重复 ID、非法素材路径和不支持的动作会阻止导入。
 
-1. session 可访问；
-2. chapter 属于 `session.player_character_id`；
-3. 当前 session 有 `unlocked` 或 `viewed` discovery。
+## 当前内容
 
-读取正文后状态单调升级为 `viewed`。章节正文有意不进入普通 `script_knowledge` chunking，因此当前不能声称 RAG 会检索人物章节全文。
+### `snow-village`
 
-### Judgment、结局和复盘
+- [LIVE] 单人垂直切片，`max_players: 1`。
+- 玩家角色：`zhuosiyuan`；NPC：`wangdada`。
+- 四个阶段、两个场景、一条线索、一件证据和两个私有章节。
+- Live action 由 YAML/StateGraph 执行；Mock 故事不是权威内容。
+- `endings.yml` 当前为空；单人最终提交仍走 legacy review 持久化路径。
 
-当前阶段可在 `special_rules.judgement` 中声明 question、options 和 `correct_option`。presentation 只返回 question/options；提交端点在服务端读取正确 option。
+### `mp1-two-player`
 
-当前评分 helper 是确定性的：匹配正确 option 得 100，否则 0；响应包含：
+- [LIVE] Slim M2 双人机制包，可通过真实 HTTP polling 浏览器流程完成一局。
+- [M3 CANDIDATE] 私有时间线已改为双向互补；秘密投票改为假设选择，终判明确责任边界。
+- 角色：`investigator` 与 `insider`，每人两个私有章节。
+- investigation：读本、来源核对清单、讨论、secret vote、reveal、同步推进。
+- final judgment：shared choice、`outcome_only`、完成时公开案件重建与所选结局材料。
+- 两个 authored endings，加上 completed-only DM truth 与隐藏时间线。
+- 当前内容目标时长 20 分钟；是否形成真实信息交换仍必须通过下方真人 gate。
 
-- `detail.selected_option`
-- `detail.correct_option`
-- `detail.evidence_boundary`
-- `detail.npc_disclosure`
-- `ending_id`：`judgement_correct` 或 `judgement_incorrect`
+## 单人玩法
 
-这些服务生成的 ending ids 不等同于 package `endings.yml` 记录。当前雪村的 `endings.yml` 明确是 `endings: []`，因此不要声称它包含完整结局文件；复盘由 submission/review 持久化路径生成。
+```text
+library
+  -> package details
+  -> character selection
+  -> create session
+  -> read chapter / inspect / talk / show evidence
+  -> request stage advance
+  -> final submission
+  -> persisted review
+```
 
-## 当前权威雪村单人垂直切片
+单人 StateGraph 校验 action 和 target，执行 authored event/condition，保存 checkpoint，
+再投影 session、chat 和 discoveries。角色章节只向当前角色发放，并从 `unlocked`
+单调升级到 `viewed`。
 
-规范内容位于 `script-packages/snow-village`，可由 loader 导入并由 live REST/YAML/LangGraph 路径执行。Mock 只是 UI fixture。
+## 双人玩法
 
-### 包元数据
+```text
+create room
+  -> invite second participant
+  -> unique character assignment
+  -> all ready / host start
+  -> read confirmation barrier
+  -> public discussion
+  -> deterministic settlement
+  -> synchronized stage advance
+  -> final shared judgment
+  -> authored ending
+  -> completed-only review
+```
 
-- id：`snow-village`
-- title：`雪落之前：后门的脚印`
-- version：`0.1.0`
-- description：`卓司元调查王氏杀猪菜后门异常的首个单人垂直切片。`
-- genre：`悬疑`、`互动小说`
-- difficulty：1
-- duration：30 分钟
-- max players：1
-- entry stage：`return_to_snow_village`
+当前 reducer 语义：
 
-它是 `legacy_single` 范围的单人切片，不是多人 fixture。
+- 读本确认提交后锁定，不提供 `stage.revoke_read`。
+- discussion close 在全员确认前可以撤销。
+- shared choice 可更换候选；更换会重置之前确认。
+- secret vote 的 reveal 只能达到 authored policy 指定的粒度。
+- final settlement outcome 直接选择同 ID ending，不引入通用 branch graph。
+- `completed` 必须拥有与 revealed final outcome 一致的 `ending_id`。
 
-### 阶段顺序
+## Reveal 与复盘
 
-1. `return_to_snow_village` / 炉火未熄
-   - 场景 `restaurant-hall`。
-   - 阅读第一章、与王大达交谈并请求推进。
-2. `investigate_back_alley` / 调查后巷
-   - 场景 `back-alley`。
-   - 调查热点、发现线索/证据、查看截图后推进。
-3. `confront_wangdada` / 没有打开的门
-   - 解锁并阅读第二章。
-   - 向王大达出示后门截图后推进。
-4. `back_door_judgement` / 后门判断
-   - 展示有限事实判断题并提交 option。
+| Reveal policy | 可公开事实 | 禁止升级 |
+|---|---|---|
+| `named_ballots` | 玩家与选项 | 不附加私有 payload |
+| `aggregate` | 选项计数 | 不推出实名票型 |
+| `outcome_only` | outcome | 不返回 ballots/counts |
 
-### 当前 IDs 和内容
+多人复盘要求：
 
-- 玩家角色：`zhuosiyuan` / 卓司元。
-- NPC：`wangdada` / 王大达。
-- 场景：`restaurant-hall`、`back-alley`。
-- 热点：`back-door-traces` / 后门旁的痕迹，坐标 x=58、y=44。
-- 线索：`clue-back-alley-note` / 后巷便签。
-- 证据：`evidence-back-door-image` / `21:13 后门截图`。
-- 证实边界：21:13 后门半开、门内暖光和不可辨认的影子；不能确认身份、进出方向、开门者、目的或犯罪。
+1. room 已完成；
+2. 请求者属于 room；
+3. final definition 与完成态匹配；
+4. ending、章节和 truth 来自 room frozen package；
+5. settlement facts 保持 authored reveal 粒度。
 
-热点的 YAML `on_click` 会发现上述线索和证据，并生成 DM 叙述。前端 `/demo/live` 从 presentation 获取热点坐标，但不会获取这些服务端规则。
+当前 canonical state 只保存当前阶段。若未来需要跨阶段关键记录，应在 reveal 时
+持久化已裁剪 facts，不能从私有命令事后重建。
 
-### Judgment
+## Slim M3 真人试玩
 
-问题：`根据当前材料，哪项最符合已证实事实？`
+Slim M3 验证的是“两个第一次接触该剧本的人是否能自行完成并产生有价值的讨论”，
+不是继续扩建传输或运行基础设施。自动化只证明技术闭环，不能替代本节证据。
 
-正确 option 是 `C`：
+### 单轮协议
 
-> 王大达关于没人来过的说法不完整；至少可确认后门在21:13半开，但不能确认开门者和目的。
+- 两名玩家此前没有阅读 `mp1-two-player`、测试或完整真相。
+- 使用两个隔离浏览器身份和各自屏幕；不得互看角色章节。
+- 一名观察者只处理登录、网络或页面崩溃，不解释规则、答案或下一步操作。
+- 从 `/multiplayer` 开始，到 completed review 出现为止，全程记录阶段时间点。
+- 玩家可以自由聊天；观察者不要求固定话术或强制消息数量。
+- 完成后分别作答，再共同讨论，避免一人的反馈覆盖另一人。
 
-提交请求体是 `{ "option": "C" }` 这一类窄契约。正确得 100、错误得 0；响应 ending id 是 `judgement_correct`/`judgement_incorrect`。当前 `npc_disclosure` 字段为 `null`，具体王大达证词由出示证物的 NPC reaction/chat 路径提供。
+记录模板：
 
-### 人物章节
+```text
+设备 / 浏览器：
+创建 -> 加入：
+大厅 -> 开始：
+第一章 read / discuss / settle / reveal：
+第二章 read / discuss / settle / completed：
+技术中断：
+请求指导次数与原话：
+明显犹豫或误点：
+形成分歧的私有信息：
+改变判断的公开材料或对方陈述：
+是否看到不应提前出现的内容：
+总时长：
+```
 
-- `zhuosiyuan-chapter-01` / 炉火未熄
-  - `release.type: game_start`
-  - `stage_min: return_to_snow_village`
-- `zhuosiyuan-chapter-02` / 没有打开的门
-  - `release.type: rule`
-  - `rule_id: first_evidence_set_completed`
-  - `stage_min: investigate_back_alley`
-  - 在 `confront_wangdada` stage-entry 的 `unlock_character_chapter` 事件中发放。
+### 分别访谈
 
-两章都只授权给选择卓司元的当前 session，状态为 `unlocked`/`viewed`。
+每名玩家独立回答：
 
-### 实际文件范围
+1. 你在每个阶段是否知道下一步要做什么？哪一刻最不清楚？
+2. 哪条只有你知道的信息值得隐瞒、转述或拿来质疑对方？
+3. 对方说了什么让你改变或重新检查判断？
+4. 第一次投票和最终共同判断是否有真实取舍，还是答案显而易见？
+5. 等待另一位玩家时，页面是否清楚说明正在等什么？
+6. 你是否在复盘前看到了另一角色原文、未揭晓选择或案件真相？
+7. 你愿意再玩一个同样结构但不同案件的双人剧本吗？为什么？
 
-当前 package 包含：
+量表使用 1～5 分：流程清晰度、讨论价值、判断张力、节奏、继续游玩意愿。
 
-- `package.yml`
-- 4 个 stage YAML 和 `_index.yml`
-- 2 个 character YAML 和 `_index.yml`
-- 2 个 character chapter Markdown
-- 1 个 clue round YAML
-- 1 个 evidence YAML
-- 2 个 scene YAML
-- `endings.yml`，内容为 `endings: []`
-- 3 个 SVG assets：两个场景和一张证物图
+### M3 gate
 
-当前 package 没有可用的 `media/*.yml` 或 `dm_guide/*.yml` 内容；这些只是 loader 支持的可选扩展，不能描述成雪村已经具备的完整媒体/DM 材料。
+一轮记为技术有效，必须满足：
 
-## 条件 DSL 和导入期校验
+- 两名玩家都从真实入口完成到复盘，且没有观察者提供玩法指导。
+- 没有私有章节、未揭晓选择或完整真相提前串线。
+- 任一刷新或短暂等待没有造成身份、阶段或已提交状态丢失。
+- 观察记录完整，不能只保存最终评分。
 
-`engine/core/condition_evaluator.py` 已实现组合条件、常量条件，以及阶段、线索/证据、证物出示、人物章节阅读、对话、玩家行为、时间、提交、事件、计数、首玩和提示等叶子。`evaluate_condition()` 使用相关 GameState 片段生成缓存键；trace API 用于调试。
+产品 gate 需要至少两轮有效试玩、共四名首次玩家，并满足：
 
-loader 会在导入期校验 condition/event/action 类型和跨文件引用，包括阶段、角色、章节、场景、线索、证据、媒体和结局。运行时仍以最新 checkpoint GameState 为权威，有限 session JSONB 用于查询投影和无 checkpoint 时 bootstrap。
+- 每轮双方都能说出至少一项由对方陈述带来的新信息或判断变化。
+- 没有重复出现的“完全不知道下一步”阻塞；若出现，先修复再重新计轮。
+- 四名玩家的流程清晰度均不低于 4/5。
+- 至少三名玩家的讨论价值和继续游玩意愿不低于 4/5。
+- 第一次投票或最终判断不能被所有玩家描述为“不讨论也能直接点”。
 
-## 变更指引
+[CAUTION] 通过上述 gate 只支持当前双人结构继续迭代，不证明 WebSocket、地图、
+AI DM、多实例或更多玩家规模已经必要。
 
-修改领域行为时，区分：
+## 条件、事件与 AI
 
-- 产品/设计规格。
-- package loader/schema 和可导入内容。
-- migrations/table metadata。
-- runtime service/repository/StateGraph 行为。
-- presentation 与 chapter 授权 API。
-- 前端 live client/boundary。
-- 仅用于 UI 预览的 Mock 数据。
+- 条件 DSL 和事件动作由 loader 在导入期校验。
+- StateGraph/reducer 是阶段推进和结算权威。
+- RAG 只返回当前 session 已授权的知识片段。
+- NPC 生成失败或输出越界时使用确定性 fallback。
+- 公共 AI DM 仍是 `[PLANNED]`，不是双人通关依赖。
 
-当前单人内容以 `script-packages/snow-village` 为准；旧 `supabase/seed/dev_seed.sql` 和旧 Mock 故事不能覆盖该权威包。
+## 边界
+
+- **包含：** 领域不变量、内容结构、导入、玩法和复盘语义。
+- **不包含：** 完整 YAML schema、API endpoint 清单或 UI 组件设计。
+- [SECURITY] **私密内容** — 角色章节、truth 和 submission 不进入公共 snapshot。
+- [CAUTION] **完成证明** — live-stack PASS 证明技术闭环，不代表目标玩家觉得内容有趣。
+
+## 变更导航
+
+| 修改目标 | 首先查看 | 验证入口 |
+|---|---|---|
+| Package schema | `engine/core/package_*` | package loader tests |
+| 单人内容 | `script-packages/snow-village` | core vertical slice tests |
+| 双人内容 | `script-packages/mp1-two-player` | real package flow test |
+| 多人规则 | `multiplayer_state_machine.py` | offline state-machine tests |
+| 双人运行与投影 | `multiplayer_gameplay_service.py` | gameplay service + durable HTTP tests |
+| 完成复盘 | `multiplayer_review.py` | real package flow + live browser test |
+
+## 权威来源
+
+- **内容：** `script-packages/`。
+- **加载：** `engine/core/package_loader.py` 与 `engine/core/package_*`。
+- **单人运行：** `engine/core/script_engine.py`。
+- **多人运行：** `engine/core/multiplayer_state_machine.py`。
+- **总设计：** `docs/SCRIPT_PACKAGE_SCHEMA.md` 与条件 DSL 设计文档。
+
+---
+
+[Previous: Frontend](../architecture/frontend.md) · [Home](../quickstart.md) ·
+[Next: Operations](../operations/data-and-deployment.md)

@@ -4,7 +4,13 @@ from pathlib import Path
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
 from engine.db.session import REQUIRED_PUBLIC_TABLES
-from engine.db.tables import metadata, session_command_receipts, session_events
+from engine.db.tables import (
+    metadata,
+    room_outbox,
+    session_command_identities,
+    session_command_receipts,
+    session_events,
+)
 
 MIGRATION = (
     Path(__file__).resolve().parents[2]
@@ -12,7 +18,42 @@ MIGRATION = (
     / "migrations"
     / "20260718010000_mp3_command_receipts_events.sql"
 )
-MP3_TABLE_NAMES = {"session_command_receipts", "session_events"}
+GLOBAL_IDENTITY_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260720010000_mp3_global_command_identity.sql"
+)
+IDENTITY_COMMENT_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260720030000_mp3_command_identity_comment.sql"
+)
+IDENTITY_TOMBSTONE_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260720040000_mp3_command_identity_tombstones.sql"
+)
+OUTBOX_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260720020000_mp3_room_outbox.sql"
+)
+OUTBOX_INTEGRITY_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260720050000_mp3_outbox_session_event_integrity.sql"
+)
+MP3_BASE_TABLE_NAMES = {"session_command_receipts", "session_events"}
+MP3_TABLE_NAMES = {
+    *MP3_BASE_TABLE_NAMES,
+    "room_outbox",
+    "session_command_identities",
+}
 
 
 def test_mp3_tables_are_required_and_present_in_metadata() -> None:
@@ -21,6 +62,7 @@ def test_mp3_tables_are_required_and_present_in_metadata() -> None:
 
 
 def test_command_receipt_identity_status_and_actor_constraints() -> None:
+    assert ("command_id",) in _unique_columns(session_command_receipts)
     assert ("session_id", "command_id") in _unique_columns(session_command_receipts)
 
     checks = _checks(session_command_receipts)
@@ -39,6 +81,25 @@ def test_command_receipt_identity_status_and_actor_constraints() -> None:
         ),
         "RESTRICT",
     ) in _foreign_keys(session_command_receipts)
+
+
+def test_global_command_identity_is_a_forward_migration() -> None:
+    sql = " ".join(GLOBAL_IDENTITY_MIGRATION.read_text(encoding="utf-8").lower().split())
+
+    assert "group by command_id having count(*) > 1" in sql
+    assert "add constraint uq_session_command_receipts_command unique (command_id)" in sql
+    assert "permanently binds one room, actor, request, and terminal result" in sql
+    comment_sql = " ".join(IDENTITY_COMMENT_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert "unique across all live session receipts" in comment_sql
+    tombstone_sql = " ".join(
+        IDENTITY_TOMBSTONE_MIGRATION.read_text(encoding="utf-8").lower().split()
+    )
+    assert "create table public.session_command_identities" in tombstone_sql
+    assert "before insert on public.session_command_receipts" in tombstone_sql
+    assert "after insert on public.session_command_receipts" in tombstone_sql
+    assert "on conflict (command_id) do nothing" in tombstone_sql
+    assert "permanent deployment-wide command uuid tombstones" in tombstone_sql
+    assert session_command_identities.c.command_id.primary_key
 
 
 def test_session_events_have_ordering_command_and_positive_cursor_constraints() -> None:
@@ -60,6 +121,25 @@ def test_session_events_have_ordering_command_and_positive_cursor_constraints() 
     assert str(checks["session_events_revision_check"]) == "revision >= 0"
 
 
+def test_room_outbox_has_event_topic_deduplication_and_retry_state() -> None:
+    assert ("room_event_id", "topic") in _unique_columns(room_outbox)
+    assert {"attempts", "available_at", "published_at", "last_error"} <= {
+        column.name for column in room_outbox.columns
+    }
+    checks = _checks(room_outbox)
+    assert "attempts >= 0" in str(checks["room_outbox_attempts_check"])
+
+    sql = " ".join(OUTBOX_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert "create table public.room_outbox" in sql
+    assert "unique (room_event_id, topic)" in sql
+    integrity_sql = " ".join(OUTBOX_INTEGRITY_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert "foreign key (session_id, room_event_id)" in integrity_sql
+    assert "references public.session_events(session_id, id)" in integrity_sql
+    assert "where published_at is null" in sql
+    assert "revoke all privileges on table public.room_outbox from anon, authenticated" in sql
+    assert "grant all privileges on table public.room_outbox to service_role" in sql
+
+
 def test_mp3_migration_has_checkpoint_marker_and_service_role_only_boundary() -> None:
     sql = _normalized_sql()
 
@@ -67,7 +147,7 @@ def test_mp3_migration_has_checkpoint_marker_and_service_role_only_boundary() ->
     assert "create index idx_session_checkpoints_session_command" in sql
     assert "where command_id is not null" in sql
 
-    for table_name in MP3_TABLE_NAMES:
+    for table_name in MP3_BASE_TABLE_NAMES:
         assert f"alter table public.{table_name} enable row level security" in sql
         assert (
             f'create policy "service_role_full_access" on public.{table_name} '
@@ -84,8 +164,12 @@ def test_mp3_migration_has_checkpoint_marker_and_service_role_only_boundary() ->
     )
     assert revoke_match is not None
     assert grant_match is not None
-    assert set(re.findall(r"public\.([a-z_]+)", revoke_match.group("tables"))) == MP3_TABLE_NAMES
-    assert set(re.findall(r"public\.([a-z_]+)", grant_match.group("tables"))) == MP3_TABLE_NAMES
+    assert (
+        set(re.findall(r"public\.([a-z_]+)", revoke_match.group("tables"))) == MP3_BASE_TABLE_NAMES
+    )
+    assert (
+        set(re.findall(r"public\.([a-z_]+)", grant_match.group("tables"))) == MP3_BASE_TABLE_NAMES
+    )
 
 
 def _normalized_sql() -> str:

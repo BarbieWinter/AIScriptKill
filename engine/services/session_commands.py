@@ -11,15 +11,17 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from engine.api.errors import ApiError, bad_request, conflict, not_found
-from engine.api.middleware.auth import CurrentUser
+from engine.api.middleware.auth import CurrentUser, VerifiedAnonymousPrincipal
 from engine.api.schemas import (
     ActionRequest,
+    ActionResponse,
     CommandActionResponse,
     CommandReceiptResponse,
     SessionEvent,
     SessionEventPage,
 )
 from engine.db.tables import game_sessions
+from engine.repositories.multiplayer_room_repository import MultiplayerRoomRepository
 from engine.repositories.session_command_models import (
     CommandReceipt,
     canonical_command_payload,
@@ -103,7 +105,11 @@ async def execute_command(
                 base_checkpoint_id=base_checkpoint_id,
             )
             if claimed is None:
-                existing = await commands.get_receipt(session_uuid, command_id)
+                existing_identity = await commands.get_command_identity(command_id)
+                if existing_identity is not None:
+                    if existing_identity["session_id"] != session_uuid:
+                        raise conflict("COMMAND_ID_REUSE", "command_id 已绑定到其他游戏会话")
+                    existing = await commands.get_receipt(session_uuid, command_id)
                 if existing is not None and existing.request_sha256 != request_hash:
                     raise conflict("COMMAND_ID_REUSE", "command_id 已绑定到不同的请求载荷")
                 raise conflict("COMMAND_IN_PROGRESS", "该 command_id 已被另一个请求领取")
@@ -236,17 +242,45 @@ async def execute_command(
 async def get_command_receipt(
     session_id: str,
     command_id: UUID,
-    current_user: CurrentUser,
+    current_user: CurrentUser | VerifiedAnonymousPrincipal,
     db: AsyncSession,
 ) -> CommandReceiptResponse:
     """Return a stored receipt after applying the normal session access check."""
 
     session_uuid = _parse_session_id(session_id)
-    session = await _authorized_session(session_uuid, current_user, db)
+    principal = _verified_anonymous_principal(current_user)
+    if principal is not None:
+        room = await MultiplayerRoomRepository(db).lock_room(session_uuid, read=True)
+        if room is None:
+            raise not_found("SESSION_NOT_FOUND", "未找到指定游戏会话")
+        member = await MultiplayerRoomRepository(db).joined_member(
+            session_uuid,
+            principal.id,
+        )
+        if member is None:
+            raise not_found("SESSION_NOT_FOUND", "未找到指定游戏会话")
+        revision = room.revision
+        actor_principal_id = principal.id
+        actor_member_id = member.id
+    else:
+        session = await _authorized_session(
+            session_uuid,
+            cast(CurrentUser, current_user),
+            db,
+        )
+        revision = session.revision
+        actor_principal_id = None
+        actor_member_id = None
     receipt = await SessionCommandRepository(db).get_receipt(session_uuid, command_id)
-    if receipt is None:
+    if receipt is None or (
+        actor_member_id is not None
+        and (
+            receipt.actor_principal_id != actor_principal_id
+            or receipt.actor_member_id != actor_member_id
+        )
+    ):
         raise not_found("COMMAND_NOT_FOUND", "未找到指定 command receipt")
-    return _receipt_response(receipt, session.revision)
+    return _receipt_response(receipt, revision)
 
 
 async def get_session_events(
@@ -302,7 +336,7 @@ def _command_response(receipt: CommandReceipt, revision: int) -> CommandActionRe
         revision=receipt.result_revision if receipt.result_revision is not None else revision,
         event_sequence_from=receipt.event_sequence_from,
         event_sequence_to=receipt.event_sequence_to,
-        result=receipt.result,
+        result=cast(ActionResponse | None, receipt.result),
         error_code=receipt.error_code,
         error_details=receipt.error_details,
     )
@@ -343,6 +377,19 @@ async def _authorized_session(session_id: UUID, current_user: CurrentUser, db: A
         if actor != session.player_id:
             raise not_found("SESSION_NOT_FOUND", "未找到指定游戏会话")
     return session
+
+
+def _verified_anonymous_principal(
+    actor: CurrentUser | VerifiedAnonymousPrincipal,
+) -> VerifiedAnonymousPrincipal | None:
+    if isinstance(actor, VerifiedAnonymousPrincipal):
+        return actor
+    if actor.role != "authenticated" or not actor.is_anonymous:
+        return None
+    try:
+        return VerifiedAnonymousPrincipal(id=UUID(actor.subject))
+    except ValueError:
+        return None
 
 
 def _parse_session_id(value: str) -> UUID:

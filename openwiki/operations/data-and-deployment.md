@@ -1,156 +1,188 @@
 # 数据与运维
 
-## 环境和配置
-
-后端配置位于 `engine/api/config.py`，读取项目根目录 `.env` 和系统环境变量。当前配置项包括：
-
-- Supabase/database：
-  - `SUPABASE_PROJECT_REF`，默认 `local`。
-  - `SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SECRET_KEY`。
-  - `SUPABASE_STORAGE_BUCKET`，默认 `script-assets`；后端会强制 bucket 为私有。
-  - `DATABASE_URL`；`DATABASE_POOLER_URL` 可选，存在时运行期优先使用。
-  - `SUPABASE_JWT_AUDIENCE`，默认 `authenticated`。
-- API：
-  - `CORS_ORIGINS`，默认本地前端 origins。
-  - `RATE_LIMIT_PER_MINUTE`，默认 120。
-- Multiplayer rollout：
-  - `MULTIPLAYER_V1=false`：MP-2 HTTP room gate，默认 fail closed。
-  - `ROOM_EVENTS_V1=false`：后续 chat/event/replay，当前无消费方。
-  - `AI_DM_V1=false`：后续公共 AI DM，当前无消费方。
-- RAG embedding：
-  - `RAG_EMBEDDING_PROVIDER`，取值 `deterministic` 或 `dashscope`，默认 `deterministic`。
-  - `RAG_EMBEDDING_DIMENSIONS`，固定为 1024。
-  - `RAG_DASHSCOPE_EMBEDDING_MODEL`，固定为 `text-embedding-v4`。
-  - `DASHSCOPE_BASE_URL`，默认 DashScope OpenAI-compatible URL。
-  - `DASHSCOPE_API_KEY`，使用 DashScope 时由服务端提供。
-- NPC 生成：
-  - `NPC_GENERATION_PROVIDER`，取值 `deterministic` 或 `openai_compatible`，默认 `openai_compatible`。
-  - `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`；三项完整时才创建兼容 Chat Completions 客户端。
-  - `NPC_OPENAI_MAX_TOKENS`，默认 512，范围 64–2048。
-  - `NPC_OPENAI_TIMEOUT_SECONDS`，默认 20 秒，范围 1–60 秒。
-
-MP-2 frontend 还需要 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 来建立
-Supabase anonymous session；不要把 service-role secret 暴露给浏览器。`supabase/config.toml` 已启用
-`enable_anonymous_sign_ins = true`。`MULTIPLAYER_V1` 只是 fail-closed gate，不是部署完成信号；MP-2
-room backend 已接线并通过应用层验证，但真实 PostgreSQL 与 live-stack 浏览器 gate 尚未运行。公开
-WebSocket 仍只有未认证 ping/pong，不属于 MP-2 lobby。
-
-`.env.example` 只作为模板，不应提交真实 Supabase/database/provider 密钥。浏览器代码必须使用 FastAPI `/api/v1` 表面，而不是直接访问数据库。
-
-后端数据库 engine 使用 asyncpg 的异步 SQLAlchemy。`engine/db/session.py` 会把 `postgresql://` 转成 `postgresql+asyncpg://`，启用 pool pre-ping 和较小连接池；本地数据库不强制 SSL，远程连接设置 `ssl=require`。
-
-## Supabase/Postgres Schema
-
-`supabase/migrations/` 下的迁移定义数据库形态：
-
-- `001_script_tables.sql`：剧本包结构表：packages、stages、characters、clues、evidences、scenes、media。
-- `002_runtime_tables.sql`：运行期表：sessions、checkpoints、chat messages、discoveries、final submissions、reviews。
-- `003_vector_tables.sql`：`script_knowledge` pgvector 表。
-- `004_rls_policies.sql`：早期 service-role、认证玩家和阶段/角色过滤策略。
-- `005_runtime_persistence_indexes.sql`：会话、剧本包、状态、复盘、检查点和卡牌查询索引。
-- `006_api_role_privileges.sql`：anon/authenticated/service_role 授权及早期公开包策略。
-- `007_schema_comments.sql`：Phase 1 表、字段和 RLS policy 注释。
-- `008_package_import_resolution_tables.sql`：`script_endings` 和 service-role-only 的 `script_dm_guides`。
-- `009_restrict_package_private_tables.sql`：撤销 anon/authenticated 对结局和 DM 指引表的直接权限。
-- `20260711073629_fastapi_data_access_boundary.sql`：撤销 anon/authenticated 对剧本内容、RAG 和运行时表的直接权限，统一通过 FastAPI 字段投影访问。
-- `20260711105015_checkpoint_idempotency.sql`：清理重复 checkpoint，并为 `(session_id, thread_ts)` 建唯一索引。
-- `20260711143000_checkpoint_pending_writes.sql`：建立 service-role-only 的规范化 LangGraph pending-writes 表。
-- `20260711150000_checkpoint_column_comments.sql`：补充 checkpoint 列注释。
-- `20260713000000_character_chapters.sql`：建立 service-role-only 的 `script_character_chapters`，保存严格 Markdown 章节及发布元数据；正文不自动进入普通 RAG 索引。
-- `20260713010000_character_chapter_discoveries.sql`：允许 `session_discoveries.entity_type='character_chapter'`，以 `unlocked`/`viewed` 表示发放和阅读，并保持单调进度。
-- `20260713020000_rag_embedding_v4_1024.sql`：清空不可安全转换的派生知识行，把 embedding 列迁为 1024 维并重建 IVFFlat 索引。
-- `20260713030000_runtime_message_idempotency.sql`：为 `chat_messages` 增加 `engine_message_id` 及 `(session_id, engine_message_id)` 唯一索引，使图状态消息投影可幂等重放。
-- `20260718000000_multiplayer_rooms.sql`：additive/mode-aware 扩展 `game_sessions`，增加 frozen runtime
-  package tuple，并创建 members、assignments、invites、required members、principal reservations；五张
-  新表均为 service-role-only。
-
-`supabase/seed/dev_seed.sql` 是旧 Phase 1 seed，不是当前 `script-packages/snow-village` YAML 单人垂直切片。它仍使用标题“雪乡连环杀人事件”、入口 `prologue`、旧场景/阶段和最多 4 人配置，并构造 1536 维向量；当前迁移后的列是 `vector(1024)`。因此不能把 `make db-reset` 应用这个 seed 后的内容描述为当前可执行雪村包，且 1536 维 seed 行与现有 schema 不兼容。当前 live 验收应导入并发布 `script-packages/snow-village`，直到 seed 被同步。
-
-剧本包素材上传使用 `engine/core/package_storage.py` 中的 Supabase Storage 客户端。它通过 Supabase secret key 创建或修正私有 bucket，并只返回 `storage://<bucket>/<object>` 定位符。该定位符不是浏览器 URL；当前展示投影只接受同源路径或有效 HTTP(S) URL，签名 URL/代理下载仍未实现。
-
-`engine/db/tables.py` 为 SQLAlchemy Core 查询镜像 public 表。修改 schema 时，需保持迁移和表元数据一致。
-
-`SupabaseSessionCheckpointSaver` 把 checkpoint/metadata 编码在 `session_checkpoints.state`，并把 pending writes 独立写入 `session_checkpoint_writes`。后者允许 write-before-checkpoint，以复合主键保证多 saver/多进程重试幂等。每个 saver 写操作自行 `commit()`；调用方必须提供专用 `AsyncSession`，不得复用业务请求事务。恢复时会合并规范化 writes 与旧内嵌 writes。
-
-## RLS 和权限
-
-当前防剧透边界是 FastAPI 授权和字段投影，RLS 作为纵深防御而不是浏览器查询接口：
-
-- `service_role` 和后端数据库角色可访问剧本、RAG 和运行期表。
-- `20260711073629_fastapi_data_access_boundary.sql` 已撤销 anon/authenticated 对剧本内容、catalogue、RAG 和运行期表的权限，并删除对应 player/public policies。
-- 浏览器只能调用 FastAPI。服务层根据当前阶段、角色和发现状态过滤线索、证据、章节、场景和会话数据。
-- `script_endings`、`script_dm_guides`、`script_character_chapters`、`script_knowledge`，以及 MP-2 的
-  `room_members`、`room_character_assignments`、`room_invites`、`room_required_members`、
-  `room_principal_reservations` 只能由服务端读取。
-
-应用层仍需仔细审查：匿名会话使用 `player_id = NULL`，只要 UUID 已知，当前服务层访问检查就会允许访问。剧本包导入和状态变更额外受管理员 FastAPI 依赖保护；该依赖只信任 Supabase `app_metadata`。
-
-## 本地开发
-
-README 和根目录 `Makefile` 提供常用命令入口。
-
-后端：
-
-```bash
-make dev-api
-make test
-make test-checkpoint-recovery
-make verify-dev-tools
+```text
+┌─ OPENWIKI PAGE ──────────────────────────────────────────────────────────────┐
+│ KIND      runbook                                                            │
+│ SCOPE     Configuration, Postgres, validation and local operation            │
+│ VERIFIED  2026-07-22 @ WORKTREE                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-前端：
+[Home](../quickstart.md) / **Operations** / **Data and Deployment**
 
-```bash
-npm --prefix apps/web install
-make dev-web
-npm --prefix apps/web run build
-npm --prefix apps/web run start
-npm --prefix apps/web run lint
-```
+本页维护本地启动、凭据、数据库和验证边界，不保存阶段验收报告。
 
-`make dev` 同时启动后端和前端。`make db-start` 启动本地 Supabase；`make db-reset` 会应用迁移并执行上述旧 seed，因此在 seed 同步前不能单独建立当前 live YAML 垂直切片。
+## 一览
 
-`docker-compose.yml` 包含 `engine`、`web` 和本地 Supabase 镜像服务，并引用现有的 `engine/Dockerfile`、`apps/web/Dockerfile`。Compose 预期 `.env`，真实密钥不能写入文档。
+- [LIVE] **FastAPI data path** — async SQLAlchemy 访问 Supabase/Postgres。
+- [LIVE] **Package persistence** — 规范化 package 与 runtime 表已接入。
+- [LIVE] **Durable commands** — receipt、events、tombstones 和 outbox 表已实现。
+- [LIVE] **真实多人验证** — durable PostgreSQL 与双匿名浏览器 live gate 已接入。
+- [SECURITY] **浏览器访问** — 只允许经 FastAPI，不直接读写底层表。
 
-## 运行期事务和测试状态
+## 环境配置
 
-生产 REST action 已连接 LangGraph：
+配置源是项目根 `.env` 和进程环境。`.env.example` 只能保存占位符。
+
+| 范围 | 主要变量 | 说明 |
+|---|---|---|
+| Supabase | `SUPABASE_URL`, keys | secret key 仅服务端使用 |
+| Database | `DATABASE_URL`, pooler | pooler 存在时优先 |
+| Frontend | `NEXT_PUBLIC_*` | 只能放公开值 |
+| Rollout | `MULTIPLAYER_V1` | 本地 `make dev` 显式开启 |
+| RAG | `RAG_*`, `DASHSCOPE_*` | embedding 维度 1024 |
+| NPC | `NPC_*`, `OPENAI_*` | 配置不全时安全 fallback |
+
+`make dev*` 会从根 `.env` 补充公开 Supabase 值，但 Mock 开关由 Make 默认值覆盖：
 
 ```text
-POST /sessions/{id}/actions
-  -> session_service.perform_action
-  -> LangGraphRuntimeActionExecutor
-  -> PostgreSQL advisory lock
-  -> published package reconstruction + checkpoint restore/bootstrap
-  -> YAML ScriptEngine/StateGraph action
-  -> checkpoint commit
-  -> session/chat/discovery projection commit
+make dev / make dev-web                  -> NEXT_PUBLIC_USE_MOCK=true
+NEXT_PUBLIC_USE_MOCK=false make dev      -> Live frontend
 ```
 
-同一会话动作由独立连接上的事务级 `pg_advisory_xact_lock` 跨进程串行化。checkpoint saver 使用另一专用会话并自行提交，业务投影使用请求会话提交；锁事务、checkpoint 事务和投影事务不是一个原子事务。图消息使用 `engine_message_id` 去重，发现记录使用 upsert，投影前还会把线索、证据查看、章节阅读和证物出示等六类单调进度合并回图状态。
+## 常用命令
 
-`engine/tests` 已覆盖 API 契约/JWT/WebSocket 边界、权限迁移结构、剧本包解析与导入、多人 snapshot
-codec、MP-2 room repository/service/routes、条件 DSL、StateGraph、RAG、人物章节、展示投影、runtime
-mapper 和 checkpoint。MP-2 backend 已通过 focused/full engine、Ruff、focused BasedPyright 与
-OpenAPI build。Frontend 的 1 passed Playwright 使用 mocked Supabase/HTTP contract；它不是 live-stack E2E。
+```bash
+make install
+make verify-dev-tools
 
-真实 MP-2 migration、constraints、并发、RLS/GRANT 和 republish probes 需要 disposable PostgreSQL。本次
-环境无法连接 Docker/Colima daemon，因此这些 lane 为 `BLOCKED / NOT RUN`；默认 pytest skip 不能写成
-PostgreSQL PASS。真实 multi-context Playwright 也保持 `BLOCKED / NOT RUN`。
+make db-start
+make db-reset
 
-后续回归测试应优先覆盖：
+make dev
+make dev-api
+make dev-web
 
-- REST 动作下 checkpoint 与 session/chat/discovery 投影的一致性。
-- advisory lock 下同会话并发、多 worker 重试和“checkpoint 已提交但投影失败”等故障行为。
-- `engine_message_id` 与 discovery upsert 的重复投影幂等性。
-- 人物章节和证据状态的单调升级、角色授权与防剧透。
-- 当前 YAML 包导入/发布后的 `/demo/live` 全链路。
-- 保持本地 Supabase anon/authenticated 拒绝探针，防止迁移意外恢复直接表权限。
+make test
+make lint
+make typecheck-api
+```
 
-## 运维注意事项
+持久命令数据库 lane：
 
-- 真实凭据只放 `.env` 或部署环境。
-- `/health/db` 要求 `script_knowledge` 等必要表存在；使用前确保迁移完整。
-- 浏览器表访问应始终被拒绝；保持 RLS、角色 grants、service-role 使用和 FastAPI 应用层检查同步。
-- `MULTIPLAYER_V1` 只是 MP-2 gate，不是部署完成信号；在真实 PostgreSQL 和 live-stack browser gates
-  通过前不得开放生产流量。`ROOM_EVENTS_V1`/`AI_DM_V1` 仍没有运行时消费方。
+```bash
+make test-durable-commands
+```
+
+浏览器验证：
+
+```bash
+make test-mp2-contract
+make test-mp2-live
+```
+
+`test-mp2-contract` 使用 route-mocked Supabase/HTTP，覆盖双 context 页面契约。
+`test-mp2-live` 要求真实 Supabase Auth、已迁移 PostgreSQL、已发布
+`mp1-two-player`、FastAPI 和 Next.js 全部可达；它从创建房间通关到 completed
+review，且断言没有 gameplay WebSocket。
+
+[PASS] Slim M2 当前有三层证据：
+
+1. 服务级真实冻结包 reducer 与 participant projector。
+2. ASGI + PostgreSQL durable command 全流程。
+3. 两个真实 Supabase anonymous identity 的 live browser 全流程。
+
+[CAUTION] `make db-reset` 后必须通过管理员 package import API 重新发布真实包。
+本地导入建议显式使用 `RAG_EMBEDDING_PROVIDER=deterministic`，避免 gameplay 验收
+依赖外部 embedding provider。
+
+## 数据库边界
+
+迁移位于 `supabase/migrations/`，SQLAlchemy metadata 位于
+`engine/db/tables.py`。修改表结构时必须同步两处以及 required-table health inventory。
+
+主要数据族：
+
+- 规范化剧本 package、stage、character、chapter、clue、evidence、scene、media。
+- service-only ending、DM guide、RAG knowledge 与角色章节。
+- 单人 session、checkpoint、pending writes、chat、discovery 和 review。
+- 多人 room member、assignment、invite、required member 和 principal reservation。
+- durable command identity、receipt、event、tombstone 和 room outbox。
+
+[CAUTION] 不在 OpenWiki 复制逐迁移清单。实际顺序和约束以迁移文件为准。
+
+## 权限与防剧透
+
+[SECURITY] `anon` 和 `authenticated` 浏览器角色不应拥有底层业务表权限。
+
+```text
+browser
+  -> FastAPI auth
+  -> session / membership authorization
+  -> stage + role + discovery filtering
+  -> participant-safe response
+```
+
+- 管理操作只信任 Supabase `app_metadata` 中的管理员角色。
+- 多人必须使用 verified anonymous JWT，并通过 principal → membership 授权。
+- `service_role`、数据库 URL 和 provider secret 不得进入浏览器 bundle。
+- package snapshot、DM truth、其他成员私态和 submission 不得直接序列化。
+
+## 事务与恢复
+
+### 单人
+
+```text
+advisory lock transaction
+  + checkpoint transaction
+  + request projection transaction
+```
+
+三者不是一次原子提交。恢复依靠 checkpoint、稳定 message identity 和单调 discovery
+合并，不能描述成完整 event sourcing。
+
+### 多人命令
+
+成功终态可在同一事务中更新 room、receipt、event 和 outbox。stale processing 通过
+lease/attempt 恢复；同一 `command_id` 绑定稳定 request hash 和 session identity。
+
+[CAUTION] outbox publisher 不等于正在运行的 worker。部署异步 publisher 前还需定义
+进程托管、监控、重试告警和下游幂等。
+
+## 本地数据注意事项
+
+- `supabase/seed/dev_seed.sql` 是旧内容，不能覆盖当前 `script-packages/`。
+- `make db-reset` 后应重新导入并发布需要验证的真实 package。
+- 修改 Supabase Auth 配置后，应重启本地 Supabase。
+- `/health/db` 要求 required tables 已完成迁移。
+- Docker/Supabase 不可用时，数据库测试的 skip 不能写成 PASS。
+
+## 验证口径
+
+| 标记 | 含义 |
+|---|---|
+| `[PASS]` | 命名的命令或 gate 已实际成功执行 |
+| `[NOT-RUN]` | 没有执行，不作结论 |
+| `[BLOCKED]` | 所需环境不可用或 gate 被阻止 |
+
+不要创建 `docs/reports/` 保存每轮输出。长期有效的边界更新到 OpenWiki；一次性
+命令结果留在提交、CI 或会话记录中。
+
+## 边界
+
+- **包含：** 配置、命令、数据族、权限、事务和验证口径。
+- **不包含：** 逐迁移说明、临时测试报告或部署供应商教程。
+- [SECURITY] **凭据** — 真实 secret 只放 `.env` 或部署环境。
+- [CAUTION] **Mock** — 默认 Mock 是开发安全默认值，不代表 Live 已失效。
+
+## 变更导航
+
+| 修改目标 | 首先查看 | 验证入口 |
+|---|---|---|
+| 环境变量 | `engine/api/config.py` | config tests |
+| 启动行为 | `Makefile`, `.env.example` | `make -n dev` |
+| 数据表 | `supabase/migrations/` | migration tests |
+| 浏览器权限 | data-access migrations | privilege test |
+| Outbox | `engine/services/room_outbox.py` | command HTTP tests |
+
+## 权威来源
+
+- **配置：** `engine/api/config.py`, `.env.example`, `Makefile`。
+- **数据库：** `supabase/migrations/`, `engine/db/tables.py`。
+- **验证：** `engine/tests/`, `apps/web/e2e/`。
+- **部署：** `docker-compose.yml` 和 Dockerfiles。
+
+---
+
+[Previous: Gameplay](../domain/script-gameplay.md) · [Home](../quickstart.md) ·
+[Next: System](../architecture/system.md)

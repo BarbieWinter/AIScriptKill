@@ -171,6 +171,7 @@ class GameStateV2(ContractModel):
     players: dict[str, PlayerState]
     private_by_member: dict[str, PrivatePlayerState]
     stage: StageRuntimeState
+    ending_id: Identifier | None = None
 
     @model_validator(mode="after")
     def validate_member_projections(self) -> Self:
@@ -178,14 +179,10 @@ class GameStateV2(ContractModel):
         required_members = set(required_member_ids)
         if set(self.players) != required_members:
             raise ValueError("players keys must equal room.required_member_ids")
-        if tuple(self.players) != required_member_ids:
-            raise ValueError("players keys must use canonical room member order")
         if any(key != player.member_id for key, player in self.players.items()):
             raise ValueError("each players key must equal PlayerState.member_id")
         if set(self.private_by_member) != required_members:
             raise ValueError("private_by_member keys must equal room.required_member_ids")
-        if tuple(self.private_by_member) != required_member_ids:
-            raise ValueError("private_by_member keys must use canonical room member order")
         if self.room.current_stage_id != self.stage.stage_id:
             raise ValueError("room.current_stage_id must equal stage.stage_id")
 
@@ -193,6 +190,22 @@ class GameStateV2(ContractModel):
             public_character = self.players[member_id].character_id
             if private_state.character_id != public_character:
                 raise ValueError("private character_id must match the public player projection")
+
+        if self.room.status is RoomStatus.COMPLETED:
+            if self.ending_id is None:
+                raise ValueError("a completed room requires ending_id")
+            settlement = self.stage.settlement
+            if (
+                self.stage.phase is not StagePhase.REVEAL
+                or settlement is None
+                or not settlement.revealed
+                or settlement.outcome_id != self.ending_id
+            ):
+                raise ValueError(
+                    "a completed room requires a revealed final settlement matching ending_id"
+                )
+        elif self.ending_id is not None:
+            raise ValueError("only a completed room may expose ending_id")
         return self
 
     @model_validator(mode="after")

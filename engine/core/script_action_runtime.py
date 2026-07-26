@@ -135,12 +135,7 @@ def _available_target(target: str | None, available: list[str], target_kind: str
 def _evidence_target(target: str | None) -> tuple[str, str]:
     value = _required_target(target, "evidence")
     evidence_id, separator, character_id = value.partition(":")
-    if (
-        separator == ""
-        or evidence_id == ""
-        or character_id == ""
-        or ":" in character_id
-    ):
+    if separator == "" or evidence_id == "" or character_id == "" or ":" in character_id:
         raise ScriptEngineActionError(
             "ACTION_TARGET_INVALID",
             "show_evidence target 必须为 evidence_id:character_id",

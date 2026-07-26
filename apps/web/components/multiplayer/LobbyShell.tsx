@@ -10,13 +10,12 @@ import {
   LoaderCircle,
   Play,
   RotateCcw,
-  ShieldCheck,
   Trash2,
   UserRound,
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   multiplayerErrorCode,
@@ -47,27 +46,6 @@ function formatExpiry(value: string) {
   }).format(date);
 }
 
-function ActiveRoomPlaceholder({ snapshot }: { snapshot: LobbySnapshotV1 }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[#080a0c] px-5 text-[#e8e2d5]">
-      <section className="w-full max-w-xl rounded-3xl border border-emerald-300/20 bg-[#101512] p-8 text-center shadow-2xl shadow-black/40 md:p-12">
-        <ShieldCheck className="mx-auto mb-5 h-10 w-10 text-emerald-300" />
-        <p className="mb-2 text-xs tracking-[0.25em] text-emerald-200/60 uppercase">Room active</p>
-        <h1 className="mb-4 text-2xl font-semibold">房间已原子启动</h1>
-        <p className="mx-auto mb-7 max-w-md text-sm leading-7 text-[#aeb2ab]">
-          {snapshot.package.title} 的两位玩家已经完成选角与准备。多人游戏运行时将在 MP-6 提供；当前页面不会连接旧游戏界面或 WebSocket。
-        </p>
-        <Link
-          href="/multiplayer"
-          className="inline-flex items-center justify-center rounded-xl border border-white/10 px-5 py-3 text-sm text-[#d9d8d1] transition hover:bg-white/5"
-        >
-          返回多人入口
-        </Link>
-      </section>
-    </main>
-  );
-}
-
 type LobbyShellProps = {
   client: MultiplayerRoomClient;
   snapshot: LobbySnapshotV1;
@@ -77,6 +55,22 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
   const queryClient = useQueryClient();
   const [createdInvite, setCreatedInvite] = useState<CreateInviteResponse | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const inviteStorageKey = `multiplayer-invite:${snapshot.session_id}`;
+
+  useEffect(() => {
+    const stored = window.sessionStorage.getItem(inviteStorageKey);
+    if (!stored) return;
+    try {
+      const invite = JSON.parse(stored) as CreateInviteResponse;
+      if (new Date(invite.expires_at).getTime() > Date.now()) {
+        setCreatedInvite(invite);
+      } else {
+        window.sessionStorage.removeItem(inviteStorageKey);
+      }
+    } catch {
+      window.sessionStorage.removeItem(inviteStorageKey);
+    }
+  }, [inviteStorageKey]);
 
   const refreshSnapshot = () => queryClient.invalidateQueries({
     queryKey: lobbySnapshotKey(snapshot.session_id),
@@ -95,6 +89,7 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
     mutationFn: () => client.createInvite(snapshot.session_id, 900),
     onSuccess: (invite) => {
       setCreatedInvite(invite);
+      window.sessionStorage.setItem(inviteStorageKey, JSON.stringify(invite));
       setCopyState("idle");
       return refreshSnapshot();
     },
@@ -102,7 +97,10 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
   const revokeInvite = useMutation({
     mutationFn: (inviteId: string) => client.revokeInvite(snapshot.session_id, inviteId),
     onSuccess: (_, inviteId) => {
-      if (createdInvite?.invite_id === inviteId) setCreatedInvite(null);
+      if (createdInvite?.invite_id === inviteId) {
+        setCreatedInvite(null);
+        window.sessionStorage.removeItem(inviteStorageKey);
+      }
       return refreshSnapshot();
     },
   });
@@ -159,10 +157,6 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
     }
   };
 
-  if (snapshot.status === "active") {
-    return <ActiveRoomPlaceholder snapshot={snapshot} />;
-  }
-
   return (
     <main className="min-h-screen bg-[#080a0c] px-4 py-7 text-[#e8e2d5] md:px-7 md:py-10">
       <div className="mx-auto max-w-6xl">
@@ -171,7 +165,7 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
             <p className="mb-2 text-xs tracking-[0.24em] text-[#a98e5d] uppercase">{snapshot.package.script_id}</p>
             <h1 className="mb-2 text-3xl font-semibold tracking-tight">房间大厅</h1>
             <p className="text-sm text-[#969a94]">
-              {snapshot.package.title} · v{snapshot.package.version} · 修订 {snapshot.revision}
+              {snapshot.package.title} · v{snapshot.package.version}
             </p>
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-[#aeb1ab]">
@@ -183,14 +177,13 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[1.45fr_0.8fr]">
-          <div className="space-y-6">
+          <div className="order-last space-y-6 lg:order-first">
             <section className="rounded-2xl border border-white/8 bg-[#111412] p-5 md:p-6">
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold">玩家席位</h2>
                   <p className="mt-1 text-xs text-[#8f938d]">两位玩家都要选择不同角色并准备</p>
                 </div>
-                <span className="rounded-full border border-white/8 px-3 py-1 text-[11px] text-[#989b95]">HTTP 同步</span>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {Array.from({ length: slotCount }, (_, index) => {
@@ -217,7 +210,6 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
                                   {member.room_role === "host" ? "房主" : `玩家 ${index + 1}`}
                                   {isSelf && <span className="ml-2 text-xs text-[#c9ae76]">你</span>}
                                 </p>
-                                <p className="mt-0.5 font-mono text-[10px] text-[#70736e]">{shortId(member.member_id)}</p>
                               </div>
                             </div>
                             <span className={`rounded-full px-2.5 py-1 text-[10px] ${member.ready ? "bg-emerald-300/10 text-emerald-200" : "bg-white/5 text-[#858983]"}`}>
@@ -277,7 +269,10 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
                     >
                       <span>
                         <span className="block text-sm font-medium">{character.name}</span>
-                        <span className="mt-1 block text-[11px] text-[#858983]">
+                        <span className="mt-1 block text-[11px] leading-5 text-[#858983]">
+                          {character.public_description}
+                        </span>
+                        <span className="mt-1 block text-[11px] text-[#6f736d]">
                           {selectedBySelf ? "你的角色 · 点击取消" : taken ? "已被另一位玩家选择" : "可以选择"}
                         </span>
                       </span>
@@ -303,7 +298,7 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
             </section>
           </div>
 
-          <aside className="space-y-6">
+          <aside className="order-first space-y-6 lg:order-last">
             {snapshot.self.room_role === "host" && (
               <section className="rounded-2xl border border-white/8 bg-[#111412] p-5">
                 <div className="mb-4 flex items-center gap-2">
@@ -400,7 +395,12 @@ export function LobbyShell({ client, snapshot }: LobbyShellProps) {
             {actionError && (
               <div role="alert" className="rounded-xl border border-red-300/20 bg-red-300/[0.06] p-4 text-sm text-red-100">
                 <p>{multiplayerErrorMessage(actionError)}</p>
-                {actionErrorCode && <p className="mt-1 font-mono text-[10px] text-red-200/55">{actionErrorCode}</p>}
+                {actionErrorCode && (
+                  <details className="mt-2 text-[10px] text-red-200/55">
+                    <summary className="cursor-pointer">技术详情</summary>
+                    <p className="mt-1 font-mono">{actionErrorCode}</p>
+                  </details>
+                )}
                 {actionErrorCode === "REVISION_MISMATCH" && (
                   <button type="button" onClick={refreshSnapshot} className="mt-3 inline-flex items-center gap-1 text-xs underline">
                     <RotateCcw className="h-3 w-3" />刷新状态

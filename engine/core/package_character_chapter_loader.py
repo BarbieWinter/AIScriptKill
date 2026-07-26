@@ -33,8 +33,7 @@ def load_character_chapters(
         ):
             raise PackageArchiveError(
                 "PACKAGE_CHARACTER_CHAPTER_PATH_UNSUPPORTED",
-                "人物章节只接受 character_scripts/<character-id>/<chapter-id>.md: "
-                f"{relative_path}",
+                f"人物章节只接受 character_scripts/<character-id>/<chapter-id>.md: {relative_path}",
             )
         frontmatter, content = _read_chapter(archive, path)
         chapter_path_id = PurePosixPath(parts[2]).stem

@@ -8,7 +8,8 @@ personality:
 knowledge:
   investigation:
     knows:
-      - "公开的目击便签没有写明记录人身份"
+      - "20:05 曾用备用钥匙从维修门违规进入"
+      - "20:20 的金属声来自掉落的黄铜钥匙串"
   final-judgment:
     knows:
-      - "共同终判必须只依据已经公开的材料"
+      - "违规进入与破门、损毁记录是不同责任层级"

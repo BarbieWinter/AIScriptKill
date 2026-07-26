@@ -19,7 +19,6 @@ from engine.contracts.multiplayer_v1.commands import (
     HintConfirmCommand,
     HintRequestCommand,
     RevokeDiscussionCloseCommand,
-    RevokeReadCommand,
     SubmitSettlementCommand,
 )
 from engine.contracts.multiplayer_v1.state import (
@@ -43,7 +42,6 @@ from engine.contracts.multiplayer_v1.vocabulary import (
 
 StageMutationCommand: TypeAlias = (
     ConfirmReadCommand
-    | RevokeReadCommand
     | ConfirmDiscussionCloseCommand
     | RevokeDiscussionCloseCommand
     | SubmitSettlementCommand
@@ -98,18 +96,9 @@ def reduce_stage_command(
 
     if isinstance(command, ConfirmReadCommand):
         _validate_stage_id(state, command.payload.stage_id)
-        return _change_read_confirmation(
+        return _confirm_read(
             state,
             actor_member_id,
-            confirmed=True,
-            definition=definition,
-        )
-    if isinstance(command, RevokeReadCommand):
-        _validate_stage_id(state, command.payload.stage_id)
-        return _change_read_confirmation(
-            state,
-            actor_member_id,
-            confirmed=False,
             definition=definition,
         )
     if isinstance(command, ConfirmDiscussionCloseCommand):
@@ -137,6 +126,50 @@ def reduce_stage_command(
     return _confirm_hint(state, command, actor_member_id, definition)
 
 
+def complete_final_judgment(
+    state: GameStateV2,
+    *,
+    definition: MultiplayerStageDefinition,
+    ending_ids: Iterable[str],
+) -> GameStateV2:
+    """Complete a revealed final judgment by selecting the same-ID authored ending."""
+
+    _validate_definition_matches_state(state, definition)
+    if state.room.status is not RoomStatus.ACTIVE:
+        raise InvalidStageTransitionError("completion requires an active room")
+    settlement_definition = definition.settlement
+    if not isinstance(settlement_definition, FinalJudgmentSettlementDefinition):
+        raise InvalidStageTransitionError("completion requires a final judgment settlement")
+    if settlement_definition.default_effect is not SettlementEffect.BRANCH:
+        raise InvalidStageTransitionError("final judgment must declare branch completion")
+    if state.stage.phase is not StagePhase.REVEAL:
+        raise InvalidStageTransitionError("the final judgment must be in reveal phase")
+
+    settlement = state.stage.settlement
+    if settlement is None or (
+        not settlement.revealed
+        or settlement.outcome_id is None
+        or settlement.submitted_member_ids != state.room.required_member_ids
+    ):
+        raise InvalidStageTransitionError(
+            "the final judgment must be completed and revealed before room completion"
+        )
+
+    available_endings = frozenset(ending_ids)
+    if settlement.outcome_id not in available_endings:
+        raise InvalidStageTransitionError(
+            "the final judgment outcome does not map to an authored ending"
+        )
+
+    completed = state.model_copy(
+        update={
+            "room": state.room.model_copy(update={"status": RoomStatus.COMPLETED}),
+            "ending_id": settlement.outcome_id,
+        }
+    )
+    return GameStateV2.model_validate(completed.model_dump())
+
+
 def enter_next_stage(
     state: GameStateV2,
     *,
@@ -146,6 +179,8 @@ def enter_next_stage(
     """Perform the trusted, synchronous transition after an observable REVEAL phase."""
 
     _validate_definition_matches_state(state, current_definition)
+    if state.room.status is not RoomStatus.ACTIVE:
+        raise InvalidStageTransitionError("stage entry requires an active room")
     if state.stage.phase is not StagePhase.REVEAL:
         raise InvalidStageTransitionError("the current stage must be in reveal phase")
     settlement = state.stage.settlement
@@ -251,21 +286,17 @@ def _canonical_members(state: GameStateV2, members: Iterable[str]) -> tuple[str,
     )
 
 
-def _change_read_confirmation(
+def _confirm_read(
     state: GameStateV2,
     actor_member_id: str,
     *,
-    confirmed: bool,
     definition: MultiplayerStageDefinition,
 ) -> GameStateV2:
     if state.stage.phase is not StagePhase.READ:
-        raise InvalidStageTransitionError("read confirmation can change only during read phase")
+        raise InvalidStageTransitionError("read confirmation is allowed only during read phase")
 
     members = set(state.stage.read_member_ids)
-    if confirmed:
-        members.add(actor_member_id)
-    else:
-        members.discard(actor_member_id)
+    members.add(actor_member_id)
     read_member_ids = _canonical_members(state, members)
 
     stage_updates: dict[str, object] = {"read_member_ids": read_member_ids}

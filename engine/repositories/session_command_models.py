@@ -15,6 +15,7 @@ from pydantic import BaseModel, TypeAdapter
 from engine.api.schemas.actions import ActionResponse
 
 ReceiptStatus = Literal["processing", "succeeded", "rejected", "failed"]
+CommandResult = ActionResponse | dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,11 +27,13 @@ class CommandReceipt:
     expected_revision: int | None
     base_revision: int | None
     result_revision: int | None
-    result: ActionResponse | None
+    result: CommandResult | None
     error_code: str | None
     error_details: dict[str, object]
     event_sequence_from: int | None
     event_sequence_to: int | None
+    actor_principal_id: UUID | None = None
+    actor_member_id: UUID | None = None
     request_payload: dict[str, object] = field(default_factory=dict)
     base_state: dict[str, object] | None = None
     base_state_sha256: str | None = None
@@ -68,9 +71,13 @@ def command_request_sha256(payload: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def action_response_from_json(value: object) -> ActionResponse | None:
-    """Decode a stored action union without accepting arbitrary result objects."""
+def command_result_from_json(value: object, *, command_kind: str) -> CommandResult | None:
+    """Decode legacy action results strictly and retain typed multiplayer JSON."""
 
     if value is None:
         return None
+    if command_kind == "multiplayer_v1":
+        if not isinstance(value, Mapping):
+            raise TypeError("multiplayer command result must be a JSON object")
+        return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
     return cast(ActionResponse, TypeAdapter(ActionResponse).validate_python(value))

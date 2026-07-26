@@ -3,17 +3,28 @@
 from typing import Annotated, Final, Literal, Self, TypeAlias
 from uuid import UUID
 
-from pydantic import Field, TypeAdapter, model_validator
+from pydantic import BeforeValidator, Field, TypeAdapter, model_validator
 
 from engine.contracts.multiplayer_v1.base import ContractModel, Identifier
 from engine.contracts.multiplayer_v1.errors import CommandError
 from engine.contracts.multiplayer_v1.vocabulary import CommandStatus
 
 
+def _parse_wire_uuid(value: object) -> object:
+    """Parse UUID strings at the JSON boundary while retaining strict models."""
+
+    if isinstance(value, str):
+        return UUID(value)
+    return value
+
+
+WireUuid: TypeAlias = Annotated[UUID, BeforeValidator(_parse_wire_uuid)]
+
+
 class _CommandBase(ContractModel):
     """提供全部客户端命令共享的幂等和并发控制字段。"""
 
-    command_id: UUID
+    command_id: WireUuid
     expected_revision: int = Field(ge=0)
 
 
@@ -71,13 +82,15 @@ class ConfirmReadCommand(_CommandBase):
     payload: StageCommandPayload
 
 
-class RevokeReadCommand(_CommandBase):
-    type: Literal["stage.revoke_read"]
+class AdvanceStageCommand(_CommandBase):
+    """Request server-selected progression from an observable reveal phase."""
+
+    type: Literal["stage.advance"]
     payload: StageCommandPayload
 
 
 class SendDiscussionMessagePayload(StageCommandPayload):
-    message_id: UUID
+    message_id: WireUuid
     text: str = Field(min_length=1, max_length=4_000)
 
 
@@ -154,7 +167,7 @@ MultiplayerCommand: TypeAlias = Annotated[
     | StartRoomCommand
     | EndIncompleteCommand
     | ConfirmReadCommand
-    | RevokeReadCommand
+    | AdvanceStageCommand
     | SendDiscussionMessageCommand
     | ConfirmDiscussionCloseCommand
     | RevokeDiscussionCloseCommand

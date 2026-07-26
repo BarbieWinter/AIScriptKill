@@ -160,6 +160,47 @@ def test_contract_model_is_strict_frozen_and_rejects_unknown_fields() -> None:
         contract.enabled = False
 
 
+def test_completed_state_requires_matching_revealed_ending() -> None:
+    state = _game_state()
+    revealed_settlement = state.stage.settlement
+    assert revealed_settlement is not None
+    revealed_settlement = revealed_settlement.model_copy(
+        update={
+            "submitted_member_ids": ("member-a", "member-b"),
+            "revealed": True,
+            "outcome_id": "ending-a",
+        }
+    )
+    completed_shape = state.model_copy(
+        update={
+            "room": state.room.model_copy(update={"status": RoomStatus.COMPLETED}),
+            "stage": state.stage.model_copy(
+                update={
+                    "phase": StagePhase.REVEAL,
+                    "settlement": revealed_settlement,
+                }
+            ),
+        }
+    )
+
+    with pytest.raises(ValidationError, match="requires ending_id"):
+        GameStateV2.model_validate(completed_shape.model_dump())
+
+    mismatched = completed_shape.model_copy(update={"ending_id": "ending-b"})
+    with pytest.raises(ValidationError, match="matching ending_id"):
+        GameStateV2.model_validate(mismatched.model_dump())
+
+    completed = GameStateV2.model_validate(
+        completed_shape.model_copy(update={"ending_id": "ending-a"}).model_dump()
+    )
+    assert completed.room.status is RoomStatus.COMPLETED
+    assert completed.ending_id == "ending-a"
+
+    active = state.model_copy(update={"ending_id": "ending-a"})
+    with pytest.raises(ValidationError, match="only a completed room"):
+        GameStateV2.model_validate(active.model_dump())
+
+
 def test_vocabulary_and_error_codes_are_stable() -> None:
     assert [value.value for value in RoomStatus] == ["lobby", "active", "completed", "closed"]
     assert [value.value for value in StagePhase] == ["read", "discuss", "settle", "reveal"]
@@ -253,6 +294,22 @@ def test_game_state_rejects_invalid_member_collections(mutation: str) -> None:
         GameStateV2.model_validate_json(json.dumps(raw))
 
 
+def test_game_state_accepts_json_object_key_reordering() -> None:
+    raw = _state_json_mapping()
+    required_member_ids = cast(dict[str, object], raw["room"])["required_member_ids"]
+    assert required_member_ids == ["member-a", "member-b"]
+    raw["players"] = dict(reversed(list(cast(dict[str, object], raw["players"]).items())))
+    raw["private_by_member"] = dict(
+        reversed(list(cast(dict[str, object], raw["private_by_member"]).items()))
+    )
+
+    restored = GameStateV2.model_validate_json(json.dumps(raw))
+
+    assert restored.room.required_member_ids == ("member-a", "member-b")
+    assert set(restored.players) == {"member-a", "member-b"}
+    assert set(restored.private_by_member) == {"member-a", "member-b"}
+
+
 def test_game_state_rejects_unknown_enum_extra_field_and_wrong_version() -> None:
     raw = _state_json_mapping()
     room = raw["room"]
@@ -312,7 +369,7 @@ def test_command_union_accepts_all_frozen_types_and_rejects_future_payloads() ->
         "room.start": {},
         "room.end_incomplete": {"reason": "host ended room"},
         "stage.confirm_read": {"stage_id": "stage-1"},
-        "stage.revoke_read": {"stage_id": "stage-1"},
+        "stage.advance": {"stage_id": "stage-1"},
         "discussion.send_message": {
             "stage_id": "stage-1",
             "message_id": str(MESSAGE_ID),
@@ -348,17 +405,18 @@ def test_command_union_accepts_all_frozen_types_and_rejects_future_payloads() ->
     assert isinstance(commands[0], AssignCharacterCommand)
     assert COMMAND_ADAPTER.json_schema()["discriminator"]["propertyName"] == "type"
 
-    with pytest.raises(ValidationError):
-        COMMAND_ADAPTER.validate_json(
-            json.dumps(
-                {
-                    "command_id": str(COMMAND_ID),
-                    "expected_revision": 7,
-                    "type": "room.future_command",
-                    "payload": {},
-                }
+    for unsupported_type in ("stage.revoke_read", "room.future_command"):
+        with pytest.raises(ValidationError):
+            COMMAND_ADAPTER.validate_json(
+                json.dumps(
+                    {
+                        "command_id": str(COMMAND_ID),
+                        "expected_revision": 7,
+                        "type": unsupported_type,
+                        "payload": {"stage_id": "stage-1"},
+                    }
+                )
             )
-        )
     with pytest.raises(ValidationError):
         COMMAND_ADAPTER.validate_json(
             json.dumps(

@@ -505,7 +505,5 @@ def _game_state_from_graph_result(raw_result: object, field: str) -> GameState:
     if not isinstance(raw_result, dict):
         raise ScriptEngineGraphResultError()
     result = cast(Mapping[object, object], raw_result)
-    values = {
-        str(key): json_value(value, f"{field}.{key}") for key, value in result.items()
-    }
+    values = {str(key): json_value(value, f"{field}.{key}") for key, value in result.items()}
     return game_state_from_mapping(values)

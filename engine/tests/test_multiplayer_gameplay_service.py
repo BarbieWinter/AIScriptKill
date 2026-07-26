@@ -1,0 +1,450 @@
+"""Exercise the Slim M2 gameplay service against the real frozen package."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Literal
+from uuid import UUID, uuid4
+
+import pytest
+
+from engine.api.errors import ApiError
+from engine.contracts.multiplayer_v1.authoring import (
+    FinalJudgmentSettlementDefinition,
+    SecretVoteSettlementDefinition,
+)
+from engine.contracts.multiplayer_v1.commands import (
+    AdvanceStageCommand,
+    ConfirmDiscussionCloseCommand,
+    ConfirmReadCommand,
+    ConfirmSharedChoiceCommand,
+    ConfirmSharedChoicePayload,
+    MultiplayerCommand,
+    SendDiscussionMessageCommand,
+    SendDiscussionMessagePayload,
+    StageCommandPayload,
+    SubmitSettlementCommand,
+    SubmitSettlementPayload,
+)
+from engine.contracts.multiplayer_v1.state import (
+    GAME_STATE_SCHEMA_VERSION,
+    GameStateV2,
+    PlayerState,
+    PrivatePlayerState,
+    RoomState,
+)
+from engine.contracts.multiplayer_v1.vocabulary import RoomStatus
+from engine.core.multiplayer_state_machine import initialize_stage_runtime
+from engine.core.package_loader import load_package_directory
+from engine.core.package_multiplayer import multiplayer_stage_contract
+from engine.core.runtime_package_snapshot import encode_runtime_package_snapshot
+from engine.repositories.multiplayer_room_models import StoredMultiplayerRoom, StoredRoomMember
+from engine.services.multiplayer_gameplay_service import (
+    apply_gameplay_command,
+    decode_room_game_state,
+    project_gameplay_snapshot,
+    project_multiplayer_review,
+)
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "script-packages" / "mp1-two-player"
+SESSION_ID = UUID("12345678-1234-5678-1234-567812345678")
+MEMBER_IDS = (
+    UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+)
+CHARACTER_IDS = ("investigator", "insider")
+
+
+def _active_room() -> tuple[StoredMultiplayerRoom, tuple[StoredRoomMember, ...]]:
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    snapshot = encode_runtime_package_snapshot(package)
+    definition = multiplayer_stage_contract(package, "investigation")
+    member_keys = tuple(str(member_id) for member_id in MEMBER_IDS)
+    state = GameStateV2(
+        state_schema_version=GAME_STATE_SCHEMA_VERSION,
+        session_id=SESSION_ID,
+        room_revision=1,
+        room=RoomState(
+            status=RoomStatus.ACTIVE,
+            required_member_ids=member_keys,
+            current_stage_id=definition.id,
+        ),
+        players={
+            member_id: PlayerState(
+                member_id=member_id,
+                character_id=character_id,
+                ready=True,
+            )
+            for member_id, character_id in zip(
+                member_keys,
+                CHARACTER_IDS,
+                strict=True,
+            )
+        },
+        private_by_member={
+            member_id: PrivatePlayerState(
+                character_id=character_id,
+                unlocked_chapter_ids=(definition.chapters[character_id],),
+            )
+            for member_id, character_id in zip(
+                member_keys,
+                CHARACTER_IDS,
+                strict=True,
+            )
+        },
+        stage=initialize_stage_runtime(
+            definition,
+            required_member_ids=member_keys,
+        ),
+    )
+    now = datetime.now(UTC)
+    room = StoredMultiplayerRoom(
+        id=SESSION_ID,
+        script_id=package.package.id,
+        status="active",
+        revision=1,
+        event_head_sequence=0,
+        state_schema_version=2,
+        state=state.model_dump(mode="json"),
+        runtime_package_version=package.package.version,
+        runtime_package_snapshot=dict(snapshot.payload),
+        runtime_package_sha256=snapshot.sha256,
+        created_at=now,
+        started_at=now,
+        closed_at=None,
+    )
+    members = tuple(
+        StoredRoomMember(
+            id=member_id,
+            session_id=SESSION_ID,
+            principal_id=uuid4(),
+            room_role="host" if index == 0 else "player",
+            ready_at=now,
+            joined_at=now,
+        )
+        for index, member_id in enumerate(MEMBER_IDS)
+    )
+    return room, members
+
+
+def _apply(
+    room: StoredMultiplayerRoom,
+    member: StoredRoomMember,
+    command: MultiplayerCommand,
+) -> StoredMultiplayerRoom:
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    mutation = apply_gameplay_command(
+        room=room,
+        member=member,
+        command=command,
+        package=package,
+    )
+    revision = room.revision + 1 if mutation.state_changed else room.revision
+    sequence = room.event_head_sequence + 1 if mutation.event_required else room.event_head_sequence
+    state = mutation.state.model_copy(update={"room_revision": revision})
+    return replace(
+        room,
+        status=state.room.status.value,
+        revision=revision,
+        event_head_sequence=sequence,
+        state=state.model_dump(mode="json"),
+        closed_at=datetime.now(UTC) if state.room.status is RoomStatus.COMPLETED else None,
+    )
+
+
+def _stage_command(
+    room: StoredMultiplayerRoom,
+    command_type: Literal[
+        "stage.confirm_read",
+        "discussion.confirm_close",
+        "stage.advance",
+    ],
+    stage_id: str,
+) -> ConfirmReadCommand | ConfirmDiscussionCloseCommand | AdvanceStageCommand:
+    payload = StageCommandPayload(stage_id=stage_id)
+    if command_type == "stage.confirm_read":
+        return ConfirmReadCommand(
+            command_id=uuid4(),
+            expected_revision=room.revision,
+            type="stage.confirm_read",
+            payload=payload,
+        )
+    if command_type == "discussion.confirm_close":
+        return ConfirmDiscussionCloseCommand(
+            command_id=uuid4(),
+            expected_revision=room.revision,
+            type="discussion.confirm_close",
+            payload=payload,
+        )
+    return AdvanceStageCommand(
+        command_id=uuid4(),
+        expected_revision=room.revision,
+        type="stage.advance",
+        payload=payload,
+    )
+
+
+def test_snapshot_whitelists_private_content_and_validates_public_chat() -> None:
+    room, members = _active_room()
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+
+    first = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    second = project_gameplay_snapshot(
+        room=room,
+        member=members[1],
+        package=package,
+        event_rows=(),
+    )
+
+    assert [chapter.id for chapter in first.chapters] == ["investigator-investigation"]
+    assert [chapter.id for chapter in second.chapters] == ["insider-investigation"]
+    assert first.settlement is None
+    assert first.public_materials[0].id == "arrival-photo"
+    assert first.public_materials[0].url is None
+    serialized = first.model_dump_json()
+    assert "private_by_member" not in serialized
+    assert "insider-investigation" not in serialized
+    assert "dm_guide" not in serialized
+    assert "conflicting-accounts" not in serialized
+
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "stage.confirm_read", "investigation"),
+        )
+    chat_command = SendDiscussionMessageCommand(
+        command_id=uuid4(),
+        expected_revision=room.revision,
+        type="discussion.send_message",
+        payload=SendDiscussionMessagePayload(
+            stage_id="investigation",
+            message_id=uuid4(),
+            text="门锁没有损坏。",
+        ),
+    )
+    mutation = apply_gameplay_command(
+        room=room,
+        member=members[0],
+        command=chat_command,
+        package=package,
+    )
+    assert mutation.state_changed is False
+    assert mutation.event_required is True
+    event = {
+        "sequence": room.event_head_sequence + 1,
+        "event_type": mutation.event_type,
+        "payload": mutation.event_payload,
+    }
+    room = replace(room, event_head_sequence=room.event_head_sequence + 1)
+    snapshot = project_gameplay_snapshot(
+        room=room,
+        member=members[1],
+        package=package,
+        event_rows=(event,),
+    )
+    assert snapshot.discussion_messages[0].member_id == str(members[0].id)
+    assert snapshot.discussion_messages[0].character_id == "investigator"
+    assert snapshot.discussion_messages[0].text == "门锁没有损坏。"
+
+    invalid_payload = dict(mutation.event_payload)
+    invalid_payload["character_id"] = "insider"
+    with pytest.raises(ApiError) as exc_info:
+        project_gameplay_snapshot(
+            room=room,
+            member=members[1],
+            package=package,
+            event_rows=({**event, "payload": invalid_payload},),
+        )
+    assert exc_info.value.error.code == "ROOM_EVENT_INVALID"
+
+
+def test_snapshot_projects_only_fresh_member_scene_presence() -> None:
+    room, members = _active_room()
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    now = datetime.now(UTC)
+    fresh = replace(
+        members[0],
+        scene_x=1455.0,
+        scene_y=970.0,
+        scene_facing="left",
+        scene_moving=True,
+        scene_updated_at=now,
+    )
+    stale = replace(
+        members[1],
+        scene_x=945.0,
+        scene_y=970.0,
+        scene_facing="right",
+        scene_moving=True,
+        scene_updated_at=now - timedelta(seconds=16),
+    )
+
+    snapshot = project_gameplay_snapshot(
+        room=room,
+        member=fresh,
+        members=(fresh, stale),
+        presence_now=now,
+        package=package,
+        event_rows=(),
+    )
+
+    first, second = snapshot.players
+    assert first.scene_online is True
+    assert (first.scene_x, first.scene_y, first.scene_facing, first.scene_moving) == (
+        1455.0,
+        970.0,
+        "left",
+        True,
+    )
+    assert second.scene_online is False
+    assert (second.scene_x, second.scene_y, second.scene_facing) == (None, None, None)
+    assert second.scene_moving is False
+    serialized = snapshot.model_dump_json()
+    assert "scene_updated_at" not in serialized
+    assert "principal_id" not in serialized
+
+
+def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
+    room, members = _active_room()
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    investigation = multiplayer_stage_contract(package, "investigation")
+    investigation_settlement = investigation.settlement
+    assert isinstance(investigation_settlement, SecretVoteSettlementDefinition)
+
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "stage.confirm_read", "investigation"),
+        )
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "discussion.confirm_close", "investigation"),
+        )
+    for member, option_id in zip(
+        members,
+        ("investigator-account", "insider-account"),
+        strict=True,
+    ):
+        room = _apply(
+            room,
+            member,
+            SubmitSettlementCommand(
+                command_id=uuid4(),
+                expected_revision=room.revision,
+                type="settlement.submit",
+                payload=SubmitSettlementPayload(
+                    settlement_id=investigation_settlement.settlement_id,
+                    option_id=option_id,
+                ),
+            ),
+        )
+
+    revealed = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert revealed.phase == "reveal"
+    assert revealed.can_advance is True
+    assert revealed.settlement is not None
+    assert revealed.settlement.revealed is True
+    assert len(revealed.settlement.revealed_ballots) == 2
+
+    room = _apply(
+        room,
+        members[0],
+        _stage_command(room, "stage.advance", "investigation"),
+    )
+    final_snapshot = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert final_snapshot.stage_id == "final-judgment"
+    assert [chapter.id for chapter in final_snapshot.chapters] == [
+        "investigator-investigation",
+        "investigator-final-judgment",
+    ]
+
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "stage.confirm_read", "final-judgment"),
+        )
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "discussion.confirm_close", "final-judgment"),
+        )
+    final_definition = multiplayer_stage_contract(package, "final-judgment")
+    final_settlement = final_definition.settlement
+    assert isinstance(final_settlement, FinalJudgmentSettlementDefinition)
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            ConfirmSharedChoiceCommand(
+                command_id=uuid4(),
+                expected_revision=room.revision,
+                type="settlement.confirm_shared_choice",
+                payload=ConfirmSharedChoicePayload(
+                    settlement_id=final_settlement.settlement_id,
+                    option_id="timeline-conflict",
+                ),
+            ),
+        )
+
+    completed = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert room.status == "completed"
+    assert completed.status == "completed"
+    assert completed.ending_id == "conflicting-accounts"
+    assert completed.can_advance is False
+
+    review = project_multiplayer_review(
+        room=room,
+        member=members[0],
+        package=package,
+    )
+    assert review.ending.id == "conflicting-accounts"
+    assert {chapter.character_id for chapter in review.chapters} == {
+        "investigator",
+        "insider",
+    }
+    assert review.final_settlement.reveal == "outcome_only"
+    review_json = review.model_dump_json()
+    assert "private_by_member" not in review_json
+    assert "ballots" not in review_json
+
+
+def test_room_state_decoder_rejects_relational_mismatch() -> None:
+    room, _members = _active_room()
+    assert decode_room_game_state(room).room_revision == room.revision
+
+    for invalid in (
+        replace(room, revision=room.revision + 1),
+        replace(room, status="completed"),
+        replace(room, state_schema_version=1),
+    ):
+        with pytest.raises(ApiError) as exc_info:
+            decode_room_game_state(invalid)
+        assert exc_info.value.error.code == "ROOM_STATE_INVALID"

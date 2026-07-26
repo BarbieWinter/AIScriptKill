@@ -249,8 +249,7 @@ def _authorized_knowledge(
     shown_and_viewed = {
         item["evidence_id"]
         for item in state["evidences_shown_to_npcs"]
-        if item["character_id"] == character.id
-        and item["evidence_id"] in state["viewed_evidences"]
+        if item["character_id"] == character.id and item["evidence_id"] in state["viewed_evidences"]
     }
     for reaction in json_mapping_list(character.definition.get("evidence_reactions")):
         evidence_id = metadata_text(reaction, "evidence_id")

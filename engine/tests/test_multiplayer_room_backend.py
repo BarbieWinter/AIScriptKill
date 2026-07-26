@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import get_type_hints
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -13,6 +15,7 @@ from pydantic import TypeAdapter
 from engine.api.errors import ApiError
 from engine.api.middleware.auth import VerifiedAnonymousPrincipal
 from engine.api.routes import sessions
+from engine.api.schemas.multiplayer_rooms import UpdateScenePresenceRequest
 from engine.contracts.multiplayer_v1.commands import (
     AssignCharacterCommand,
     AssignCharacterPayload,
@@ -20,7 +23,13 @@ from engine.contracts.multiplayer_v1.commands import (
     MultiplayerCommand,
     StageCommandPayload,
 )
-from engine.contracts.multiplayer_v1.state import GameStateV2
+from engine.contracts.multiplayer_v1.state import (
+    GameStateV2,
+    PlayerState,
+    PrivatePlayerState,
+    RoomState,
+)
+from engine.contracts.multiplayer_v1.vocabulary import RoomStatus
 from engine.core.package_loader import load_package_directory
 from engine.core.runtime_package_snapshot import encode_runtime_package_snapshot
 from engine.repositories.multiplayer_room_models import (
@@ -41,6 +50,23 @@ class _CommitDb:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+
+class _PresenceRepository:
+    def __init__(self, room: StoredMultiplayerRoom, member: StoredRoomMember | None) -> None:
+        self.room = room
+        self.member = member
+        self.updated: dict[str, object] | None = None
+
+    async def get_room(self, _session_id):
+        return self.room
+
+    async def joined_member(self, _session_id, _principal_id):
+        return self.member
+
+    async def update_scene_presence(self, **kwargs):
+        self.updated = kwargs
+        return self.member
 
 
 class _NoOpAssignmentRepository:
@@ -118,12 +144,15 @@ def _room(*, revision: int = 7) -> StoredMultiplayerRoom:
         script_id=package.package.id,
         status="lobby",
         revision=revision,
+        event_head_sequence=0,
         state_schema_version=2,
+        state={},
         runtime_package_version=package.package.version,
         runtime_package_snapshot=dict(snapshot.payload),
         runtime_package_sha256=snapshot.sha256,
         created_at=now,
         started_at=None,
+        closed_at=None,
     )
 
 
@@ -170,7 +199,7 @@ def test_command_route_parses_the_complete_multiplayer_union() -> None:
     assert annotation == MultiplayerCommand
     parsed = TypeAdapter(annotation).validate_python(
         {
-            "command_id": uuid4(),
+            "command_id": str(uuid4()),
             "expected_revision": 0,
             "type": "stage.confirm_read",
             "payload": {"stage_id": "investigation"},
@@ -223,6 +252,96 @@ async def test_unsupported_but_valid_full_command_returns_stable_error(
     assert exc_info.value.error.code == "COMMAND_NOT_AVAILABLE"
 
 
+def _active_room_with_member() -> tuple[StoredMultiplayerRoom, StoredRoomMember]:
+    lobby = _room()
+    now = datetime.now(UTC)
+    member = _member(lobby, role="host", joined_at=now)
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    definition = service._stage_definition(  # noqa: SLF001
+        "investigation",
+        next(stage.definition for stage in package.stages if stage.id == "investigation"),
+    )
+    member_id = str(member.id)
+    state = GameStateV2(
+        state_schema_version=2,
+        session_id=lobby.id,
+        room_revision=lobby.revision,
+        room=RoomState(
+            status=RoomStatus.ACTIVE,
+            required_member_ids=(member_id,),
+            current_stage_id=definition.id,
+        ),
+        players={
+            member_id: PlayerState(
+                member_id=member_id,
+                character_id="investigator",
+                ready=True,
+            )
+        },
+        private_by_member={
+            member_id: PrivatePlayerState(
+                character_id="investigator",
+                unlocked_chapter_ids=(definition.chapters["investigator"],),
+            )
+        },
+        stage=service.initialize_stage_runtime(definition, required_member_ids=(member_id,)),
+    )
+    return replace(lobby, status="active", state=state.model_dump(mode="json")), member
+
+
+@pytest.mark.asyncio
+async def test_scene_presence_derives_member_and_never_advances_room_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    room, member = _active_room_with_member()
+    repository = _PresenceRepository(room, member)
+    db = _CommitDb()
+    monkeypatch.setattr(service, "require_multiplayer_enabled", lambda: None)
+    monkeypatch.setattr(service, "MultiplayerRoomRepository", lambda _db: repository)
+
+    await service.update_scene_presence(
+        str(room.id),
+        UpdateScenePresenceRequest(x=1455, y=970, facing="left", moving=True),
+        VerifiedAnonymousPrincipal(id=member.principal_id),
+        db,  # type: ignore[arg-type]
+    )
+
+    assert repository.updated == {
+        "session_id": room.id,
+        "principal_id": member.principal_id,
+        "x": 1455.0,
+        "y": 970.0,
+        "facing": "left",
+        "moving": True,
+    }
+    assert "member_id" not in repository.updated
+    assert db.commit_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scene_presence_rejects_nonmember_before_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    room, _member_row = _active_room_with_member()
+    repository = _PresenceRepository(room, None)
+    db = _CommitDb()
+    monkeypatch.setattr(service, "require_multiplayer_enabled", lambda: None)
+    monkeypatch.setattr(service, "MultiplayerRoomRepository", lambda _db: repository)
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.update_scene_presence(
+            str(room.id),
+            UpdateScenePresenceRequest(x=1200, y=970, facing="right"),
+            VerifiedAnonymousPrincipal(id=uuid4()),
+            db,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.error.code == "NOT_ROOM_MEMBER"
+    assert repository.updated is None
+    assert db.commit_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_same_assignment_is_noop_but_service_commits_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -240,6 +359,19 @@ async def test_same_assignment_is_noop_but_service_commits_once(
     db = _CommitDb()
     monkeypatch.setattr(service, "require_multiplayer_enabled", lambda: None)
     monkeypatch.setattr(service, "MultiplayerRoomRepository", lambda _db: repository)
+    receipt_repository = type(
+        "ReceiptRepository",
+        (),
+        {
+            "get_receipt": AsyncMock(return_value=None),
+            "get_command_identity": AsyncMock(return_value=None),
+            "get_active_processing_receipt": AsyncMock(return_value=None),
+            "claim_receipt": AsyncMock(return_value=type("Claimed", (), {"attempt_count": 1})()),
+            "finalize_success": AsyncMock(return_value=True),
+            "expire_lease": AsyncMock(return_value=True),
+        },
+    )()
+    monkeypatch.setattr(service, "SessionCommandRepository", lambda _db: receipt_repository)
     command = AssignCharacterCommand(
         command_id=uuid4(),
         expected_revision=room.revision,
@@ -258,7 +390,7 @@ async def test_same_assignment_is_noop_but_service_commits_once(
     assert result.event_sequence == 0
     assert result.replayed is False
     assert repository.write_calls == 0
-    assert db.commit_calls == 1
+    assert db.commit_calls == 2
 
 
 @pytest.mark.asyncio
