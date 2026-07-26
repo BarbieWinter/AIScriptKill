@@ -168,7 +168,6 @@ def apply_gameplay_command(
                 next_state = complete_final_judgment(
                     next_state,
                     definition=definition,
-                    ending_ids=(ending.id for ending in package.endings),
                 )
         elif isinstance(command, RoomResyncCommand):
             return GameplayMutation(

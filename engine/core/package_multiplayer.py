@@ -14,6 +14,7 @@ from engine.contracts.multiplayer_v1.authoring import (
     SecretVoteSettlementDefinition,
     SharedChoiceSettlementDefinition,
 )
+from engine.contracts.multiplayer_v1.vocabulary import SettlementEffect
 from engine.core.package_archive import PackageArchiveError
 from engine.core.package_manifest_yaml import PackageManifest
 from engine.core.package_schema import JsonMapping, ScriptPackageImport, StageRecord
@@ -53,7 +54,7 @@ def split_stage_mapping(
     return legacy, normalized
 
 
-def validate_multiplayer_package(
+def _validate_multiplayer_content(
     package: ScriptPackageImport,
     manifest: PackageManifest,
 ) -> None:
@@ -112,7 +113,6 @@ def validate_multiplayer_package(
                 material_ids,
             )
         _validate_outcome_triggers(stage)
-        _validate_final_judgment_endings(stage, package)
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +175,191 @@ def multiplayer_policy_from_package(package: ScriptPackageImport) -> Multiplayer
         start_policy="all_players_ready",
         duplicate_characters=False,
         playable_character_ids=playable,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MultiplayerPlayabilityDiagnostic:
+    """Stable package-level reason why a room cannot use a multiplayer package."""
+
+    code: str
+    message: str
+    field: str
+    stage_id: str | None = None
+    outcome_id: str | None = None
+    ending_id: str | None = None
+
+    def details(self) -> dict[str, str | None]:
+        return {
+            "diagnostic_code": self.code,
+            "field": self.field,
+            "stage_id": self.stage_id,
+            "outcome_id": self.outcome_id,
+            "ending_id": self.ending_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MultiplayerEndingResolution:
+    """One authored final-judgment outcome resolved to an existing ending."""
+
+    outcome_id: str
+    ending_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class MultiplayerPackagePlayability:
+    """Immutable decision shared by import, publication, room start, and snapshots."""
+
+    playable: bool
+    diagnostics: tuple[MultiplayerPlayabilityDiagnostic, ...]
+    policy: MultiplayerPackagePolicy | None
+    terminal_stage_id: str | None
+    ending_resolutions: tuple[MultiplayerEndingResolution, ...]
+
+
+def multiplayer_package_playability(
+    package: ScriptPackageImport,
+) -> MultiplayerPackagePlayability:
+    """Return the deterministic Multiplayer v1 playability decision for one package."""
+
+    try:
+        policy = multiplayer_policy_from_package(package)
+    except PackageMultiplayerError as error:
+        if error.field.startswith("info."):
+            code = "PACKAGE_MULTIPLAYER_PLAYER_RANGE_INVALID"
+            message = "package.yml info 与 multiplayer 的 min_players/max_players 必须一致"
+        elif error.field == "characters.playable":
+            code = "PACKAGE_MULTIPLAYER_PLAYER_COUNT_INVALID"
+            message = "可玩角色数量不能少于 multiplayer.max_players"
+        else:
+            code = "PACKAGE_MULTIPLAYER_POLICY_INVALID"
+            message = "剧本包不满足双人 Multiplayer v1 运行策略"
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code=code,
+            message=message,
+            field=error.field,
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), None, None, ())
+
+    try:
+        manifest_config = dict(package.package.config)
+        manifest_config.pop("stage_index", None)
+        manifest = PackageManifest.model_validate_json(
+            json.dumps(manifest_config, ensure_ascii=False)
+        )
+        _validate_multiplayer_content(package, manifest)
+        ordered_stages = multiplayer_stages_from_package(package)
+        stage_contracts = tuple(_multiplayer_stage(stage.definition) for stage in ordered_stages)
+    except PackageArchiveError as error:
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code=error.code,
+            message=error.message,
+            field="package",
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
+    except (PackageMultiplayerError, ValidationError) as error:
+        field = error.field if isinstance(error, PackageMultiplayerError) else "stages"
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code="PACKAGE_MULTIPLAYER_STAGE_INVALID",
+            message="多人阶段定义无法形成可运行契约",
+            field=field,
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
+
+    diagnostics: list[MultiplayerPlayabilityDiagnostic] = []
+    final_stages: list[tuple[MultiplayerStageDefinition, FinalJudgmentSettlementDefinition]] = []
+    for stage in stage_contracts:
+        settlement = stage.settlement
+        if isinstance(settlement, FinalJudgmentSettlementDefinition):
+            final_stages.append((stage, settlement))
+    if len(final_stages) != 1 or final_stages[0][0].id != stage_contracts[-1].id:
+        stage_id = final_stages[0][0].id if final_stages else None
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_TERMINAL_STAGE_INVALID",
+                message="多人剧本必须且只能以一个 final_judgment 阶段结束",
+                field="stages",
+                stage_id=stage_id,
+            )
+        )
+        return MultiplayerPackagePlayability(False, tuple(diagnostics), policy, None, ())
+
+    for stage in stage_contracts[:-1]:
+        if stage.settlement.default_effect is SettlementEffect.RECORD_AND_CONTINUE:
+            continue
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_STAGE_EFFECT_UNSUPPORTED",
+                message="非终局阶段只支持 record_and_continue 效果",
+                field=f"stages.{stage.id}.settlement.default_effect",
+                stage_id=stage.id,
+            )
+        )
+
+    terminal_stage, settlement = final_stages[0]
+    if settlement.default_effect is not SettlementEffect.BRANCH:
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_TERMINAL_EFFECT_UNSUPPORTED",
+                message="最终判断必须使用 branch 终局效果",
+                field=f"stages.{terminal_stage.id}.settlement.default_effect",
+                stage_id=terminal_stage.id,
+            )
+        )
+
+    declared_outcomes = tuple(option.outcome_id for option in settlement.options)
+    if settlement.tie_outcome_id is not None:
+        declared_outcomes = (*declared_outcomes, settlement.tie_outcome_id)
+    declared_outcome_set = frozenset(declared_outcomes)
+    ending_ids = frozenset(ending.id for ending in package.endings)
+    resolutions: list[MultiplayerEndingResolution] = []
+    for outcome_id in declared_outcomes:
+        ending_id = settlement.ending_by_outcome.get(outcome_id)
+        field = f"stages.{terminal_stage.id}.settlement.ending_by_outcome.{outcome_id}"
+        if ending_id is None:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_ENDING_MAPPING_MISSING",
+                    message=f"最终判断结果缺少结局映射: {outcome_id}",
+                    field=field,
+                    stage_id=terminal_stage.id,
+                    outcome_id=outcome_id,
+                )
+            )
+        elif ending_id not in ending_ids:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_ENDING_REFERENCE_INVALID",
+                    message=f"最终判断映射指向不存在的结局: {ending_id}",
+                    field=field,
+                    stage_id=terminal_stage.id,
+                    outcome_id=outcome_id,
+                    ending_id=ending_id,
+                )
+            )
+        else:
+            resolutions.append(
+                MultiplayerEndingResolution(outcome_id=outcome_id, ending_id=ending_id)
+            )
+    for outcome_id in sorted(settlement.ending_by_outcome.keys() - declared_outcome_set):
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_ENDING_MAPPING_OUTCOME_INVALID",
+                message=f"结局映射包含未声明的最终判断结果: {outcome_id}",
+                field=f"stages.{terminal_stage.id}.settlement.ending_by_outcome.{outcome_id}",
+                stage_id=terminal_stage.id,
+                outcome_id=outcome_id,
+                ending_id=settlement.ending_by_outcome[outcome_id],
+            )
+        )
+
+    return MultiplayerPackagePlayability(
+        playable=not diagnostics,
+        diagnostics=tuple(diagnostics),
+        policy=policy,
+        terminal_stage_id=terminal_stage.id,
+        ending_resolutions=tuple(resolutions),
     )
 
 
@@ -291,28 +476,6 @@ def _validate_outcome_triggers(stage: MultiplayerStageDefinition) -> None:
             f"stage {stage.id} 的公共材料 outcome trigger",
             outcome_id,
             frozenset(declared_outcomes),
-        )
-
-
-def _validate_final_judgment_endings(
-    stage: MultiplayerStageDefinition,
-    package: ScriptPackageImport,
-) -> None:
-    settlement = stage.settlement
-    if not isinstance(settlement, FinalJudgmentSettlementDefinition):
-        return
-    ending_ids = frozenset(ending.id for ending in package.endings)
-    for option in settlement.options:
-        ensure_reference(
-            f"stage {stage.id} 的 final judgment outcome",
-            option.outcome_id,
-            ending_ids,
-        )
-    if settlement.tie_outcome_id is not None:
-        ensure_reference(
-            f"stage {stage.id} 的 final judgment tie outcome",
-            settlement.tie_outcome_id,
-            ending_ids,
         )
 
 

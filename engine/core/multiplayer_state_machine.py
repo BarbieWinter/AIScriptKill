@@ -130,9 +130,8 @@ def complete_final_judgment(
     state: GameStateV2,
     *,
     definition: MultiplayerStageDefinition,
-    ending_ids: Iterable[str],
 ) -> GameStateV2:
-    """Complete a revealed final judgment by selecting the same-ID authored ending."""
+    """Complete a revealed final judgment with its validated authored ending."""
 
     _validate_definition_matches_state(state, definition)
     if state.room.status is not RoomStatus.ACTIVE:
@@ -155,8 +154,8 @@ def complete_final_judgment(
             "the final judgment must be completed and revealed before room completion"
         )
 
-    available_endings = frozenset(ending_ids)
-    if settlement.outcome_id not in available_endings:
+    ending_id = settlement_definition.ending_by_outcome.get(settlement.outcome_id)
+    if ending_id is None:
         raise InvalidStageTransitionError(
             "the final judgment outcome does not map to an authored ending"
         )
@@ -164,7 +163,7 @@ def complete_final_judgment(
     completed = state.model_copy(
         update={
             "room": state.room.model_copy(update={"status": RoomStatus.COMPLETED}),
-            "ending_id": settlement.outcome_id,
+            "ending_id": ending_id,
         }
     )
     return GameStateV2.model_validate(completed.model_dump())

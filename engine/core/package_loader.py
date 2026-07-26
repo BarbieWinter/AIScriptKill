@@ -30,7 +30,7 @@ from engine.core.package_content_loader import (
     relative_names,
 )
 from engine.core.package_directory import package_directory_archive
-from engine.core.package_multiplayer import validate_multiplayer_package
+from engine.core.package_multiplayer import multiplayer_package_playability
 from engine.core.package_schema import PackageRecord, ScriptPackageImport
 from engine.core.package_stage_loader import (
     load_stage_index,
@@ -127,7 +127,11 @@ def _load_package(
         assets=load_assets(archive, names, root),
     )
     warnings = validate_package_import(package, available_files=relative_names(names, root))
-    validate_multiplayer_package(package, manifest)
+    if manifest.multiplayer is not None:
+        playability = multiplayer_package_playability(package)
+        if not playability.playable:
+            diagnostic = playability.diagnostics[0]
+            raise PackageArchiveError(diagnostic.code, diagnostic.message)
     if len(warnings) == 0:
         return package
     return ScriptPackageImport(

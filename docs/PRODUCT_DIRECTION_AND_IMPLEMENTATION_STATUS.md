@@ -458,7 +458,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
   → 完整复盘
 ```
 
-该闭环由 `engine/services/multiplayer_gameplay_service.py:113` 接收玩法命令并构造参与者安全快照，由 `LobbyBoundary.tsx:86` 切换到活跃游戏界面。终局不再被一般 branch 缺失阻断：`complete_final_judgment` 将最终 `outcome_id` 映射到同名 ending 并把房间标为 `completed`，见 `engine/core/multiplayer_state_machine.py:130`。
+该闭环由 `engine/services/multiplayer_gameplay_service.py:113` 接收玩法命令并构造参与者安全快照，由 `LobbyBoundary.tsx:86` 切换到活跃游戏界面。终局通过 `ending_by_outcome` 将最终 `outcome_id` 解析为作者声明的 ending 并把房间标为 `completed`；两类 ID 不再要求同名。导入、发布、房间创建和冻结版本快照解码共同消费 `multiplayer_package_playability`，在写入或开局前拒绝不可完成的多人剧本版本。
 
 必须同时写清限制：
 
@@ -475,23 +475,18 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 
 | 严重度 | 缺口 | 实际后果 |
 |---|---|---|
-| P1 | `final_judgment` schema 允许 `default_effect: record_and_continue`，runtime 却要求最终判断必须为 `branch` | 合法导入的包会在最后提交后被 runtime 拒绝并卡死 |
 | P1 | shared-choice final 没有限制为 `reveal: outcome_only` | schema 默认的 `named_ballots` 不会产生 ballots，房间可完成但复盘永久失败 |
-| P1 | schema 没有校验终局拓扑必须以可完成的 `final_judgment + branch` 收尾 | 最后阶段为 `none`、普通 settlement 或一般 branch 时无下一阶段可进；final judgment 若出现在中间又会让后续阶段永久不可达 |
 | P1 | `dm_guide/truth.yml` 在包契约中可选，但 completed review 强制要求 truth | 合法包可以完成游戏，却在打开复盘时永久返回 `ROOM_REVIEW_INVALID` |
 | P1/P2 | 双人房间允许包声明多于两名 playable character | 两人任选后可以完成游戏，但 review 要求 final chapters 恰好等于实际角色；未选第三角色会导致复盘失败 |
 | P2 | endings 仍要求 `condition` / `on_trigger`，多人完成逻辑只消费 `id/name/outcome_text` | 合法条件和动作会被静默忽略，形成假 authoring 能力 |
-| P2 | final `outcome_id` 必须与 `ending.id` 同名，但契约没有把这种强耦合表达成独立映射 | 作者只能依赖隐含命名约定，重命名任一侧就会让终局失败 |
 | P2 | `engine.entry_stage`、`allowed_transitions`、`entry_conditions` 与 stage index 同时存在 | 当前 runtime 只按 index 顺序，合法但互相矛盾的 YAML 会被静默忽略 |
 | P2 | 角色章节 frontmatter 的 `release` / `stage_min` 不被多人 runtime 消费 | `release: rule` 等合法配置也会按 `stage.chapters` 无条件解锁 |
 | P2 | 当前 investigation 选项把“20:20 强行进入”标为 `investigator-account` | 调查员章节实际明确否认 20:10 至 20:20 有人从走廊进入，结果归因与文本冲突 |
 
 对应代码边界包括：
 
-- `engine/contracts/multiplayer_v1/authoring.py:100` 与 `engine/core/multiplayer_state_machine.py:130` 的 final judgment 约束不一致。
 - `engine/core/package_multiplayer.py:76` 只检查 playable 角色“不少于”房间人数，而 `engine/core/multiplayer_review.py:49` 要求 final chapters 与实际分配角色集合完全相等。
 - `engine/core/multiplayer_review.py:67` 把包契约中的可选 truth 变成 completed review 的硬依赖。
-- `engine/core/multiplayer_state_machine.py:130` 会在任何 final judgment 完成时直接结束房间；`enter_next_stage` 又拒绝一般 branch，当前 loader 没有验证完整终局拓扑。
 - `engine/core/multiplayer_state_machine.py:158` 直接按同名 outcome ID 选 ending，不执行 legacy ending condition/action。
 - `engine/services/multiplayer_gameplay_service.py:392` 只按 stage index 取得下一阶段。
 - `script-packages/mp1-two-player/stages/investigation.yml:25` 与调查员当前章节陈述不一致。

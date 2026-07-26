@@ -4,7 +4,7 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from engine.api.errors import not_found
+from engine.api.errors import not_found, unprocessable_entity
 from engine.api.schemas import PackageListResponse
 from engine.api.schemas.packages import (
     PackagePlayableCharactersResponse,
@@ -13,12 +13,14 @@ from engine.api.schemas.packages import (
     PackageUpdateResponse,
     PlayableCharacterSummary,
 )
+from engine.core.package_multiplayer import multiplayer_package_playability
 from engine.repositories.package_repository import (
     PackageRepository,
     StoredPackage,
     StoredPackageStatus,
     StoredPlayableCharacter,
 )
+from engine.repositories.runtime_package_repository import get_runtime_package
 from engine.services.mapper_utils import timestamp
 
 # ── 剧本包列表服务 ──
@@ -71,6 +73,24 @@ async def update_package(
     """提交管理员发起的剧本包状态变更，否则抛出 PACKAGE_NOT_FOUND。"""
 
     repository = PackageRepository(db)
+    if payload.status == "published":
+        package = await get_runtime_package(
+            db,
+            package_id,
+            for_update=True,
+            published_only=False,
+        )
+        if package is None:
+            raise not_found("PACKAGE_NOT_FOUND", "未找到指定剧本包")
+        if "multiplayer" in package.package.config:
+            playability = multiplayer_package_playability(package)
+            if not playability.playable:
+                diagnostic = playability.diagnostics[0]
+                raise unprocessable_entity(
+                    "PACKAGE_NOT_MULTIPLAYER",
+                    diagnostic.message,
+                    diagnostic.details(),
+                )
     status = await repository.update_package_status(package_id, payload.status)
     if status is None:
         raise not_found("PACKAGE_NOT_FOUND", "未找到指定剧本包")

@@ -2,6 +2,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -9,9 +10,11 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
+from engine.core.package_loader import load_package_directory
 from engine.core.package_multiplayer import (
     PackageMultiplayerError,
     first_multiplayer_stage_from_package,
+    multiplayer_package_playability,
     multiplayer_policy_from_package,
     multiplayer_stage_definition,
     multiplayer_stage_from_package,
@@ -32,6 +35,8 @@ from engine.core.runtime_package_snapshot import (
 )
 from engine.repositories.runtime_package_repository import get_runtime_package
 from engine.tests.stategraph_fixtures import state_graph_package
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "script-packages" / "mp1-two-player"
 
 
 def _two_player_package() -> ScriptPackageImport:
@@ -106,6 +111,17 @@ def test_snapshot_round_trip_is_canonical_and_excludes_import_only_fields() -> N
     assert b', "' not in canonical_runtime_package_bytes(package)
     assert snapshot.sha256 == runtime_package_sha256(package)
     assert len(snapshot.sha256) == 64
+
+
+def test_multiplayer_playability_is_identical_after_snapshot_round_trip() -> None:
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    before = multiplayer_package_playability(package)
+
+    snapshot = encode_runtime_package_snapshot(package)
+    decoded = decode_runtime_package_snapshot(snapshot.payload, snapshot.sha256)
+
+    assert multiplayer_package_playability(decoded) == before
+    assert before.playable is True
 
 
 def test_snapshot_encoding_is_stable_for_mapping_key_order_and_unicode() -> None:

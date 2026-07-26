@@ -160,7 +160,7 @@ def test_contract_model_is_strict_frozen_and_rejects_unknown_fields() -> None:
         contract.enabled = False
 
 
-def test_completed_state_requires_matching_revealed_ending() -> None:
+def test_completed_state_requires_revealed_outcome_and_authored_ending() -> None:
     state = _game_state()
     revealed_settlement = state.stage.settlement
     assert revealed_settlement is not None
@@ -186,15 +186,24 @@ def test_completed_state_requires_matching_revealed_ending() -> None:
     with pytest.raises(ValidationError, match="requires ending_id"):
         GameStateV2.model_validate(completed_shape.model_dump())
 
-    mismatched = completed_shape.model_copy(update={"ending_id": "ending-b"})
-    with pytest.raises(ValidationError, match="matching ending_id"):
-        GameStateV2.model_validate(mismatched.model_dump())
-
     completed = GameStateV2.model_validate(
-        completed_shape.model_copy(update={"ending_id": "ending-a"}).model_dump()
+        completed_shape.model_copy(update={"ending_id": "ending-b"}).model_dump()
     )
     assert completed.room.status is RoomStatus.COMPLETED
-    assert completed.ending_id == "ending-a"
+    assert completed.stage.settlement is not None
+    assert completed.stage.settlement.outcome_id == "ending-a"
+    assert completed.ending_id == "ending-b"
+
+    missing_outcome = completed_shape.model_copy(
+        update={
+            "ending_id": "ending-b",
+            "stage": completed_shape.stage.model_copy(
+                update={"settlement": revealed_settlement.model_copy(update={"outcome_id": None})}
+            ),
+        }
+    )
+    with pytest.raises(ValidationError, match="revealed settlement requires outcome_id"):
+        GameStateV2.model_validate(missing_outcome.model_dump())
 
     active = state.model_copy(update={"ending_id": "ending-a"})
     with pytest.raises(ValidationError, match="only a completed room"):

@@ -71,8 +71,8 @@ from engine.contracts.multiplayer_v1.vocabulary import CommandStatus, RoomStatus
 from engine.core.multiplayer_state_machine import initialize_stage_runtime
 from engine.core.package_multiplayer import (
     MULTIPLAYER_STAGE_KEYS,
-    PackageMultiplayerError,
     first_multiplayer_stage_from_package,
+    multiplayer_package_playability,
     multiplayer_policy_from_package,
 )
 from engine.core.runtime_package_snapshot import (
@@ -124,13 +124,20 @@ async def create_multiplayer_session(
     package = await get_runtime_package(db, payload.script_id, lock_existing=True)
     if package is None:
         raise not_found("SCRIPT_PACKAGE_NOT_FOUND", "未找到可用于多人房间的已发布剧本包")
-    try:
-        multiplayer_policy_from_package(package)
-        snapshot = encode_runtime_package_snapshot(package)
-    except (PackageMultiplayerError, RuntimePackageSnapshotError) as exc:
+    playability = multiplayer_package_playability(package)
+    if not playability.playable:
+        diagnostic = playability.diagnostics[0]
         raise unprocessable_entity(
             "PACKAGE_NOT_MULTIPLAYER",
-            "剧本包不满足双人 Multiplayer v1 运行策略",
+            diagnostic.message,
+            diagnostic.details(),
+        )
+    try:
+        snapshot = encode_runtime_package_snapshot(package)
+    except RuntimePackageSnapshotError as exc:
+        raise unprocessable_entity(
+            "PACKAGE_NOT_MULTIPLAYER",
+            "剧本包无法生成固定运行快照",
         ) from exc
 
     room = await repository.create_room(
@@ -984,10 +991,17 @@ def _decode_room_package(room: StoredMultiplayerRoom):
             expected_package_id=room.script_id,
             expected_package_version=room.runtime_package_version,
         )
-        multiplayer_policy_from_package(package)
-        return package
-    except (RuntimePackageSnapshotError, PackageMultiplayerError) as exc:
+    except RuntimePackageSnapshotError as exc:
         raise conflict("ROOM_PACKAGE_INVALID", "房间固定剧本包校验失败") from exc
+    playability = multiplayer_package_playability(package)
+    if not playability.playable:
+        diagnostic = playability.diagnostics[0]
+        raise conflict(
+            "ROOM_PACKAGE_INVALID",
+            diagnostic.message,
+            diagnostic.details(),
+        )
+    return package
 
 
 def _stage_definition(stage_id: str, raw: Mapping[str, object]) -> MultiplayerStageDefinition:

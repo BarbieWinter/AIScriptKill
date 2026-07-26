@@ -15,7 +15,10 @@ from pydantic import TypeAdapter
 from engine.api.errors import ApiError
 from engine.api.middleware.auth import VerifiedAnonymousPrincipal
 from engine.api.routes import sessions
-from engine.api.schemas.multiplayer_rooms import UpdateScenePresenceRequest
+from engine.api.schemas.multiplayer_rooms import (
+    CreateMultiplayerSessionRequest,
+    UpdateScenePresenceRequest,
+)
 from engine.contracts.multiplayer_v1.commands import (
     AssignCharacterCommand,
     AssignCharacterPayload,
@@ -50,6 +53,19 @@ class _CommitDb:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+
+class _CreateRepository:
+    def __init__(self) -> None:
+        self.lock_calls = 0
+        self.create_calls = 0
+
+    async def advisory_lock(self, _session_id):
+        self.lock_calls += 1
+
+    async def create_room(self, **_kwargs):
+        self.create_calls += 1
+        raise AssertionError("invalid package must be rejected before room creation")
 
 
 class _PresenceRepository:
@@ -153,6 +169,31 @@ def _room(*, revision: int = 7) -> StoredMultiplayerRoom:
         created_at=now,
         started_at=None,
         closed_at=None,
+    )
+
+
+def _package_with_missing_ending_mapping():
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    final_stage = package.stages[-1]
+    definition = dict(final_stage.definition)
+    settlement = dict(definition["settlement"])
+    ending_by_outcome = dict(settlement["ending_by_outcome"])
+    ending_by_outcome.pop("insufficient-evidence")
+    settlement["ending_by_outcome"] = ending_by_outcome
+    definition["settlement"] = settlement
+    return replace(
+        package,
+        stages=(*package.stages[:-1], replace(final_stage, definition=definition)),
+    )
+
+
+def _room_with_missing_ending_mapping() -> StoredMultiplayerRoom:
+    room = _room()
+    snapshot = encode_runtime_package_snapshot(_package_with_missing_ending_mapping())
+    return replace(
+        room,
+        runtime_package_snapshot=dict(snapshot.payload),
+        runtime_package_sha256=snapshot.sha256,
     )
 
 
@@ -391,6 +432,64 @@ async def test_same_assignment_is_noop_but_service_commits_once(
     assert result.replayed is False
     assert repository.write_calls == 0
     assert db.commit_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_package_before_room_mutation_with_playability_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _CreateRepository()
+    package = _package_with_missing_ending_mapping()
+    monkeypatch.setattr(service, "require_multiplayer_enabled", lambda: None)
+    monkeypatch.setattr(service, "MultiplayerRoomRepository", lambda _db: repository)
+    monkeypatch.setattr(service, "get_runtime_package", AsyncMock(return_value=package))
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_multiplayer_session(
+            CreateMultiplayerSessionRequest(
+                mode="multiplayer_v1",
+                script_id=package.package.id,
+            ),
+            VerifiedAnonymousPrincipal(id=uuid4()),
+            object(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.error.code == "PACKAGE_NOT_MULTIPLAYER"
+    assert exc_info.value.error.details["diagnostic_code"] == (
+        "PACKAGE_MULTIPLAYER_ENDING_MAPPING_MISSING"
+    )
+    assert exc_info.value.error.details["stage_id"] == "final-judgment"
+    assert exc_info.value.error.details["outcome_id"] == "insufficient-evidence"
+    assert repository.lock_calls == 1
+    assert repository.create_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_frozen_package_with_same_playability_diagnostic() -> None:
+    room = _room_with_missing_ending_mapping()
+    now = datetime.now(UTC)
+    host = _member(room, role="host", joined_at=now)
+    guest = _member(room, role="player", joined_at=now + timedelta(milliseconds=1))
+    repository = _StartRepository((host, guest), ())
+
+    with pytest.raises(ApiError) as exc_info:
+        await service._start_room(  # noqa: SLF001
+            repository,  # type: ignore[arg-type]
+            RoomMutationContext(room=room, member=host),
+        )
+
+    assert exc_info.value.error.code == "ROOM_PACKAGE_INVALID"
+    assert exc_info.value.error.message == ("最终判断结果缺少结局映射: insufficient-evidence")
+    assert exc_info.value.error.details == {
+        "diagnostic_code": "PACKAGE_MULTIPLAYER_ENDING_MAPPING_MISSING",
+        "field": ("stages.final-judgment.settlement.ending_by_outcome.insufficient-evidence"),
+        "stage_id": "final-judgment",
+        "outcome_id": "insufficient-evidence",
+        "ending_id": None,
+    }
+    assert repository.required is None
+    assert repository.state is None
+    assert repository.revoked is False
 
 
 @pytest.mark.asyncio

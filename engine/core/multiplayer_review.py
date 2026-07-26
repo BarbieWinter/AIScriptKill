@@ -1,6 +1,7 @@
 """Build completed multiplayer review projections from frozen package content."""
 
 from engine.contracts.multiplayer_v1.authoring import (
+    FinalJudgmentSettlementDefinition,
     MultiplayerStageDefinition,
     NoSettlementDefinition,
 )
@@ -45,6 +46,19 @@ def project_completed_review(
     if final_definition.id != state.stage.stage_id:
         raise CompletedReviewProjectionError(
             "final stage definition does not match completed state"
+        )
+    authored_settlement = final_definition.settlement
+    runtime_settlement = state.stage.settlement
+    if not isinstance(authored_settlement, FinalJudgmentSettlementDefinition):
+        raise CompletedReviewProjectionError("completed review requires final judgment authoring")
+    if (
+        runtime_settlement is None
+        or runtime_settlement.outcome_id is None
+        or authored_settlement.ending_by_outcome.get(runtime_settlement.outcome_id)
+        != state.ending_id
+    ):
+        raise CompletedReviewProjectionError(
+            "completed ending must match the authored outcome mapping"
         )
     playable_character_ids = frozenset(
         player.character_id for player in state.players.values() if player.character_id is not None

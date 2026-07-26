@@ -207,7 +207,6 @@ def test_real_two_player_package_completes_and_review_uses_frozen_truth() -> Non
     completed = complete_final_judgment(
         state,
         definition=final_judgment,
-        ending_ids=(ending.id for ending in room_package.endings),
     )
     review = project_completed_review(
         state=completed,
@@ -250,6 +249,14 @@ def test_real_two_player_package_completes_and_review_uses_frozen_truth() -> Non
             state=completed,
             member_id="member-a",
             package=replace(room_package, endings=()),
+            final_definition=final_judgment,
+        )
+    forged_ending = completed.model_copy(update={"ending_id": "insufficient-evidence"})
+    with pytest.raises(CompletedReviewProjectionError, match="authored outcome mapping"):
+        project_completed_review(
+            state=forged_ending,
+            member_id="member-a",
+            package=room_package,
             final_definition=final_judgment,
         )
 

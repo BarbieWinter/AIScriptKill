@@ -128,8 +128,8 @@ package 重建运行时，恢复 checkpoint，再执行 StateGraph。checkpoint 
 
 - read barrier、discussion close 和 settlement reducer。
 - 同步进入下一阶段并解锁角色章节。
-- final judgment 到同 ID authored ending 的窄完成操作。
-- `GameStateV2` completed/ending 一致性不变量。
+- final judgment 通过已校验 `ending_by_outcome` 解析 authored ending 的完成操作。
+- `GameStateV2` completed/revealed outcome/ending 存在性不变量；outcome 与 ending ID 可不同。
 
 `engine/core/multiplayer_review.py` 只投影 completed room，要求成员身份、匹配的
 final definition 和解码后的冻结包。`GET /sessions/{id}/review` 先探测多人房间，
@@ -146,8 +146,7 @@ zip or directory
   -> package repository
 ```
 
-多人 package 还校验玩家范围、角色章节覆盖、材料引用和 final outcome 到 authored
-ending 的映射。导入期失败必须阻止发布，而不是在运行期猜测修复。
+声明 multiplayer 的剧本版本通过一个不可变 playability 结果统一校验玩家范围、角色章节覆盖、材料引用、阶段 effect、终局拓扑，以及 final outcome 到 authored ending 的显式完整映射。loader、发布、房间创建和冻结版本快照解码消费同一结果；失败必须在写入或开局前阻断，而不是在运行期猜测修复。
 
 ## 边界
 

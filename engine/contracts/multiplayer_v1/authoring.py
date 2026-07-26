@@ -103,6 +103,7 @@ class FinalJudgmentSettlementDefinition(_SettlementWithOptions):
     mode: Literal[SettlementMode.FINAL_JUDGMENT]
     answer_mode: FinalAnswerMode
     tie_outcome_id: Identifier | None = None
+    ending_by_outcome: dict[Identifier, Identifier] = Field(default_factory=dict)
     reveal: SettlementReveal = SettlementReveal.NAMED_BALLOTS
     submission_change: SubmissionChangePolicy = SubmissionChangePolicy.FORBIDDEN
     default_effect: SettlementEffect = SettlementEffect.BRANCH

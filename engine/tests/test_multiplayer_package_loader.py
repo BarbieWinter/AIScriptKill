@@ -1,11 +1,13 @@
 """验证 Multiplayer v1 剧本包通过公开 loader 完整归一化。"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from engine.core.package_archive import PackageArchiveError
 from engine.core.package_loader import load_package_archive, load_package_directory
+from engine.core.package_multiplayer import multiplayer_package_playability
 from engine.tests.package_loader_fixtures import (
     PackageFileContent,
     minimal_package_files,
@@ -83,6 +85,21 @@ def test_load_real_two_player_package_preserves_normalized_multiplayer_authoring
     assert final_settlement["tie_outcome_id"] is None
     assert final_settlement["submission_change"] == "allowed_before_complete"
     assert final_settlement["reveal"] == "outcome_only"
+    assert final_settlement["ending_by_outcome"] == {
+        "conflicting-accounts": "conflicting-accounts",
+        "insufficient-evidence": "insufficient-evidence",
+    }
+    playability = multiplayer_package_playability(package)
+    assert playability.playable is True
+    assert playability.diagnostics == ()
+    assert playability.terminal_stage_id == "final-judgment"
+    assert tuple(
+        (resolution.outcome_id, resolution.ending_id)
+        for resolution in playability.ending_resolutions
+    ) == (
+        ("conflicting-accounts", "conflicting-accounts"),
+        ("insufficient-evidence", "insufficient-evidence"),
+    )
     assert {ending.id for ending in package.endings} == {
         "insufficient-evidence",
         "conflicting-accounts",
@@ -267,6 +284,94 @@ def test_outcome_material_trigger_accepts_option_and_tie_outcomes_from_same_stag
 
         investigation = package.stages[0].definition
         assert investigation["public_materials"][1]["reveal_at"] == f"outcome:{outcome_id}"
+
+
+def test_final_judgment_must_be_the_terminal_stage() -> None:
+    files = _fixture_files()
+    files["stages/_index.yml"] = _text_file(files, "stages/_index.yml").replace(
+        '    sort_order: 0\n  - id: "final-judgment"\n    name: "共同终判"\n    sort_order: 10',
+        '    sort_order: 10\n  - id: "final-judgment"\n    name: "共同终判"\n    sort_order: 0',
+    )
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        "sort_order: 0", "sort_order: 10"
+    )
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        "sort_order: 10", "sort_order: 0"
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_TERMINAL_STAGE_INVALID"
+    assert exc_info.value.message == "多人剧本必须且只能以一个 final_judgment 阶段结束"
+
+
+def test_final_judgment_requires_supported_terminal_effect() -> None:
+    files = _fixture_files()
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        '  default_effect: "branch"', '  default_effect: "record_and_continue"'
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_TERMINAL_EFFECT_UNSUPPORTED"
+    assert exc_info.value.message == "最终判断必须使用 branch 终局效果"
+
+
+def test_nonterminal_stage_requires_supported_continue_effect() -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        '  default_effect: "record_and_continue"', '  default_effect: "branch"'
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_STAGE_EFFECT_UNSUPPORTED"
+    assert exc_info.value.message == "非终局阶段只支持 record_and_continue 效果"
+
+
+def test_playability_diagnostic_identifies_unknown_mapped_ending() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    final_stage = package.stages[-1]
+    definition = dict(final_stage.definition)
+    settlement = dict(definition["settlement"])
+    settlement["ending_by_outcome"] = {
+        "conflicting-accounts": "missing-ending",
+        "insufficient-evidence": "insufficient-evidence",
+    }
+    definition["settlement"] = settlement
+    invalid = replace(
+        package,
+        stages=(*package.stages[:-1], replace(final_stage, definition=definition)),
+    )
+
+    playability = multiplayer_package_playability(invalid)
+
+    assert playability.playable is False
+    assert len(playability.diagnostics) == 1
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_ENDING_REFERENCE_INVALID"
+    assert diagnostic.stage_id == "final-judgment"
+    assert diagnostic.outcome_id == "conflicting-accounts"
+    assert diagnostic.ending_id == "missing-ending"
+    assert diagnostic.field == (
+        "stages.final-judgment.settlement.ending_by_outcome.conflicting-accounts"
+    )
+
+
+def test_final_judgment_requires_complete_outcome_to_ending_mapping() -> None:
+    files = _fixture_files()
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        '    insufficient-evidence: "insufficient-evidence"\n', ""
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_ENDING_MAPPING_MISSING"
+    assert exc_info.value.message == ("最终判断结果缺少结局映射: insufficient-evidence")
 
 
 def test_shared_final_judgment_forbids_tie_outcome() -> None:

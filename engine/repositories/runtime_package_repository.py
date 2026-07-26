@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import cast
 
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
@@ -42,8 +42,10 @@ async def get_runtime_package(
     script_id: str,
     *,
     lock_existing: bool = False,
+    for_update: bool = False,
+    published_only: bool = True,
 ) -> ScriptPackageImport | None:
-    """Read a published runtime package, optionally holding its row ``FOR SHARE``."""
+    """Rebuild a stored package, defaulting to the published runtime boundary."""
 
     package_statement = select(
         script_packages.c.id,
@@ -51,13 +53,12 @@ async def get_runtime_package(
         script_packages.c.version,
         script_packages.c.status,
         script_packages.c.config,
-    ).where(
-        and_(
-            script_packages.c.id == script_id,
-            script_packages.c.status == "published",
-        )
-    )
-    if lock_existing:
+    ).where(script_packages.c.id == script_id)
+    if published_only:
+        package_statement = package_statement.where(script_packages.c.status == "published")
+    if for_update:
+        package_statement = package_statement.with_for_update()
+    elif lock_existing:
         package_statement = package_statement.with_for_update(read=True)
     package_result = await db.execute(package_statement)
     package_row = package_result.mappings().one_or_none()

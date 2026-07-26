@@ -32,6 +32,9 @@ settlement:
     - id: "records-insufficient"
       text: "认定知情人在二十点二十分强行进入，并故意损毁值班记录"
       outcome_id: "insufficient-evidence"
+  ending_by_outcome:
+    conflicting-accounts: "conflicting-accounts"
+    insufficient-evidence: "insufficient-evidence"
   reveal: "outcome_only"
   submission_change: "allowed_before_complete"
   default_effect: "branch"

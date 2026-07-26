@@ -199,11 +199,9 @@ class GameStateV2(ContractModel):
                 self.stage.phase is not StagePhase.REVEAL
                 or settlement is None
                 or not settlement.revealed
-                or settlement.outcome_id != self.ending_id
+                or settlement.outcome_id is None
             ):
-                raise ValueError(
-                    "a completed room requires a revealed final settlement matching ending_id"
-                )
+                raise ValueError("a completed room requires a revealed final settlement outcome")
         elif self.ending_id is not None:
             raise ValueError("only a completed room may expose ending_id")
         return self

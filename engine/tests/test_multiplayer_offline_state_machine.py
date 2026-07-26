@@ -148,6 +148,15 @@ def _final_stage(answer_mode: FinalAnswerMode) -> MultiplayerStageDefinition:
             answer_mode=answer_mode,
             options=_options(),
             tie_outcome_id="tie" if answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET else None,
+            ending_by_outcome={
+                "alpha": "ending-alpha",
+                "beta": "ending-beta",
+                **(
+                    {"tie": "ending-tie"}
+                    if answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET
+                    else {}
+                ),
+            },
             submission_change=(
                 SubmissionChangePolicy.FORBIDDEN
                 if answer_mode is FinalAnswerMode.INDIVIDUAL_SECRET
@@ -638,7 +647,7 @@ def test_shared_choice_exposes_candidate_and_switching_resets_confirmations() ->
     assert completed.revealed_ballots == ()
 
 
-def test_final_judgment_dispatches_and_completes_with_matching_ending() -> None:
+def test_final_judgment_dispatches_and_completes_with_authored_ending_mapping() -> None:
     individual = _final_stage(FinalAnswerMode.INDIVIDUAL_SECRET)
     individual_settling = _to_settle(individual)
     with pytest.raises(InvalidStageTransitionError, match="shared choice"):
@@ -665,22 +674,24 @@ def test_final_judgment_dispatches_and_completes_with_matching_ending() -> None:
     completed = complete_final_judgment(
         shared_revealed,
         definition=shared,
-        ending_ids=("alpha", "beta"),
     )
 
     assert completed.room.status is RoomStatus.COMPLETED
-    assert completed.ending_id == "alpha"
+    assert completed.ending_id == "ending-alpha"
     assert completed.stage.phase is StagePhase.REVEAL
     assert completed.stage.settlement is not None
-    assert completed.stage.settlement.outcome_id == completed.ending_id
+    assert completed.stage.settlement.outcome_id == "alpha"
     assert shared_revealed.room.status is RoomStatus.ACTIVE
     assert shared_revealed.ending_id is None
 
+    incomplete_settlement = shared.settlement.model_copy(
+        update={"ending_by_outcome": {"beta": "ending-beta"}}
+    )
+    incomplete_definition = shared.model_copy(update={"settlement": incomplete_settlement})
     with pytest.raises(InvalidStageTransitionError, match="authored ending"):
         complete_final_judgment(
             shared_revealed,
-            definition=shared,
-            ending_ids=("other-ending",),
+            definition=incomplete_definition,
         )
     with pytest.raises(InvalidStageTransitionError, match="branch"):
         enter_next_stage(
@@ -688,6 +699,37 @@ def test_final_judgment_dispatches_and_completes_with_matching_ending() -> None:
             current_definition=shared,
             next_definition=_secret_stage("after-final"),
         )
+
+
+@pytest.mark.parametrize(
+    ("option_id", "expected_outcome_id", "expected_ending_id"),
+    (
+        ("option-a", "alpha", "ending-alpha"),
+        ("option-b", "beta", "ending-beta"),
+    ),
+)
+def test_each_final_outcome_selects_its_authored_ending(
+    option_id: str,
+    expected_outcome_id: str,
+    expected_ending_id: str,
+) -> None:
+    definition = _final_stage(FinalAnswerMode.SHARED_CHOICE)
+    settling = _to_settle(definition)
+    revealed = _confirm_shared(
+        _confirm_shared(settling, definition, "member-a", option_id),
+        definition,
+        "member-b",
+        option_id,
+    )
+
+    completed = complete_final_judgment(
+        revealed,
+        definition=definition,
+    )
+
+    assert completed.stage.settlement is not None
+    assert completed.stage.settlement.outcome_id == expected_outcome_id
+    assert completed.ending_id == expected_ending_id
 
 
 def test_hints_require_sequential_unanimous_confirmation() -> None:

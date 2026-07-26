@@ -182,6 +182,25 @@ hints:
 
 `answer_mode` 只能是 `shared_choice` 或 `individual_secret`。`mode: none` 不能携带 options 等额外字段。unknown mode、空/重复 option、空 question、旧字段名（如 `submission_change_policy`）都会被拒绝。
 
+由剧本包导入、准备发布或创建房间的严格双人剧本版本还必须满足终局 playability 契约：阶段序列必须且只能以一个 `final_judgment` 结束，非终局阶段的 `default_effect` 必须为 `record_and_continue`，终局必须为 `branch`，并通过 `ending_by_outcome` 显式完整映射每个 option outcome（以及 `individual_secret` 的 tie outcome）到已声明的 `ending.id`。`outcome_id` 与 `ending.id` 无需同名，例如：
+
+```yaml
+settlement:
+  mode: final_judgment
+  settlement_id: final-choice
+  question: "最终判断是什么？"
+  answer_mode: shared_choice
+  options:
+    - id: accuse-a
+      text: "指认甲"
+      outcome_id: accuse-a-supported
+  ending_by_outcome:
+    accuse-a-supported: ending-a-convicted
+  reveal: outcome_only
+  submission_change: allowed_before_complete
+  default_effect: branch
+```
+
 这些模型是多人剧本包的导入与运行输入；当前已支持的严格双人线性组合见仓库样例，尚未闭合的合法组合见文首链接的状态清单。
 
 ---
