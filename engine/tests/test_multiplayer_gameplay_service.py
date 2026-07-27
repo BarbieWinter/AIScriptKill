@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,7 +40,10 @@ from engine.contracts.multiplayer_v1.vocabulary import RoomStatus
 from engine.core.multiplayer_state_machine import initialize_stage_runtime
 from engine.core.package_loader import load_package_directory
 from engine.core.package_multiplayer import multiplayer_stage_contract
-from engine.core.runtime_package_snapshot import encode_runtime_package_snapshot
+from engine.core.runtime_package_snapshot import (
+    decode_runtime_package_snapshot,
+    encode_runtime_package_snapshot,
+)
 from engine.repositories.multiplayer_room_models import StoredMultiplayerRoom, StoredRoomMember
 from engine.services.multiplayer_gameplay_service import (
     apply_gameplay_command,
@@ -134,7 +138,10 @@ def _apply(
     member: StoredRoomMember,
     command: MultiplayerCommand,
 ) -> StoredMultiplayerRoom:
-    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
     mutation = apply_gameplay_command(
         room=room,
         member=member,
@@ -312,9 +319,77 @@ def test_snapshot_projects_only_fresh_member_scene_presence() -> None:
     assert "principal_id" not in serialized
 
 
-def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
+@pytest.mark.parametrize(
+    ("final_option_id", "expected_ending_id", "expected_outcome_text"),
+    (
+        (
+            "timeline-conflict",
+            "conflicting-accounts",
+            "你们确认知情人未经登记进入并隐瞒事实，同时拒绝把备用钥匙和金属声夸大成破门或损毁记录的证据。",
+        ),
+        (
+            "records-insufficient",
+            "insufficient-evidence",
+            "你们作出了破门并损毁记录的重指控；完整时间线随后表明，门锁始终完好，金属声来自掉落的钥匙。",
+        ),
+    ),
+)
+def test_real_gameplay_commands_use_frozen_package_for_both_endings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    final_option_id: str,
+    expected_ending_id: str,
+    expected_outcome_text: str,
+) -> None:
+    source_root = tmp_path / "mp1-two-player"
+    shutil.copytree(PACKAGE_ROOT, source_root)
+    monkeypatch.setattr(
+        "engine.tests.test_multiplayer_gameplay_service.PACKAGE_ROOT",
+        source_root,
+    )
     room, members = _active_room()
-    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+
+    final_path = source_root / "stages" / "final-judgment.yml"
+    final_path.write_text(
+        final_path.read_text(encoding="utf-8").replace(
+            '    conflicting-accounts: "conflicting-accounts"\n'
+            '    insufficient-evidence: "insufficient-evidence"',
+            '    conflicting-accounts: "insufficient-evidence"\n'
+            '    insufficient-evidence: "conflicting-accounts"',
+        ),
+        encoding="utf-8",
+    )
+    endings_path = source_root / "endings.yml"
+    endings_path.write_text(
+        endings_path.read_text(encoding="utf-8").replace(
+            "你们确认知情人未经登记进入并隐瞒事实",
+            "源目录已经改写，不应进入冻结房间",
+        ),
+        encoding="utf-8",
+    )
+    truth_path = source_root / "dm_guide" / "truth.yml"
+    truth_path.write_text(
+        truth_path.read_text(encoding="utf-8").replace(
+            "知情人于二十点零五分违规使用备用钥匙",
+            "源目录已经改写，不应进入冻结复盘",
+        ),
+        encoding="utf-8",
+    )
+    mutated_package = load_package_directory(source_root, publish=True)
+    mutated_final = multiplayer_stage_contract(mutated_package, "final-judgment")
+    mutated_settlement = mutated_final.settlement
+    assert isinstance(mutated_settlement, FinalJudgmentSettlementDefinition)
+    assert mutated_settlement.ending_by_outcome == {
+        "conflicting-accounts": "insufficient-evidence",
+        "insufficient-evidence": "conflicting-accounts",
+    }
+    assert "源目录已经改写，不应进入冻结房间" in str(mutated_package.endings)
+    assert "源目录已经改写，不应进入冻结复盘" in str(mutated_package.dm_guide)
+
     investigation = multiplayer_stage_contract(package, "investigation")
     investigation_settlement = investigation.settlement
     assert isinstance(investigation_settlement, SecretVoteSettlementDefinition)
@@ -331,11 +406,7 @@ def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
             member,
             _stage_command(room, "discussion.confirm_close", "investigation"),
         )
-    for member, option_id in zip(
-        members,
-        ("investigator-account", "insider-account"),
-        strict=True,
-    ):
+    for member in members:
         room = _apply(
             room,
             member,
@@ -345,7 +416,7 @@ def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
                 type="settlement.submit",
                 payload=SubmitSettlementPayload(
                     settlement_id=investigation_settlement.settlement_id,
-                    option_id=option_id,
+                    option_id="investigator-account",
                 ),
             ),
         )
@@ -360,7 +431,16 @@ def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
     assert revealed.can_advance is True
     assert revealed.settlement is not None
     assert revealed.settlement.revealed is True
-    assert len(revealed.settlement.revealed_ballots) == 2
+    assert revealed.settlement.outcome_id == "trust-investigator"
+    option_text = next(
+        option.text for option in revealed.settlement.options if option.id == "investigator-account"
+    )
+    assert option_text == "金属声本身不能证明破门，来源可能是值班室内已有的人或物"
+    assert "强行进入" not in option_text
+    assert "无人从走廊进入" not in option_text
+    assert {ballot.option_id for ballot in revealed.settlement.revealed_ballots} == {
+        "investigator-account"
+    }
 
     room = _apply(
         room,
@@ -404,7 +484,7 @@ def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
                 type="settlement.confirm_shared_choice",
                 payload=ConfirmSharedChoicePayload(
                     settlement_id=final_settlement.settlement_id,
-                    option_id="timeline-conflict",
+                    option_id=final_option_id,
                 ),
             ),
         )
@@ -417,21 +497,32 @@ def test_real_gameplay_commands_advance_complete_and_open_review() -> None:
     )
     assert room.status == "completed"
     assert completed.status == "completed"
-    assert completed.ending_id == "conflicting-accounts"
+    assert completed.ending_id == expected_ending_id
+    assert completed.settlement is not None
+    assert completed.settlement.outcome_id == expected_ending_id
     assert completed.can_advance is False
 
-    review = project_multiplayer_review(
-        room=room,
-        member=members[0],
-        package=package,
+    reviews = tuple(
+        project_multiplayer_review(
+            room=room,
+            member=member,
+            package=package,
+        )
+        for member in members
     )
-    assert review.ending.id == "conflicting-accounts"
-    assert {chapter.character_id for chapter in review.chapters} == {
+    assert {review.member_id for review in reviews} == {str(member.id) for member in members}
+    assert all(review.ending.id == expected_ending_id for review in reviews)
+    assert all(review.ending.outcome_text == expected_outcome_text for review in reviews)
+    assert all(
+        review.truth.case_summary.startswith("知情人于二十点零五分违规使用备用钥匙")
+        for review in reviews
+    )
+    assert {chapter.character_id for chapter in reviews[0].chapters} == {
         "investigator",
         "insider",
     }
-    assert review.final_settlement.reveal == "outcome_only"
-    review_json = review.model_dump_json()
+    assert reviews[0].final_settlement.reveal == "outcome_only"
+    review_json = reviews[0].model_dump_json()
     assert "private_by_member" not in review_json
     assert "ballots" not in review_json
 

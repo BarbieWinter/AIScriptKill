@@ -422,7 +422,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 终局与复盘 | 样例曾被未支持 branch 阻断 | 严格双人包必须完整映射 ending、冻结 truth，并保证双方可打开复盘 | **严格双人 contract 已完成** |
 | 完整双人浏览器通关 | 大厅验收止于活跃态 | 真实 Supabase/FastAPI/Next 双身份完整通关 | **已完成（候选基线）** |
 | authoring schema 与 runtime 闭合 | 多人 schema 已存在 | 统一 playability 决策拒绝线性 executor 不消费或会破坏双人复盘的组合 | **严格双人 contract 已完成** |
-| 样例内容一致性 | 双人样例已存在 | 第一阶段选项/结果 ID 与调查员章节陈述存在错误归因 | **部分完成** |
+| 样例内容一致性 | 双人样例已存在 | 已修正第一阶段调查员选项的错误归因，并锁定目录/archive 完整库存和两个冻结终局 | **已完成（严格双人样例）** |
 | 持久命令与数据库恢复 | 部分命令恢复基础 | 服务端回执、幂等、stale reclaim、attempt fencing 和权限已接通 | **已完成（服务端已测范围）** |
 | outbox 实时投递 | 基础表/设计存在 | 表、事务写入与 batch dispatcher 存在；gameplay 不写 topic，且无 adapter/worker | **部分完成** |
 | 固定协作提示 | reducer/contract 已有 | snapshot 和未接线 `GameplayShell` 有 UI；实际 Mansion shell 无提示入口 | **部分完成** |
@@ -480,7 +480,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 - 多人包不接受 `engine.default_ending`，ending 的 legacy condition/action/rating bonus 只能保留不会产生行为的固定占位值；
 - 唯一 `final_judgment` 必须位于线性末端，且完成后的同一冻结版本能分别为两名参与者生成 participant-safe review。
 
-这使包作者能够依赖当前严格双人线性契约，但不代表广义 schema 中的任意人数、任意分支或 legacy 单人能力已被多人 runtime 支持。样例中调查选项与角色文字之间的语义归因仍是独立的内容一致性问题，不是 contract/runtime 闭合问题。
+这使包作者能够依赖当前严格双人线性契约，但不代表广义 schema 中的任意人数、任意分支或 legacy 单人能力已被多人 runtime 支持。标准双人样例已迁移到该闭合契约：目录和 archive 导入具有相同的完整库存，调查员选项不再声称二十点二十分发生强行进入，两个最终选择都从房间冻结版本解析 ending 和复盘。
 
 ---
 
@@ -581,15 +581,14 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 
 ### 12.4 下一步必须建设
 
-1. 修复 final judgment、终局拓扑、shared reveal、truth 必需性、角色数量、ending 映射和章节 release 的 schema/runtime 闭合问题，并修正样例选项的错误归因。
-2. 解除多人玩法与空间热点的依赖，并给公开材料增加固定入口。
-3. 将提示 UI 合并进实际接线的场景壳，删除未接线 `GameplayShell` 的重复实现。
-4. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
-5. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
-6. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
-7. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
-8. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
-9. 删除旧搜证/NPC 产品入口及其依赖链。
+1. 解除多人玩法与空间热点的依赖，并给公开材料增加固定入口。
+2. 将提示 UI 合并进实际接线的场景壳，删除未接线 `GameplayShell` 的重复实现。
+3. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
+4. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
+5. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
+6. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
+7. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
+8. 删除旧搜证/NPC 产品入口及其依赖链。
 
 ---
 
@@ -641,11 +640,12 @@ R5  旧方向物理清理
 
 ## 14. 验证记录
 
-T01 候选闭包与本次场景重构在本地工作树运行的验证结果如下：
+当前候选闭包与标准双人样例迁移在本地工作树运行的验证结果如下：
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest engine/tests/ -q` | **499 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| `uv run --frozen pytest engine/tests/ -q` | **534 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| T04 package / gameplay 聚焦测试 | **46 passed** | 覆盖目录/archive 完整库存、修正后的调查揭晓、两个冻结终局与双方复盘 |
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |

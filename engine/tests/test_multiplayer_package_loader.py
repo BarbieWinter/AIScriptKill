@@ -128,6 +128,130 @@ def test_load_real_two_player_package_preserves_normalized_multiplayer_authoring
     assert "是否承认违规进入由你决定" not in public_text
 
 
+def test_canonical_two_player_archive_resolves_complete_inventory_once() -> None:
+    directory_package = load_package_directory(FIXTURE_ROOT, publish=True)
+    archive_package = load_package_archive(
+        package_archive(_fixture_files()),
+        publish=True,
+    )
+
+    assert archive_package == directory_package
+    for package in (directory_package, archive_package):
+        assert package.warnings == ()
+        playability = multiplayer_package_playability(package)
+        assert playability.playable is True
+        assert playability.diagnostics == ()
+
+    package = directory_package
+    assert tuple(
+        sorted(character.id for character in package.characters if character.is_playable)
+    ) == (
+        "insider",
+        "investigator",
+    )
+    assert {
+        chapter.id: (
+            chapter.character_id,
+            chapter.release,
+            chapter.stage_min,
+        )
+        for chapter in package.chapters
+    } == {
+        "investigator-investigation": (
+            "investigator",
+            {"type": "game_start"},
+            "investigation",
+        ),
+        "investigator-final-judgment": (
+            "investigator",
+            {"type": "stage_enter", "stage_id": "final-judgment"},
+            "final-judgment",
+        ),
+        "insider-investigation": (
+            "insider",
+            {"type": "game_start"},
+            "investigation",
+        ),
+        "insider-final-judgment": (
+            "insider",
+            {"type": "stage_enter", "stage_id": "final-judgment"},
+            "final-judgment",
+        ),
+    }
+
+    material_ids = tuple(clue.id for clue in package.clues) + tuple(
+        material.id for material in package.media_assets
+    )
+    material_references = tuple(
+        material["id"]
+        for stage in package.stages
+        for material in stage.definition["public_materials"]
+    )
+    assert sorted(material_ids) == [
+        "arrival-photo",
+        "case-reconstruction",
+        "limited-finding",
+        "unsupported-finding",
+        "witness-note",
+    ]
+    assert sorted(material_references) == sorted(material_ids)
+    assert len(material_references) == len(set(material_references))
+
+    outcome_ids: list[str] = []
+    for stage in package.stages:
+        settlement = stage.definition["settlement"]
+        assert isinstance(settlement, dict)
+        options = settlement["options"]
+        assert isinstance(options, list)
+        outcome_ids.extend(str(option["outcome_id"]) for option in options)
+        tie_outcome_id = settlement.get("tie_outcome_id")
+        if tie_outcome_id is not None:
+            outcome_ids.append(str(tie_outcome_id))
+    assert outcome_ids == [
+        "trust-investigator",
+        "trust-insider",
+        "split-vote",
+        "conflicting-accounts",
+        "insufficient-evidence",
+    ]
+    assert len(outcome_ids) == len(set(outcome_ids))
+
+    assert tuple(ending.id for ending in package.endings) == (
+        "conflicting-accounts",
+        "insufficient-evidence",
+    )
+    truth_file = package.dm_guide["truth"]
+    assert isinstance(truth_file, dict)
+    truth = truth_file["truth"]
+    assert isinstance(truth, dict)
+    assert truth["timeline"] == [
+        {
+            "time": "20:05",
+            "event": "知情人用备用钥匙从后侧维修门进入值班室。",
+            "hidden": True,
+        },
+        {
+            "time": "20:10",
+            "event": "固定相机拍到调查员抵达；此后走廊入口一直在其视线内。",
+            "hidden": False,
+        },
+        {
+            "time": "20:20",
+            "event": "知情人在室内掉落黄铜钥匙串，产生目击便签记录的金属声。",
+            "hidden": True,
+        },
+        {
+            "time": "20:21",
+            "event": "调查员看见知情人持钥匙从值班室正门离开。",
+            "hidden": True,
+        },
+    ]
+    assert package.stages[-1].definition["settlement"]["ending_by_outcome"] == {
+        "conflicting-accounts": "conflicting-accounts",
+        "insufficient-evidence": "insufficient-evidence",
+    }
+
+
 def test_legacy_packages_skip_multiplayer_validation_and_keep_stage_shape() -> None:
     package = load_package_directory(PACKAGE_ROOT / "snow-village")
 

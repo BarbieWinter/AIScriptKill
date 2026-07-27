@@ -23,7 +23,7 @@ settlement:
   question: "二十点二十分的金属声最可能来自哪种情况？"
   options:
     - id: "investigator-account"
-      text: "有人在二十点二十分强行进入值班室"
+      text: "金属声本身不能证明破门，来源可能是值班室内已有的人或物"
       outcome_id: "trust-investigator"
     - id: "insider-account"
       text: "有人早已在室内，金属声来自钥匙掉落"
