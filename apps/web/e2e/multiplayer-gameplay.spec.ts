@@ -63,6 +63,7 @@ function createGameplayApi() {
   let eventSequence = 5;
   let endingId: string | null = null;
   let sharedOptionId: string | null = null;
+  let publicMaterialsVisible = true;
   let messageFailures = 0;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
@@ -176,9 +177,9 @@ function createGameplayApi() {
       read_member_ids: [...readMembers],
       discussion_close_member_ids: [...closed].map((item) => members[item].memberId),
       chapters,
-      public_materials: stageId === "investigation"
+      public_materials: publicMaterialsVisible && stageId === "investigation"
         ? [{ id: "arrival-photo", kind: "clue", title: "抵达照片", text: "照片记录了抵达时刻。", media_type: null, url: null }]
-        : status === "completed"
+        : publicMaterialsVisible && status === "completed"
           ? [{ id: "case-reconstruction", kind: "clue", title: "核验后的时间线", text: "知情人早已在室内，金属声来自钥匙落地。", media_type: null, url: null }]
           : [],
       discussion_messages: messages,
@@ -367,6 +368,9 @@ function createGameplayApi() {
     failNextReviews(identity: Identity, count = 3) {
       reviewFailures[identity] = count;
     },
+    hidePublicMaterials() {
+      publicMaterialsVisible = false;
+    },
     presenceBodies,
   };
 }
@@ -401,6 +405,24 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
     ]);
     await expectScenePhase(host.page, "核对口供", "阅读角色信息");
     await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
+
+    const publicArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
+    await expect(publicArchiveEntry).toBeVisible();
+    await publicArchiveEntry.click();
+    await expect(host.page.getByRole("heading", { name: "公开档案" })).toBeVisible();
+    await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
+    await host.page.getByRole("button", { name: "关闭" }).click();
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    const restoredArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
+    await expect(restoredArchiveEntry).toBeVisible();
+    await restoredArchiveEntry.click();
+    await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
+
+    api.hidePublicMaterials();
+    await expect(restoredArchiveEntry).toHaveCount(0, { timeout: 8_000 });
+    await expect(host.page.getByRole("heading", { name: "公开档案" })).toHaveCount(0);
 
     const hostScene = host.page.locator(".mansion-demo");
     const guestScene = guest.page.locator(".mansion-demo");

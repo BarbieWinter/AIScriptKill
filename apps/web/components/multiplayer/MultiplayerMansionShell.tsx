@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   BookOpen,
   Check,
   CircleAlert,
@@ -474,9 +475,10 @@ export function MultiplayerMansionShell({
   }, []);
 
   useEffect(() => {
+    if (panel === "materials" && snapshot.public_materials.length === 0) setPanel(null);
     if (panel === "discussion" && snapshot.phase !== "discuss") setPanel(null);
     if (panel === "settlement" && snapshot.phase !== "settle" && snapshot.phase !== "reveal") setPanel(null);
-  }, [panel, snapshot.phase]);
+  }, [panel, snapshot.phase, snapshot.public_materials.length]);
 
   const sendCommand = (input: RoomCommandInput, onSuccess?: () => void) => {
     command.reset();
@@ -555,12 +557,19 @@ export function MultiplayerMansionShell({
             {snapshot.status !== "completed" && (
               <b>{snapshot.phase === "read" ? `${snapshot.read_member_ids.length}/2 已读` : snapshot.phase === "discuss" ? `${snapshot.discussion_close_member_ids.length}/2 确认` : `${snapshot.settlement?.submitted_member_ids.length ?? 0}/2 提交`}</b>
             )}
+            {snapshot.public_materials.length > 0 && (
+              <button type="button" onClick={() => setPanel("materials")}>
+                <Archive />
+                {snapshot.status === "completed" ? "打开终局档案" : "打开公开档案"}
+              </button>
+            )}
             {snapshot.status === "completed" ? (
-              <button type="button" onClick={() => setPanel("review")}>打开复盘</button>
+              <button type="button" onClick={() => setPanel("review")}><Eye />打开复盘</button>
             ) : snapshot.phase === "discuss" ? (
-              <button type="button" onClick={() => setPanel("discussion")}>打开讨论</button>
+              <button type="button" onClick={() => setPanel("discussion")}><MessageCircle />打开讨论</button>
             ) : snapshot.phase === "settle" || snapshot.phase === "reveal" ? (
               <button type="button" onClick={() => setPanel("settlement")}>
+                <ShieldCheck />
                 {snapshot.phase === "settle" ? "打开判断" : "打开结论"}
               </button>
             ) : null}

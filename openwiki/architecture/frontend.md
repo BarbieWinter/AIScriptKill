@@ -85,8 +85,9 @@ active / completed    -> MultiplayerMansionShell
 
 `MultiplayerMansionShell` 复用 `MansionDemo` 的本地移动、碰撞、镜头与近距离交互，但不把
 多人快照写入单人 Zustand store。角色章、公开档案、讨论室、圆桌判断与 completed-only
-复盘由 participant-safe snapshot 映射成阶段热点和覆盖面板；多人模式不加载 `demoArticles`
-等静态故事 fixture。两个角色分别映射到不同 outfit/accessory/palette；本地 pose 约每 500ms
+复盘由 participant-safe snapshot 映射成固定玩法入口、可选阶段热点和覆盖面板；公开材料
+无需接近热点即可打开，多人模式也不加载 `demoArticles` 等静态故事 fixture。两个角色分别
+映射到不同 outfit/accessory/palette；本地 pose 约每 500ms
 合并为一次 authenticated HTTP PUT，服务端只保存该成员的最新展示位置，另一端从 2 秒快照
 polling 中渲染真实同伴。坐标不进入 `GameStateV2`、revision 或 event，不能成为剧情或物理权威。
 失败的讨论发送保留草稿；复盘可重试；网络结果不确定时，client 复用同一 `command_id` 重试一次；
@@ -111,7 +112,8 @@ revision mismatch 只刷新，不自动重放 stale intent。
 - Route-mocked Playwright 覆盖大厅启动、真实键盘移动、不同角色外观，以及双 browser context 中双向位置可见。
 - `multiplayer-gameplay.spec.ts` 的 mock 会把每个 JWT identity 的 PUT pose 写入 latest-value store，
   再通过另一端的 snapshot polling 验证 host→guest 与 guest→host 坐标变化；同时验证 presence body
-  不含 `member_id` 或 `character_id`，且两位玩家仍只收到自己的 participant-safe 章节。
+  不含 `member_id` 或 `character_id`，两位玩家仍只收到自己的 participant-safe 章节，并可在不移动时
+  通过固定入口打开公开材料，刷新后入口仍随 snapshot 恢复。
 - `multiplayer-lobby.spec.ts` 验证房间启动后进入 `MansionDemo`、键盘移动有效且没有 gameplay WebSocket。
 - `multiplayer-lobby.live.spec.ts` 是无 Mock 的真实 anonymous identity 技术闭环；真实 PostgreSQL/API
   环境应用最新迁移后，应再次执行场景定位器与双向移动回归。
