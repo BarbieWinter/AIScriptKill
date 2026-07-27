@@ -9,7 +9,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 interface SheetProps {
@@ -30,6 +30,23 @@ export function Sheet({
   className,
 }: SheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const previousFocus = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open]);
 
   // ESC 键关闭
   useEffect(() => {
@@ -51,6 +68,27 @@ export function Sheet({
       document.body.style.overflow = "";
     };
   }, [open]);
+
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = sheetRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusable || focusable.length === 0) {
+      event.preventDefault();
+      sheetRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   // 判断是否为手机端（通过媒体查询，运行时判断）
   const isMobile =
@@ -74,6 +112,11 @@ export function Sheet({
           {/* 面板 */}
           <motion.div
             ref={sheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            tabIndex={-1}
+            onKeyDown={trapFocus}
             className={cn(
               "fixed z-50 bg-[var(--panel-bg)] border-[var(--border)] shadow-2xl",
               // 右侧滑出
@@ -116,8 +159,10 @@ export function Sheet({
 
             {/* 标题栏 */}
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <h2 className="text-lg font-bold">{title}</h2>
+              <h2 id={titleId} className="text-lg font-bold">{title}</h2>
               <button
+                ref={closeButtonRef}
+                type="button"
                 onClick={onClose}
                 aria-label="关闭"
                 className="rounded-lg p-1.5 transition-colors hover:bg-[var(--accent)]"

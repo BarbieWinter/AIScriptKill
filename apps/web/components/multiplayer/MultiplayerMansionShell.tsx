@@ -7,6 +7,7 @@ import {
   Check,
   CircleAlert,
   Eye,
+  Lightbulb,
   LoaderCircle,
   MessageCircle,
   RotateCcw,
@@ -33,6 +34,7 @@ import {
   type MultiplayerRoomClient,
 } from "@/lib/multiplayer/room-client";
 import type {
+  GameplayHint,
   GameplayMaterial,
   GameplaySettlement,
   GameplaySnapshotV1,
@@ -47,8 +49,9 @@ const phaseLabel = {
   reveal: "查看结果",
 } as const;
 
-type ScenePanel = "chapters" | "materials" | "discussion" | "settlement" | "review" | null;
+type ScenePanel = "chapters" | "materials" | "hints" | "discussion" | "settlement" | "review" | null;
 
+const HINT_LEVEL_COUNT = 3;
 const PRESENCE_SEND_INTERVAL = 500;
 const PRESENCE_HEARTBEAT_INTERVAL = 5_000;
 const spawnByCharacter: Record<string, { x: number; y: number }> = {
@@ -163,6 +166,75 @@ function MaterialCard({ material }: { material: GameplayMaterial }) {
         </a>
       )}
     </article>
+  );
+}
+
+function HintPanel({
+  snapshot,
+  pending,
+  onRequest,
+  onConfirm,
+}: {
+  snapshot: GameplaySnapshotV1;
+  pending: boolean;
+  onRequest: (hint: GameplayHint, level: number) => void;
+  onConfirm: (hint: GameplayHint, level: number) => void;
+}) {
+  return (
+    <div className="space-y-5 px-5 py-6 md:px-8">
+      {snapshot.hints.map((hint, index) => {
+        const nextLevel = hint.revealed_levels.length + 1;
+        const selfConfirmed = hint.confirming_member_ids.includes(snapshot.self_member_id);
+        return (
+          <section key={hint.id} className="space-y-4">
+            {snapshot.hints.length > 1 && (
+              <h3 className="text-sm font-semibold text-[#e3d8bd]">协作提示 {index + 1}</h3>
+            )}
+            {hint.revealed_levels.length === 0 ? (
+              <p className="rounded-xl border border-white/8 bg-white/[0.025] px-4 py-5 text-sm leading-7 text-[#9da19a]">
+                当前还没有公开提示。提示必须按级请求，并由全员确认后公开。
+              </p>
+            ) : (
+              <ol className="space-y-3">
+                {hint.revealed_levels.map((text, levelIndex) => (
+                  <li key={`${hint.id}-${levelIndex}`} className="rounded-xl border border-[#c9ae76]/20 bg-[#c9ae76]/[0.06] p-4">
+                    <p className="mb-1 text-[11px] text-[#c9ae76]">第 {levelIndex + 1} 级提示</p>
+                    <p className="whitespace-pre-wrap text-sm leading-7 text-[#d0d1cb]">{text}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {hint.pending_level !== null ? (
+              <div>
+                <button
+                  type="button"
+                  disabled={pending || selfConfirmed}
+                  onClick={() => onConfirm(hint, hint.pending_level!)}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#c6a867] px-5 py-3 text-sm font-semibold text-[#11120f] disabled:opacity-45"
+                >
+                  <Check className="h-4 w-4" />
+                  {selfConfirmed ? "已确认，等待同伴" : `同意公开第 ${hint.pending_level} 级提示`}
+                </button>
+                <p className="mt-2 text-center text-[11px] text-[#777b75]">
+                  {hint.confirming_member_ids.length}/{snapshot.players.length} 位玩家已确认
+                </p>
+              </div>
+            ) : nextLevel <= HINT_LEVEL_COUNT ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => onRequest(hint, nextLevel)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#c9ae76]/30 bg-[#c9ae76]/[0.08] px-5 py-3 text-sm font-semibold text-[#dfc88f] disabled:opacity-45"
+              >
+                <Lightbulb className="h-4 w-4" />请求第 {nextLevel} 级提示
+              </button>
+            ) : (
+              <p className="text-center text-xs text-[#777b75]">全部三级提示已公开</p>
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
@@ -438,6 +510,9 @@ export function MultiplayerMansionShell({
   const hotspots = useMemo(() => sceneHotspots(snapshot), [snapshot]);
   const selfRead = snapshot.read_member_ids.includes(snapshot.self_member_id);
   const selfClosed = snapshot.discussion_close_member_ids.includes(snapshot.self_member_id);
+  const hintPanelAvailable = snapshot.status === "active"
+    && snapshot.phase === "discuss"
+    && snapshot.hints.length > 0;
 
   const presenceIdentityRef = useRef("");
   useEffect(() => {
@@ -476,9 +551,10 @@ export function MultiplayerMansionShell({
 
   useEffect(() => {
     if (panel === "materials" && snapshot.public_materials.length === 0) setPanel(null);
+    if (panel === "hints" && !hintPanelAvailable) setPanel(null);
     if (panel === "discussion" && snapshot.phase !== "discuss") setPanel(null);
     if (panel === "settlement" && snapshot.phase !== "settle" && snapshot.phase !== "reveal") setPanel(null);
-  }, [panel, snapshot.phase, snapshot.public_materials.length]);
+  }, [hintPanelAvailable, panel, snapshot.phase, snapshot.public_materials.length]);
 
   const sendCommand = (input: RoomCommandInput, onSuccess?: () => void) => {
     command.reset();
@@ -509,6 +585,22 @@ export function MultiplayerMansionShell({
     type: selfClosed ? "discussion.revoke_close" : "discussion.confirm_close",
     payload: { stage_id: snapshot.stage_id },
   });
+  const requestHint = (hint: GameplayHint, level: number) => {
+    if (!hintPanelAvailable) return;
+    sendCommand({
+      expected_revision: snapshot.revision,
+      type: "hint.request",
+      payload: { hint_id: hint.id, level },
+    });
+  };
+  const confirmHint = (hint: GameplayHint, level: number) => {
+    if (!hintPanelAvailable) return;
+    sendCommand({
+      expected_revision: snapshot.revision,
+      type: "hint.confirm",
+      payload: { hint_id: hint.id, level },
+    });
+  };
   const submitSettlement = (optionId: string) => {
     if (!snapshot.settlement || !optionId) return;
     sendCommand(snapshot.settlement.mode === "secret_vote" ? {
@@ -563,6 +655,9 @@ export function MultiplayerMansionShell({
                 {snapshot.status === "completed" ? "打开终局档案" : "打开公开档案"}
               </button>
             )}
+            {hintPanelAvailable && (
+              <button type="button" onClick={() => setPanel("hints")}><Lightbulb />打开协作提示</button>
+            )}
             {snapshot.status === "completed" ? (
               <button type="button" onClick={() => setPanel("review")}><Eye />打开复盘</button>
             ) : snapshot.phase === "discuss" ? (
@@ -587,6 +682,14 @@ export function MultiplayerMansionShell({
             <div className="grid gap-3 p-5 md:grid-cols-2">
               {snapshot.public_materials.map((material) => <MaterialCard key={material.id} material={material} />)}
             </div>
+          </Sheet>
+          <Sheet open={panel === "hints" && hintPanelAvailable} onClose={() => setPanel(null)} title="协作提示" className="md:w-[min(620px,72vw)]">
+            <HintPanel
+              snapshot={snapshot}
+              pending={command.isPending}
+              onRequest={requestHint}
+              onConfirm={confirmHint}
+            />
           </Sheet>
           <Sheet open={panel === "discussion"} onClose={() => setPanel(null)} title="双人公开讨论" className="md:w-[min(620px,72vw)]">
             <DiscussionPanel

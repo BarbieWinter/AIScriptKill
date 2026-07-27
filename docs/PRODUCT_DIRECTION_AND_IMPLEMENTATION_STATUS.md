@@ -288,7 +288,7 @@ stage_rewards:
 
 ## 7. 受控 AI DM 的目标运行方式
 
-当前 `engine/agents/dm_agent.py` 和 `engine/agents/hint_agent.py` 仍是两行占位文件。样例包新增的 `dm_guide/truth.yml` 已能支持终局复盘，但它不是可运行的 AI DM 主持脚本。固定 YAML 提示已有 reducer、command 和 snapshot 支持，不调用 LLM；但实际接线的 `MultiplayerMansionShell` 没有提示 UI，提示面板只存在于未接线的 `GameplayShell`，因此用户当前无法从真实场景路径使用该能力。
+当前 `engine/agents/dm_agent.py` 和 `engine/agents/hint_agent.py` 仍是两行占位文件。样例包新增的 `dm_guide/truth.yml` 已能支持终局复盘，但它不是可运行的 AI DM 主持脚本。固定 YAML 提示已有 reducer、command、snapshot 和实际接线的 `MultiplayerMansionShell` UI：讨论阶段可从固定入口逐级请求提示，经全员确认后只显示 snapshot 已公开的层级，刷新后恢复，并在进入正式判断时关闭。该能力完全确定性运行，不调用 LLM，也不代表受控 AI DM 已实现。
 
 目标调用链应是：
 
@@ -360,7 +360,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 
 ### 8.3 当前实现的偏差
 
-`MultiplayerMansionShell` 仍把角色手记、公开档案、讨论室、圆桌判断和复盘映射成 `DemoSessionHotspot`，并通过 `MansionDemo.onInvestigate` 打开对应面板。角色手记已有固定 HUD 入口，讨论、判断和复盘已有 overlay 直达按钮；T05 进一步在同一阶段面板增加由 `snapshot.public_materials` 驱动的公开/终局档案按钮。玩家无需移动或接近热点即可打开已发放材料，刷新后入口也会随权威快照恢复。
+`MultiplayerMansionShell` 仍把角色手记、公开档案、讨论室、圆桌判断和复盘映射成 `DemoSessionHotspot`，并通过 `MansionDemo.onInvestigate` 打开对应面板。角色手记已有固定 HUD 入口，公开/终局档案、协作提示、讨论、判断和复盘均有阶段 overlay 直达按钮。玩家无需移动或接近热点即可打开 snapshot 已授权的玩法表面；公开材料和已揭示提示会在刷新后随权威快照恢复，提示只在讨论阶段提供请求/确认能力，进入正式判断后自动关闭。
 
 当前实现设置了 `includeDemoContent={false}`，避免直接复用旧 demo 证据内容。舞台热点现已降级为可选的等价快捷入口，不影响内容是否已发放、活动是否完成或阶段是否推进；多人壳层对 legacy hotspot 类型和 `onInvestigate` 的物理依赖仍需在后续旧方向清理中删除。
 
@@ -425,7 +425,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 样例内容一致性 | 双人样例已存在 | 已修正第一阶段调查员选项的错误归因，并锁定目录/archive 完整库存和两个冻结终局 | **已完成（严格双人样例）** |
 | 持久命令与数据库恢复 | 部分命令恢复基础 | 服务端回执、幂等、stale reclaim、attempt fencing 和权限已接通 | **已完成（服务端已测范围）** |
 | outbox 实时投递 | 基础表/设计存在 | 表、事务写入与 batch dispatcher 存在；gameplay 不写 topic，且无 adapter/worker | **部分完成** |
-| 固定协作提示 | reducer/contract 已有 | snapshot 和未接线 `GameplayShell` 有 UI；实际 Mansion shell 无提示入口 | **部分完成** |
+| 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段关闭 | **已完成（候选基线）** |
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
 | 断线后浏览器恢复 | 有快照/重试设计 | HTTP 轮询可重新取得快照，但无 pending command、receipt 或专项浏览器恢复 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
@@ -581,13 +581,12 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 
 ### 12.4 下一步必须建设
 
-1. 将提示 UI 合并进实际接线的场景壳，删除未接线 `GameplayShell` 的重复实现。
-2. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
-3. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
-4. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
-5. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
-6. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
-7. 删除旧搜证/NPC 产品入口及其依赖链。
+1. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
+2. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
+3. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
+4. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
+5. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
+6. 删除旧搜证/NPC 产品入口及其依赖链。
 
 ---
 
@@ -599,10 +598,10 @@ R0  收紧候选垂直切片
  │  - 修正样例选项和结果语义
  │  - 保持全部真实栈门禁
  ▼
-R1  纠正空间与实际 UI 边界（部分完成）
+R1  纠正空间与实际 UI 边界（已完成）
  │  - [x] 当前活动始终可达，公开材料不再被热点锁住
  │  - [x] 位置只做 presentation/presence
- │  - [ ] 提示 UI 合入实际 shell，删除重复 shell
+ │  - [x] 固定 YAML 提示 UI 合入实际 shell，并遵守讨论/判断边界
  ▼
 R2  恢复与实时同步
  │  - pending command / 5xx / reconnect 浏览器验收
@@ -648,7 +647,7 @@ R5  旧方向物理清理
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **8 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影与公开材料固定入口浏览器契约 |
+| route-mocked Playwright | **9 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影，以及公开材料/协作提示固定入口与刷新恢复浏览器契约 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
 | `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
@@ -661,7 +660,7 @@ R5  旧方向物理清理
 - 不支持宣称 AI DM 已实现。
 - 不支持宣称 WebSocket 多人运行时已实现。
 - 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖实际 Mansion shell 的提示 UI、浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
+- 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
 - 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。

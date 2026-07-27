@@ -17,6 +17,11 @@ const members = {
   host: { memberId: "member-host", characterId: "investigator", characterName: "调查员" },
   guest: { memberId: "member-guest", characterId: "insider", characterName: "知情人" },
 } as const;
+const hintLevels = [
+  "先确认两人在 20:10 与 20:20 各自位于哪里。",
+  "区分走廊入口、值班室正门与后侧维修门。",
+  "问清哪些内容是亲眼观察、本人承认、记录或推断。",
+] as const;
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -64,6 +69,9 @@ function createGameplayApi() {
   let endingId: string | null = null;
   let sharedOptionId: string | null = null;
   let publicMaterialsVisible = true;
+  let hintPendingLevel: number | null = null;
+  const revealedHintLevels: string[] = [];
+  const hintConfirmations = new Set<Identity>();
   let messageFailures = 0;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
@@ -85,6 +93,7 @@ function createGameplayApi() {
     ["guest", { x: 945, y: 970, facing: "right", moving: false }],
   ]);
   const presenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
+  const commandBodies: Array<{ identity: Identity; type: string; payload: Record<string, unknown> }> = [];
 
   const settlement = (identity: Identity) => {
     if (phase !== "settle" && phase !== "reveal") return null;
@@ -184,7 +193,14 @@ function createGameplayApi() {
           : [],
       discussion_messages: messages,
       settlement: settlement(identity),
-      hints: [],
+      hints: stageId === "investigation"
+        ? [{
+            id: "timeline",
+            revealed_levels: revealedHintLevels,
+            pending_level: hintPendingLevel,
+            confirming_member_ids: [...hintConfirmations].map((item) => members[item].memberId),
+          }]
+        : [],
       can_advance: stageId === "investigation" && phase === "reveal",
       ending_id: endingId,
     };
@@ -259,6 +275,7 @@ function createGameplayApi() {
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
         const body = request.postDataJSON();
         expect(body.command_id).toMatch(/^[0-9a-f-]{36}$/i);
+        commandBodies.push({ identity, type: body.type, payload: body.payload });
         if (body.expected_revision !== revision) {
           return json(route, {
             command_id: body.command_id,
@@ -275,6 +292,46 @@ function createGameplayApi() {
           read.add(identity);
           readMembers.add(members[identity].memberId);
           if (read.size === 2) phase = "discuss";
+        } else if (body.type === "hint.request" && phase === "discuss") {
+          const level = body.payload.level;
+          if (
+            body.payload.hint_id !== "timeline"
+            || hintPendingLevel !== null
+            || level !== revealedHintLevels.length + 1
+            || level > hintLevels.length
+          ) {
+            return json(route, {
+              command_id: body.command_id,
+              status: "rejected",
+              revision,
+              event_sequence: eventSequence,
+              result: null,
+              error: { code: "PHASE_MISMATCH", message: "Invalid hint request", details: {} },
+              replayed: false,
+            });
+          }
+          hintPendingLevel = level;
+          hintConfirmations.clear();
+          hintConfirmations.add(identity);
+        } else if (body.type === "hint.confirm" && phase === "discuss") {
+          const level = body.payload.level;
+          if (body.payload.hint_id !== "timeline" || hintPendingLevel !== level) {
+            return json(route, {
+              command_id: body.command_id,
+              status: "rejected",
+              revision,
+              event_sequence: eventSequence,
+              result: null,
+              error: { code: "PHASE_MISMATCH", message: "Invalid hint confirmation", details: {} },
+              replayed: false,
+            });
+          }
+          hintConfirmations.add(identity);
+          if (hintConfirmations.size === 2) {
+            revealedHintLevels.push(hintLevels[level - 1]);
+            hintPendingLevel = null;
+            hintConfirmations.clear();
+          }
         } else if (body.type === "discussion.send_message" && phase === "discuss") {
           if (messageFailures > 0) {
             messageFailures -= 1;
@@ -371,6 +428,7 @@ function createGameplayApi() {
     hidePublicMaterials() {
       publicMaterialsVisible = false;
     },
+    commandBodies,
     presenceBodies,
   };
 }
@@ -478,6 +536,88 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
     await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
     expect(host.webSockets).toEqual([]);
     expect(guest.webSockets).toEqual([]);
+  } finally {
+    await Promise.all([host.context.close(), guest.context.close()]);
+  }
+});
+
+test("fixed hint controls request and restore authored progressive hints without scene movement", async ({ browser }) => {
+  test.setTimeout(60_000);
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host");
+  const guest = await createPlayerPage(browser, api, "guest");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      guest.page.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
+
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await guest.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await expectScenePhase(guest.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+
+    const hostScene = host.page.locator(".mansion-demo");
+    const initialX = await hostScene.getAttribute("data-player-x");
+    const initialY = await hostScene.getAttribute("data-player-y");
+    const commandsBeforeOpen = api.commandBodies.length;
+    const fixedHintEntry = host.page.getByRole("button", { name: "打开协作提示" });
+    await fixedHintEntry.focus();
+    await host.page.keyboard.press("Enter");
+    const hintDialog = host.page.getByRole("dialog", { name: "协作提示" });
+    await expect(hintDialog).toBeVisible();
+    await expect(hintDialog.getByRole("button", { name: "关闭" })).toBeFocused();
+    await host.page.keyboard.press("Escape");
+    await expect(fixedHintEntry).toBeFocused();
+    await host.page.keyboard.press("Enter");
+    await expect(hintDialog).toBeVisible();
+    expect(api.commandBodies).toHaveLength(commandsBeforeOpen);
+    await expect(hostScene).toHaveAttribute("data-player-x", initialX ?? "");
+    await expect(hostScene).toHaveAttribute("data-player-y", initialY ?? "");
+
+    await guest.page.getByRole("button", { name: "打开协作提示" }).click();
+    for (const [index, hintText] of hintLevels.entries()) {
+      const level = index + 1;
+      await host.page.getByRole("button", { name: `请求第 ${level} 级提示` }).click();
+      await expect(host.page.getByRole("button", { name: "已确认，等待同伴" })).toBeDisabled({ timeout: 8_000 });
+      await guest.page.getByRole("button", { name: `同意公开第 ${level} 级提示` }).click();
+      await expect(host.page.getByText(hintText)).toBeVisible({ timeout: 8_000 });
+      await expect(guest.page.getByText(hintText)).toBeVisible({ timeout: 8_000 });
+    }
+    await expect(host.page.getByText("全部三级提示已公开")).toBeVisible();
+    expect(api.commandBodies.slice(-6).map(({ type, payload }) => ({ type, payload }))).toEqual(
+      hintLevels.flatMap((_, index) => {
+        const level = index + 1;
+        return [
+          { type: "hint.request", payload: { hint_id: "timeline", level } },
+          { type: "hint.confirm", payload: { hint_id: "timeline", level } },
+        ];
+      }),
+    );
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "打开协作提示" }).click();
+    await expect(host.page.getByText(hintLevels[2])).toBeVisible();
+
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    await host.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expectScenePhase(host.page, "核对口供", "提交判断");
+    await expect(host.page.getByRole("button", { name: "打开协作提示" })).toHaveCount(0);
+    await expect(host.page.getByRole("heading", { name: "协作提示" })).toHaveCount(0);
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }
