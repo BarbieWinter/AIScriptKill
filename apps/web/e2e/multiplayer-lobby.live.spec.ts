@@ -203,7 +203,7 @@ test("two real anonymous identities complete the M3 candidate game and review", 
       host.page.getByRole("heading", { name: "二十点二十分的金属声最可能来自哪种情况？" }),
     ).toBeVisible({ timeout: 10_000 });
 
-    await host.page.getByText("有人在二十点二十分强行进入值班室", { exact: true }).click();
+    await host.page.getByText("金属声本身不能证明破门，来源可能是值班室内已有的人或物", { exact: true }).click();
     await host.page.getByRole("button", { name: "确认选择" }).click();
     await expect(guest.page.getByText("1/2 位玩家已提交")).toBeVisible({ timeout: 10_000 });
     await guest.page.getByText("有人早已在室内，金属声来自钥匙掉落", { exact: true }).click();
@@ -211,8 +211,6 @@ test("two real anonymous identities complete the M3 candidate game and review", 
     await expect(host.page.getByTestId("revealed-ballots")).toBeVisible({ timeout: 10_000 });
 
     await host.page.getByRole("button", { name: "进入下一阶段" }).click();
-    await closePanel(host.page);
-    await closePanel(guest.page);
     await waitForPhase(host.page, "共同终判", "阅读角色信息");
     await waitForPhase(guest.page, "共同终判", "阅读角色信息");
     await openJournal(host.page);
