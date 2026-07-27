@@ -112,6 +112,22 @@ stage_min: prologue
 """
 
 
+def test_legacy_package_rejects_multiplayer_stage_enter_chapter_release() -> None:
+    files = minimal_package_files()
+    files["character_scripts/player/chapter-01.md"] = _character_chapter().replace(
+        "  type: game_start",
+        "  type: stage_enter\n  stage_id: prologue",
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_CHARACTER_CHAPTER_RELEASE_INVALID"
+    assert exc_info.value.message == (
+        "legacy single character chapter chapter-01 不支持 stage_enter 授权"
+    )
+
+
 def test_load_package_archive_rejects_missing_entry_stage_when_manifest_points_elsewhere() -> None:
     # Given: package.yml references an entry stage that has no stage YAML.
     files = minimal_package_files()

@@ -13,6 +13,13 @@ class GameStartChapterRelease(PackageYamlModel):
     type: Literal["game_start"] = Field(description="Game-start release discriminator.")
 
 
+class StageEnterChapterRelease(PackageYamlModel):
+    """声明章节在多人线性 executor 进入指定阶段时授权。"""
+
+    type: Literal["stage_enter"] = Field(description="Stage-enter release discriminator.")
+    stage_id: str = Field(min_length=1, description="Stage that unlocks the chapter.")
+
+
 class RuleChapterRelease(PackageYamlModel):
     """声明章节只能由同 ID 的确定性剧本事件授权。"""
 
@@ -21,7 +28,7 @@ class RuleChapterRelease(PackageYamlModel):
 
 
 CharacterChapterRelease: TypeAlias = Annotated[
-    GameStartChapterRelease | RuleChapterRelease,
+    GameStartChapterRelease | StageEnterChapterRelease | RuleChapterRelease,
     Field(discriminator="type"),
 ]
 

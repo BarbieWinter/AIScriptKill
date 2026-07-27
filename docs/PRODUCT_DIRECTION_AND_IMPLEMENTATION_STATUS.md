@@ -419,9 +419,9 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 公开讨论 | 契约/离线状态为主 | 已有持久讨论事件、HTTP 命令和双方 UI | **已完成（候选基线）** |
 | 确定性公共材料 | reducer 已有核心逻辑 | 已接入快照和浏览器展示 | **已完成（候选基线）** |
 | 阶段判断与推进 | reducer 已有 | 秘密提交、共享选择、阶段推进均接入 | **已完成（候选基线）** |
-| 终局与复盘 | 样例曾被未支持 branch 阻断 | 当前双人包可映射 ending 并读取真相与章节复盘；其他合法配置仍可能失败 | **当前样例已完成；通用 contract 部分完成** |
+| 终局与复盘 | 样例曾被未支持 branch 阻断 | 严格双人包必须完整映射 ending、冻结 truth，并保证双方可打开复盘 | **严格双人 contract 已完成** |
 | 完整双人浏览器通关 | 大厅验收止于活跃态 | 真实 Supabase/FastAPI/Next 双身份完整通关 | **已完成（候选基线）** |
-| authoring schema 与 runtime 闭合 | 多人 schema 已存在 | 仍会接受运行时必然卡死、复盘失败或字段被静默忽略的 YAML | **部分完成** |
+| authoring schema 与 runtime 闭合 | 多人 schema 已存在 | 统一 playability 决策拒绝线性 executor 不消费或会破坏双人复盘的组合 | **严格双人 contract 已完成** |
 | 样例内容一致性 | 双人样例已存在 | 第一阶段选项/结果 ID 与调查员章节陈述存在错误归因 | **部分完成** |
 | 持久命令与数据库恢复 | 部分命令恢复基础 | 服务端回执、幂等、stale reclaim、attempt fencing 和权限已接通 | **已完成（服务端已测范围）** |
 | outbox 实时投递 | 基础表/设计存在 | 表、事务写入与 batch dispatcher 存在；gameplay 不写 topic，且无 adapter/worker | **部分完成** |
@@ -469,29 +469,18 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 - AI DM 没有进入任何可玩路径。
 - 当前提交是后续建设基线，不代表任意人数、任意剧本或实时多人产品已经完成。
 
-### 10.3 绿灯测试之外仍存在的 contract/runtime 缺口
+### 10.3 已闭合的严格双人 package contract
 
-真实样例通过只证明“这一组 YAML 值”可运行，不能证明所有通过 authoring 校验的包都能运行。当前审计确认了以下缺口：
+`multiplayer_package_playability` 现在是导入、发布、房间创建和冻结版本解码共同消费的不可变决定。当前被接受的版本必须满足：
 
-| 严重度 | 缺口 | 实际后果 |
-|---|---|---|
-| P1 | shared-choice final 没有限制为 `reveal: outcome_only` | schema 默认的 `named_ballots` 不会产生 ballots，房间可完成但复盘永久失败 |
-| P1 | `dm_guide/truth.yml` 在包契约中可选，但 completed review 强制要求 truth | 合法包可以完成游戏，却在打开复盘时永久返回 `ROOM_REVIEW_INVALID` |
-| P1/P2 | 双人房间允许包声明多于两名 playable character | 两人任选后可以完成游戏，但 review 要求 final chapters 恰好等于实际角色；未选第三角色会导致复盘失败 |
-| P2 | endings 仍要求 `condition` / `on_trigger`，多人完成逻辑只消费 `id/name/outcome_text` | 合法条件和动作会被静默忽略，形成假 authoring 能力 |
-| P2 | `engine.entry_stage`、`allowed_transitions`、`entry_conditions` 与 stage index 同时存在 | 当前 runtime 只按 index 顺序，合法但互相矛盾的 YAML 会被静默忽略 |
-| P2 | 角色章节 frontmatter 的 `release` / `stage_min` 不被多人 runtime 消费 | `release: rule` 等合法配置也会按 `stage.chapters` 无条件解锁 |
-| P2 | 当前 investigation 选项把“20:20 强行进入”标为 `investigator-account` | 调查员章节实际明确否认 20:10 至 20:20 有人从走廊进入，结果归因与文本冲突 |
+- 恰好两个 playable character，且每个阶段的角色集合完全一致；
+- stage index 顺序唯一，存在的 act 阶段顺序与其一致，`engine.entry_stage` 指向首阶段，transition 只指向相邻下一阶段；跳跃、回退、entry/exit conditions 和未消费的 legacy stage capability 必须关闭或为空；
+- 第一阶段角色章节使用 `game_start`，后续章节使用匹配当前阶段的 `stage_enter` 和 `stage_min`；章节不得复用或游离于阶段映射之外；
+- 必须存在冻结 truth 且包含非空 `case_summary`；shared-choice 终局只能使用 `outcome_only`；每个最终 outcome 显式映射到唯一 authored ending；
+- 多人包不接受 `engine.default_ending`，ending 的 legacy condition/action/rating bonus 只能保留不会产生行为的固定占位值；
+- 唯一 `final_judgment` 必须位于线性末端，且完成后的同一冻结版本能分别为两名参与者生成 participant-safe review。
 
-对应代码边界包括：
-
-- `engine/core/package_multiplayer.py:76` 只检查 playable 角色“不少于”房间人数，而 `engine/core/multiplayer_review.py:49` 要求 final chapters 与实际分配角色集合完全相等。
-- `engine/core/multiplayer_review.py:67` 把包契约中的可选 truth 变成 completed review 的硬依赖。
-- `engine/core/multiplayer_state_machine.py:158` 直接按同名 outcome ID 选 ending，不执行 legacy ending condition/action。
-- `engine/services/multiplayer_gameplay_service.py:392` 只按 stage index 取得下一阶段。
-- `script-packages/mp1-two-player/stages/investigation.yml:25` 与调查员当前章节陈述不一致。
-
-这些问题必须在把 schema 称为“包作者可依赖的稳定契约”之前修复。正确处理方式不是给 runtime 增加更多隐式兼容，而是删掉不属于多人模型的 legacy 字段，或在导入阶段拒绝 runtime 不支持的组合。
+这使包作者能够依赖当前严格双人线性契约，但不代表广义 schema 中的任意人数、任意分支或 legacy 单人能力已被多人 runtime 支持。样例中调查选项与角色文字之间的语义归因仍是独立的内容一致性问题，不是 contract/runtime 闭合问题。
 
 ---
 

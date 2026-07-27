@@ -208,14 +208,21 @@ def test_real_two_player_package_completes_and_review_uses_frozen_truth() -> Non
         state,
         definition=final_judgment,
     )
-    review = project_completed_review(
-        state=completed,
-        member_id="member-a",
-        package=room_package,
-        final_definition=final_judgment,
-    )
+    reviews = {
+        member_id: project_completed_review(
+            state=completed,
+            member_id=member_id,
+            package=room_package,
+            final_definition=final_judgment,
+        )
+        for member_id in MEMBERS
+    }
+    review = reviews["member-a"]
 
     assert completed.room.status is RoomStatus.COMPLETED
+    assert set(reviews) == set(MEMBERS)
+    assert all(item.member_id == member_id for member_id, item in reviews.items())
+    assert all(item.ending.id == "conflicting-accounts" for item in reviews.values())
     assert review.ending.id == "conflicting-accounts"
     assert review.ending.outcome_text.startswith("你们确认知情人")
     assert review.truth.timeline[-1].hidden is True

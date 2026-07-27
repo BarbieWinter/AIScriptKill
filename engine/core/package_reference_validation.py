@@ -81,8 +81,10 @@ def validate_stage_references(
 def validate_character_chapter_references(
     package: ScriptPackageImport,
     context: PackageValidationContext,
+    *,
+    multiplayer_enabled: bool,
 ) -> None:
-    """校验人物章节所属角色和最早阶段引用。"""
+    """校验人物章节所属角色、授权模式和最早阶段引用。"""
 
     for chapter in package.chapters:
         ensure_reference(
@@ -97,7 +99,22 @@ def validate_character_chapter_references(
                 context.stage_ids,
             )
         release_type = metadata_text(chapter.release.get("type"))
-        if release_type == "rule":
+        if release_type == "stage_enter":
+            if not multiplayer_enabled:
+                raise PackageArchiveError(
+                    "PACKAGE_CHARACTER_CHAPTER_RELEASE_INVALID",
+                    f"legacy single character chapter {chapter.id} 不支持 stage_enter 授权",
+                )
+            ensure_reference(
+                f"character chapter {chapter.id} 的授权阶段引用",
+                required_text(
+                    f"character chapter {chapter.id} 的授权阶段",
+                    chapter.release,
+                    "stage_id",
+                ),
+                context.stage_ids,
+            )
+        elif release_type == "rule":
             rule_id = required_text(
                 f"character chapter {chapter.id} 的授权规则",
                 chapter.release,

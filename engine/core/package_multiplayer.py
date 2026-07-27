@@ -14,8 +14,13 @@ from engine.contracts.multiplayer_v1.authoring import (
     SecretVoteSettlementDefinition,
     SharedChoiceSettlementDefinition,
 )
-from engine.contracts.multiplayer_v1.vocabulary import SettlementEffect
+from engine.contracts.multiplayer_v1.vocabulary import (
+    FinalAnswerMode,
+    SettlementEffect,
+    SettlementReveal,
+)
 from engine.core.package_archive import PackageArchiveError
+from engine.core.package_dm_guide import DmGuideFiles
 from engine.core.package_manifest_yaml import PackageManifest
 from engine.core.package_schema import JsonMapping, ScriptPackageImport, StageRecord
 from engine.core.package_stage_index import stage_index_from_mapping
@@ -166,7 +171,7 @@ def multiplayer_policy_from_package(package: ScriptPackageImport) -> Multiplayer
         for character in sorted(package.characters, key=lambda item: (item.sort_order, item.id))
         if character.is_playable
     )
-    if len(playable) < 2 or len(set(playable)) != len(playable):
+    if len(playable) != 2 or len(set(playable)) != len(playable):
         raise PackageMultiplayerError("characters.playable")
     return MultiplayerPackagePolicy(
         min_players=2,
@@ -231,7 +236,7 @@ def multiplayer_package_playability(
             message = "package.yml info 与 multiplayer 的 min_players/max_players 必须一致"
         elif error.field == "characters.playable":
             code = "PACKAGE_MULTIPLAYER_PLAYER_COUNT_INVALID"
-            message = "可玩角色数量不能少于 multiplayer.max_players"
+            message = "可玩角色数量必须恰好等于 multiplayer.max_players"
         else:
             code = "PACKAGE_MULTIPLAYER_POLICY_INVALID"
             message = "剧本包不满足双人 Multiplayer v1 运行策略"
@@ -249,6 +254,8 @@ def multiplayer_package_playability(
             json.dumps(manifest_config, ensure_ascii=False)
         )
         _validate_multiplayer_content(package, manifest)
+        guide = DmGuideFiles.model_validate(package.dm_guide)
+        stage_index = stage_index_from_mapping(package.stage_index)
         ordered_stages = multiplayer_stages_from_package(package)
         stage_contracts = tuple(_multiplayer_stage(stage.definition) for stage in ordered_stages)
     except PackageArchiveError as error:
@@ -268,6 +275,15 @@ def multiplayer_package_playability(
         return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
 
     diagnostics: list[MultiplayerPlayabilityDiagnostic] = []
+    sort_orders = tuple(stage.sort_order for stage in ordered_stages)
+    if len(sort_orders) != len(set(sort_orders)):
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code="PACKAGE_MULTIPLAYER_STAGE_ORDER_INVALID",
+            message="多人阶段 sort_order 必须唯一",
+            field="stage_index.stages.sort_order",
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
+
     final_stages: list[tuple[MultiplayerStageDefinition, FinalJudgmentSettlementDefinition]] = []
     for stage in stage_contracts:
         settlement = stage.settlement
@@ -275,15 +291,143 @@ def multiplayer_package_playability(
             final_stages.append((stage, settlement))
     if len(final_stages) != 1 or final_stages[0][0].id != stage_contracts[-1].id:
         stage_id = final_stages[0][0].id if final_stages else None
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code="PACKAGE_MULTIPLAYER_TERMINAL_STAGE_INVALID",
+            message="多人剧本必须且只能以一个 final_judgment 阶段结束",
+            field="stages",
+            stage_id=stage_id,
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
+
+    ordered_stage_ids = tuple(stage.id for stage in ordered_stages)
+    act_stage_ids = tuple(stage_id for act in stage_index.acts for stage_id in act.stages)
+    if act_stage_ids and act_stage_ids != ordered_stage_ids:
+        diagnostic = MultiplayerPlayabilityDiagnostic(
+            code="PACKAGE_MULTIPLAYER_ACT_ORDER_INVALID",
+            message="多人 act 阶段声明必须与线性 stage 顺序一致",
+            field="stage_index.acts.stages",
+        )
+        return MultiplayerPackagePlayability(False, (diagnostic,), policy, None, ())
+
+    if manifest.engine.entry_stage != ordered_stages[0].id:
         diagnostics.append(
             MultiplayerPlayabilityDiagnostic(
-                code="PACKAGE_MULTIPLAYER_TERMINAL_STAGE_INVALID",
-                message="多人剧本必须且只能以一个 final_judgment 阶段结束",
-                field="stages",
-                stage_id=stage_id,
+                code="PACKAGE_MULTIPLAYER_ENTRY_STAGE_INVALID",
+                message="多人剧本入口必须是第一个有序阶段",
+                field="package.engine.entry_stage",
+                stage_id=manifest.engine.entry_stage,
             )
         )
-        return MultiplayerPackagePlayability(False, tuple(diagnostics), policy, None, ())
+    if manifest.engine.default_ending is not None:
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_DEFAULT_ENDING_UNSUPPORTED",
+                message="多人终局不支持 engine.default_ending",
+                field="package.engine.default_ending",
+                ending_id=manifest.engine.default_ending,
+            )
+        )
+    playable_character_ids = frozenset(policy.playable_character_ids)
+    for index, stage_record in enumerate(ordered_stages):
+        available_characters = stage_record.definition.get("available_characters", [])
+        if (
+            not isinstance(available_characters, list)
+            or len(available_characters) != len(playable_character_ids)
+            or frozenset(available_characters) != playable_character_ids
+        ):
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_STAGE_CAST_INVALID",
+                    message="多人阶段 available_characters 必须恰好覆盖可玩角色",
+                    field=f"stages.{stage_record.id}.available_characters",
+                    stage_id=stage_record.id,
+                )
+            )
+        expected_transitions = (
+            [ordered_stages[index + 1].id] if index + 1 < len(ordered_stages) else []
+        )
+        if stage_record.definition.get("allowed_transitions", []) != expected_transitions:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_TRANSITION_UNSUPPORTED",
+                    message="多人阶段 transition 必须只指向线性下一阶段",
+                    field=f"stages.{stage_record.id}.allowed_transitions",
+                    stage_id=stage_record.id,
+                )
+            )
+        for field_name in ("allow_stage_jump", "allow_stage_regression"):
+            if stage_record.definition.get(field_name, False) is False:
+                continue
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_NAVIGATION_UNSUPPORTED",
+                    message="线性多人 executor 不支持阶段跳跃或回退",
+                    field=f"stages.{stage_record.id}.{field_name}",
+                    stage_id=stage_record.id,
+                )
+            )
+        for field_name in ("entry_conditions", "exit_conditions"):
+            if stage_record.definition.get(field_name) == []:
+                continue
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_CONDITIONS_UNSUPPORTED",
+                    message="线性多人 executor 不支持阶段 entry/exit conditions",
+                    field=f"stages.{stage_record.id}.{field_name}",
+                    stage_id=stage_record.id,
+                )
+            )
+        for field_name in (
+            "available_actions",
+            "available_scenes",
+            "available_clue_rounds",
+            "on_stage_entry",
+            "on_stage_exit",
+            "on_clue_discovered",
+            "media_triggers",
+        ):
+            if stage_record.definition.get(field_name, []) == []:
+                continue
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_STAGE_CAPABILITY_UNSUPPORTED",
+                    message="线性多人 executor 不支持该阶段 legacy capability",
+                    field=f"stages.{stage_record.id}.{field_name}",
+                    stage_id=stage_record.id,
+                )
+            )
+        if stage_record.definition.get("special_rules", {}) != {}:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_STAGE_CAPABILITY_UNSUPPORTED",
+                    message="线性多人 executor 不支持该阶段 legacy capability",
+                    field=f"stages.{stage_record.id}.special_rules",
+                    stage_id=stage_record.id,
+                )
+            )
+    if guide.truth is None:
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_TRUTH_REQUIRED",
+                message="多人剧本版本必须包含可用于完成后复盘的 truth",
+                field="dm_guide.truth",
+            )
+        )
+    elif not (guide.truth.truth.case_summary or "").strip():
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_TRUTH_CONTENT_REQUIRED",
+                message="多人复盘 truth 必须包含非空 case_summary",
+                field="dm_guide.truth.truth.case_summary",
+            )
+        )
+    diagnostics.extend(
+        _multiplayer_chapter_diagnostics(
+            package,
+            policy=policy,
+            stages=stage_contracts,
+        )
+    )
 
     for stage in stage_contracts[:-1]:
         if stage.settlement.default_effect is SettlementEffect.RECORD_AND_CONTINUE:
@@ -307,6 +451,47 @@ def multiplayer_package_playability(
                 stage_id=terminal_stage.id,
             )
         )
+    if (
+        settlement.answer_mode is FinalAnswerMode.SHARED_CHOICE
+        and settlement.reveal is not SettlementReveal.OUTCOME_ONLY
+    ):
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_FINAL_REVEAL_UNSUPPORTED",
+                message="shared_choice 最终判断只支持 outcome_only 揭晓",
+                field=f"stages.{terminal_stage.id}.settlement.reveal",
+                stage_id=terminal_stage.id,
+            )
+        )
+
+    for ending in package.endings:
+        if ending.condition != {"type": "always"}:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_ENDING_CONDITION_UNSUPPORTED",
+                    message=f"多人结局不支持运行时条件: {ending.id}",
+                    field=f"endings.{ending.id}.condition",
+                    ending_id=ending.id,
+                )
+            )
+        if ending.on_trigger:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_ENDING_ACTIONS_UNSUPPORTED",
+                    message=f"多人结局不支持运行时触发动作: {ending.id}",
+                    field=f"endings.{ending.id}.on_trigger",
+                    ending_id=ending.id,
+                )
+            )
+        if ending.metadata.get("rating_bonus", {}) != {}:
+            diagnostics.append(
+                MultiplayerPlayabilityDiagnostic(
+                    code="PACKAGE_MULTIPLAYER_ENDING_RATING_UNSUPPORTED",
+                    message=f"多人结局不支持 rating_bonus: {ending.id}",
+                    field=f"endings.{ending.id}.rating_bonus",
+                    ending_id=ending.id,
+                )
+            )
 
     declared_outcomes = tuple(option.outcome_id for option in settlement.options)
     if settlement.tie_outcome_id is not None:
@@ -361,6 +546,58 @@ def multiplayer_package_playability(
         terminal_stage_id=terminal_stage.id,
         ending_resolutions=tuple(resolutions),
     )
+
+
+def _multiplayer_chapter_diagnostics(
+    package: ScriptPackageImport,
+    *,
+    policy: MultiplayerPackagePolicy,
+    stages: tuple[MultiplayerStageDefinition, ...],
+) -> tuple[MultiplayerPlayabilityDiagnostic, ...]:
+    chapters_by_id = {chapter.id: chapter for chapter in package.chapters}
+    diagnostics: list[MultiplayerPlayabilityDiagnostic] = []
+    referenced: set[str] = set()
+    for index, stage in enumerate(stages):
+        for character_id, chapter_id in stage.chapters.items():
+            if chapter_id in referenced:
+                diagnostics.append(
+                    MultiplayerPlayabilityDiagnostic(
+                        code="PACKAGE_MULTIPLAYER_CHAPTER_REUSED",
+                        message=f"角色章节不能跨多人阶段复用: {chapter_id}",
+                        field=f"stages.{stage.id}.chapters.{character_id}",
+                        stage_id=stage.id,
+                    )
+                )
+                continue
+            referenced.add(chapter_id)
+            chapter = chapters_by_id[chapter_id]
+            expected_release = (
+                {"type": "game_start"}
+                if index == 0
+                else {"type": "stage_enter", "stage_id": stage.id}
+            )
+            if chapter.release != expected_release or chapter.stage_min != stage.id:
+                diagnostics.append(
+                    MultiplayerPlayabilityDiagnostic(
+                        code="PACKAGE_MULTIPLAYER_CHAPTER_RELEASE_INVALID",
+                        message=(f"角色 {character_id} 的阶段 {stage.id} 章节授权声明不匹配"),
+                        field=f"chapters.{chapter_id}.release",
+                        stage_id=stage.id,
+                    )
+                )
+
+    playable_ids = frozenset(policy.playable_character_ids)
+    for chapter in package.chapters:
+        if chapter.character_id not in playable_ids or chapter.id in referenced:
+            continue
+        diagnostics.append(
+            MultiplayerPlayabilityDiagnostic(
+                code="PACKAGE_MULTIPLAYER_CHAPTER_UNREFERENCED",
+                message=f"可玩角色章节未映射到多人阶段: {chapter.id}",
+                field=f"chapters.{chapter.id}",
+            )
+        )
+    return tuple(diagnostics)
 
 
 def multiplayer_stages_from_package(package: ScriptPackageImport) -> tuple[StageRecord, ...]:

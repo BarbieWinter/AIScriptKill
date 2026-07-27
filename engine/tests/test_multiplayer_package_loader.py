@@ -386,3 +386,296 @@ def test_shared_final_judgment_forbids_tie_outcome() -> None:
 
     assert exc_info.value.code == "INVALID_PACKAGE_SCHEMA"
     assert "tie outcome" in exc_info.value.message
+
+
+def test_multiplayer_playability_requires_exactly_two_playable_roles() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    observer = replace(
+        package.characters[0],
+        id="observer",
+        name="旁观者",
+        sort_order=20,
+    )
+
+    playability = multiplayer_package_playability(
+        replace(package, characters=(*package.characters, observer))
+    )
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_PLAYER_COUNT_INVALID"
+    assert diagnostic.field == "characters.playable"
+
+
+def test_multiplayer_playability_requires_frozen_truth_content() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+
+    playability = multiplayer_package_playability(replace(package, dm_guide={}))
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_TRUTH_REQUIRED"
+    assert diagnostic.field == "dm_guide.truth"
+
+
+def test_multiplayer_truth_requires_nonempty_case_summary() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    dm_guide = dict(package.dm_guide)
+    truth_file = dict(dm_guide["truth"])
+    truth = dict(truth_file["truth"])
+    truth["case_summary"] = " "
+    truth_file["truth"] = truth
+    dm_guide["truth"] = truth_file
+
+    playability = multiplayer_package_playability(replace(package, dm_guide=dm_guide))
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_TRUTH_CONTENT_REQUIRED"
+    assert diagnostic.field == "dm_guide.truth.truth.case_summary"
+
+
+def test_shared_final_judgment_requires_outcome_only_reveal() -> None:
+    files = _fixture_files()
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        '  reveal: "outcome_only"', '  reveal: "named_ballots"'
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_FINAL_REVEAL_UNSUPPORTED"
+    assert exc_info.value.message == "shared_choice 最终判断只支持 outcome_only 揭晓"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code", "expected_field"),
+    (
+        (
+            "condition",
+            "PACKAGE_MULTIPLAYER_ENDING_CONDITION_UNSUPPORTED",
+            "endings.conflicting-accounts.condition",
+        ),
+        (
+            "actions",
+            "PACKAGE_MULTIPLAYER_ENDING_ACTIONS_UNSUPPORTED",
+            "endings.conflicting-accounts.on_trigger",
+        ),
+    ),
+)
+def test_multiplayer_endings_reject_ignored_legacy_behavior(
+    mutation: str,
+    expected_code: str,
+    expected_field: str,
+) -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    ending = package.endings[0]
+    if mutation == "condition":
+        invalid_ending = replace(ending, condition={"type": "stage_reached", "stage": "x"})
+    else:
+        invalid_ending = replace(ending, on_trigger=({"action": "show_truth_summary"},))
+
+    playability = multiplayer_package_playability(
+        replace(package, endings=(invalid_ending, *package.endings[1:]))
+    )
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == expected_code
+    assert diagnostic.field == expected_field
+    assert diagnostic.ending_id == "conflicting-accounts"
+
+
+def test_multiplayer_endings_reject_ignored_rating_bonus() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    ending = package.endings[0]
+    invalid_ending = replace(
+        ending,
+        metadata={**ending.metadata, "rating_bonus": {"deduction": 10}},
+    )
+
+    playability = multiplayer_package_playability(
+        replace(package, endings=(invalid_ending, *package.endings[1:]))
+    )
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_ENDING_RATING_UNSUPPORTED"
+    assert diagnostic.field == "endings.conflicting-accounts.rating_bonus"
+    assert diagnostic.ending_id == "conflicting-accounts"
+
+
+def test_multiplayer_rejects_legacy_default_ending() -> None:
+    files = _fixture_files()
+    files["package.yml"] = _text_file(files, "package.yml").replace(
+        '  entry_stage: "investigation"',
+        '  entry_stage: "investigation"\n  default_ending: "conflicting-accounts"',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_DEFAULT_ENDING_UNSUPPORTED"
+    assert exc_info.value.message == "多人终局不支持 engine.default_ending"
+
+
+def test_multiplayer_entry_stage_must_match_first_ordered_stage() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    config = dict(package.package.config)
+    engine = dict(config["engine"])
+    engine["entry_stage"] = "final-judgment"
+    config["engine"] = engine
+    invalid = replace(package, package=replace(package.package, config=config))
+
+    playability = multiplayer_package_playability(invalid)
+
+    assert playability.playable is False
+    diagnostic = playability.diagnostics[0]
+    assert diagnostic.code == "PACKAGE_MULTIPLAYER_ENTRY_STAGE_INVALID"
+    assert diagnostic.field == "package.engine.entry_stage"
+    assert diagnostic.stage_id == "final-judgment"
+
+
+def test_multiplayer_stage_order_must_be_unambiguous() -> None:
+    files = _fixture_files()
+    files["stages/_index.yml"] = _text_file(files, "stages/_index.yml").replace(
+        "    sort_order: 10", "    sort_order: 0"
+    )
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        "sort_order: 10", "sort_order: 0"
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_STAGE_ORDER_INVALID"
+    assert exc_info.value.message == "多人阶段 sort_order 必须唯一"
+
+
+def test_multiplayer_act_stage_order_must_match_linear_order() -> None:
+    files = _fixture_files()
+    files["stages/_index.yml"] = _text_file(files, "stages/_index.yml").replace(
+        'stages: ["investigation", "final-judgment"]',
+        'stages: ["final-judgment", "investigation"]',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_ACT_ORDER_INVALID"
+    assert exc_info.value.message == "多人 act 阶段声明必须与线性 stage 顺序一致"
+
+
+def test_multiplayer_transitions_must_match_linear_executor() -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        'allowed_transitions: ["final-judgment"]', "allowed_transitions: []"
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_TRANSITION_UNSUPPORTED"
+    assert exc_info.value.message == "多人阶段 transition 必须只指向线性下一阶段"
+
+
+def test_multiplayer_stage_conditions_must_be_empty() -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        "entry_conditions: []",
+        'entry_conditions:\n  - type: "stage_completed"\n    stage_id: "final-judgment"',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_CONDITIONS_UNSUPPORTED"
+    assert exc_info.value.message == "线性多人 executor 不支持阶段 entry/exit conditions"
+
+
+def test_later_multiplayer_chapter_requires_matching_stage_enter_release() -> None:
+    files = _fixture_files()
+    path = "character_scripts/investigator/investigator-final-judgment.md"
+    files[path] = _text_file(files, path).replace(
+        "release:\n  type: stage_enter\n  stage_id: final-judgment",
+        "release:\n  type: game_start",
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_CHAPTER_RELEASE_INVALID"
+    assert exc_info.value.message == ("角色 investigator 的阶段 final-judgment 章节授权声明不匹配")
+
+
+def test_multiplayer_stages_cannot_reuse_character_chapters() -> None:
+    files = _fixture_files()
+    files["stages/final-judgment.yml"] = _text_file(files, "stages/final-judgment.yml").replace(
+        'investigator: "investigator-final-judgment"',
+        'investigator: "investigator-investigation"',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_CHAPTER_REUSED"
+    assert exc_info.value.message == "角色章节不能跨多人阶段复用: investigator-investigation"
+
+
+def test_multiplayer_rejects_unreferenced_playable_chapter() -> None:
+    files = _fixture_files()
+    source = "character_scripts/investigator/investigator-final-judgment.md"
+    files["character_scripts/investigator/investigator-epilogue.md"] = (
+        _text_file(files, source)
+        .replace("chapter_id: investigator-final-judgment", "chapter_id: investigator-epilogue")
+        .replace("order: 2", "order: 3")
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_CHAPTER_UNREFERENCED"
+    assert exc_info.value.message == ("可玩角色章节未映射到多人阶段: investigator-epilogue")
+
+
+@pytest.mark.parametrize("field", ("allow_stage_jump", "allow_stage_regression"))
+def test_multiplayer_rejects_unsupported_navigation_flags(field: str) -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        'allowed_transitions: ["final-judgment"]',
+        f'allowed_transitions: ["final-judgment"]\n{field}: true',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_NAVIGATION_UNSUPPORTED"
+    assert exc_info.value.message == "线性多人 executor 不支持阶段跳跃或回退"
+
+
+def test_multiplayer_stage_cast_must_match_playable_roles() -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        'available_characters: ["investigator", "insider"]',
+        'available_characters: ["investigator"]',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_STAGE_CAST_INVALID"
+    assert exc_info.value.message == "多人阶段 available_characters 必须恰好覆盖可玩角色"
+
+
+def test_multiplayer_rejects_ignored_stage_capabilities() -> None:
+    files = _fixture_files()
+    files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
+        'available_characters: ["investigator", "insider"]',
+        'available_characters: ["investigator", "insider"]\nspecial_rules:\n  hidden: true',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_STAGE_CAPABILITY_UNSUPPORTED"
+    assert exc_info.value.message == "线性多人 executor 不支持该阶段 legacy capability"

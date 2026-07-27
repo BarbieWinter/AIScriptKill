@@ -51,7 +51,11 @@ def validate_package_import(
 
     validate_stage_references(package.stages, context)
     validate_character_references(package, context)
-    validate_character_chapter_references(package, context)
+    validate_character_chapter_references(
+        package,
+        context,
+        multiplayer_enabled=manifest.multiplayer is not None,
+    )
     validate_scene_references(package, context)
     validate_clue_references(package, context)
     validate_evidence_references(package, context)

@@ -146,7 +146,7 @@ zip or directory
   -> package repository
 ```
 
-声明 multiplayer 的剧本版本通过一个不可变 playability 结果统一校验玩家范围、角色章节覆盖、材料引用、阶段 effect、终局拓扑，以及 final outcome 到 authored ending 的显式完整映射。loader、发布、房间创建和冻结版本快照解码消费同一结果；失败必须在写入或开局前阻断，而不是在运行期猜测修复。
+声明 multiplayer 的剧本版本通过一个不可变 playability 结果统一校验严格双人角色集合、含非空 `case_summary` 的必需 truth、线性 stage/act 顺序、入口、相邻 transition、确定性章节授权、阶段 effect、终局 reveal、终局拓扑，以及 final outcome 到 authored ending 的显式完整映射。`stage_enter` 只允许用于多人版本；未被多人 executor 消费的 legacy navigation、condition、stage capability、`engine.default_ending`、ending action 和 rating bonus 会被拒绝。loader、发布、房间创建和冻结版本快照解码消费同一结果；失败必须在写入或开局前阻断，而不是在运行期猜测修复。
 
 ## 边界
 

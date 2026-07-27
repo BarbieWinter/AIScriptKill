@@ -5,7 +5,8 @@ order: 2
 title: 责任边界
 visibility: character_only
 release:
-  type: game_start
+  type: stage_enter
+  stage_id: final-judgment
 stage_min: final-judgment
 ---
 

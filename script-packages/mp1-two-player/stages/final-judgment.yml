@@ -1,9 +1,7 @@
 id: "final-judgment"
 name: "共同终判"
 sort_order: 10
-entry_conditions:
-  - type: "stage_completed"
-    stage_id: "investigation"
+entry_conditions: []
 exit_conditions: []
 available_actions: []
 available_characters: ["investigator", "insider"]

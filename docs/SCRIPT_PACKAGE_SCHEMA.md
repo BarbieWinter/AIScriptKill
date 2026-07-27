@@ -12,9 +12,10 @@
 > **多人字段边界：** `multiplayer_v1` 小节描述当前严格 authoring contract；实际执行边界与
 > 变更入口见 [`../openwiki/domain/script-gameplay.md`](../openwiki/domain/script-gameplay.md)。
 >
-> **已知缺口（重要）：** authoring schema 与多人 runtime 尚未完全闭合——存在能通过导入校验
-> 但运行时必然卡死、复盘失败或字段被静默忽略的合法 YAML 组合。在这些缺口修复前，
-> 不应把本 Schema 当作包作者可完全依赖的稳定契约。完整缺口清单见
+> **多人稳定边界：** 当前只承诺严格双人、按 stage index 顺序执行、以唯一
+> `final_judgment` 结束并可供双方复盘的线性契约。导入、发布、建房和冻结快照解码
+> 共享同一个 playability 判断；不属于该执行器的合法 legacy 字段会在运行前被拒绝，
+> 而不是被静默忽略。完整边界见
 > [`PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md`](PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md) 第 10.3 节。
 
 ---
@@ -98,15 +99,15 @@ stage_min: return_to_snow_village
 - `character_id` 必须与父目录名完全一致，并引用 `characters/` 中已有角色；
 - `order` 是非负整数；
 - `visibility` 目前只能是 `character_only`；
-- `release` 必须是 JSON-compatible YAML mapping，其内部语义由后续确定性授权规则消费；
-- `stage_min` 可省略；存在时必须引用已有 Stage，但它不替代独立章节授权；
+- `release` 是严格 discriminator mapping：`game_start` 在开局授权；`stage_enter` 仅用于严格多人包，必须携带已有 `stage_id` 并在进入该阶段时授权；`rule` 保留给 legacy 单人规则授权；legacy 单人包会拒绝 `stage_enter`，避免接受单人执行器不会消费的授权声明；
+- `stage_min` 可省略；存在时必须引用已有 Stage，但它不替代独立章节授权；严格多人包中它必须与章节映射到的阶段一致；
 - 不接受嵌套子目录、非 `.md` 文件、非 UTF-8 文件、缺失 frontmatter 或空正文；
 - 章节正文持久化到私有章节表，不自动进入 `script_knowledge` 或当前
   `character_knowledge` RAG 索引；后续只能由服务端依据玩家角色与已解锁章节读取。
 
 ### 1.2 `multiplayer_v1` authoring contract
 
-> 以下示例说明多人包的严格 JSON/YAML 形状。声明多人策略的剧本包会在导入时接受并校验这些字段；当前 schema 与 runtime 尚未完全闭合，发布前仍需遵守文首已知缺口说明。
+> 以下示例说明多人包的严格 JSON/YAML 形状。声明多人策略的剧本包会在导入、发布、建房和冻结快照解码时接受同一组 playability 校验。
 
 所有 MP-0 authoring 模型继承 `ContractModel`，统一配置为 `strict=True`、`frozen=True`、`extra="forbid"`。未知字段和类型强制转换会被拒绝。
 
@@ -120,7 +121,7 @@ start_policy: all_players_ready
 duplicate_characters: false
 ```
 
-约束：`min_players`、`max_players` 都必须是 `>= 2` 的整数，且最小人数不能大于最大人数；`character_assignment` 只能是 `required`，`start_policy` 只能是 `all_players_ready`，`duplicate_characters` 只能为 `false`。
+局部 schema 约束：`min_players`、`max_players` 都必须是 `>= 2` 的整数，且最小人数不能大于最大人数；`character_assignment` 只能是 `required`，`start_policy` 只能是 `all_players_ready`，`duplicate_characters` 只能为 `false`。当前可发布和建房的 `multiplayer_v1` 进一步要求 `min_players == max_players == 2`，且恰好声明两个不重复的 playable character。
 
 #### 阶段组合模型
 
@@ -182,7 +183,18 @@ hints:
 
 `answer_mode` 只能是 `shared_choice` 或 `individual_secret`。`mode: none` 不能携带 options 等额外字段。unknown mode、空/重复 option、空 question、旧字段名（如 `submission_change_policy`）都会被拒绝。
 
-由剧本包导入、准备发布或创建房间的严格双人剧本版本还必须满足终局 playability 契约：阶段序列必须且只能以一个 `final_judgment` 结束，非终局阶段的 `default_effect` 必须为 `record_and_continue`，终局必须为 `branch`，并通过 `ending_by_outcome` 显式完整映射每个 option outcome（以及 `individual_secret` 的 tie outcome）到已声明的 `ending.id`。`outcome_id` 与 `ending.id` 无需同名，例如：
+由剧本包导入、准备发布或创建房间的严格双人剧本版本还必须满足以下 playability 契约：
+
+- `engine.entry_stage` 必须是 stage index 中 `sort_order` 最小的唯一首阶段；存在 `acts` 时，其 `stages` 展平顺序必须与线性 stage 顺序完全一致；`engine.default_ending` 必须省略；
+- 每个非终局阶段的 `allowed_transitions` 必须只包含紧邻下一阶段，终局必须为空；阶段跳跃、回退、entry/exit conditions 和未被多人 executor 消费的 legacy capability 必须保持关闭或为空；
+- 每个阶段的 `available_characters` 必须恰好覆盖两个 playable character；每个角色章节只能映射一次，第一阶段使用 `release: {type: game_start}`，后续阶段使用与当前阶段一致的 `stage_enter` 和 `stage_min`，不得留下未映射的可玩角色章节；
+- 必须包含冻结的 `dm_guide/truth.yml`，且 `truth.case_summary` 必须为非空文本，使 completed room 能为两名参与者分别生成有内容的复盘；
+- 阶段序列必须且只能以一个 `final_judgment` 结束，非终局阶段的 `default_effect` 必须为 `record_and_continue`，终局必须为 `branch`；
+- `shared_choice` 终局只能使用 `reveal: outcome_only`；
+- `ending_by_outcome` 必须显式完整映射每个 option outcome（以及 `individual_secret` 的 tie outcome）到已声明的 `ending.id`；`outcome_id` 与 `ending.id` 无需同名；
+- 多人 ending 的 legacy placeholder 只能是 `condition: {type: always}`、空 `on_trigger` 和空 `rating_bonus`，因为多人完成逻辑不执行单人条件、动作或评分加成。
+
+例如：
 
 ```yaml
 settlement:
@@ -201,7 +213,7 @@ settlement:
   default_effect: branch
 ```
 
-这些模型是多人剧本包的导入与运行输入；当前已支持的严格双人线性组合见仓库样例，尚未闭合的合法组合见文首链接的状态清单。
+这些模型是多人剧本包的导入与运行输入；当前稳定支持的组合是仓库样例所代表的严格双人线性契约。广义 schema 仍可能描述其他人数或 legacy 行为，但这类组合不会被判定为当前多人运行时可玩。
 
 ---
 
@@ -225,7 +237,7 @@ engine:
   entry_stage: "return_to_snow_village"
 ```
 
-上例 `snow-village` 没有 `multiplayer`，因此是 `legacy_single` 单人包；仓库中的 `mp1-two-player` 则声明包级多人策略，并使用本节的阶段 authoring contract。广义 loader schema 还允许 `metadata.author`、`metadata.adapter`、`info.min_players`、`visual`、`dm_config`、`guard_rules`、`engine.min_engine_version` 与 `engine.default_ending` 等可选字段。
+上例 `snow-village` 没有 `multiplayer`，因此是 `legacy_single` 单人包；仓库中的 `mp1-two-player` 则声明包级多人策略，并使用本节的阶段 authoring contract。广义 loader schema 还允许 `metadata.author`、`metadata.adapter`、`info.min_players`、`visual`、`dm_config`、`guard_rules`、`engine.min_engine_version` 与 `engine.default_ending` 等可选字段；其中 `engine.default_ending` 只属于 legacy 单人执行语义，严格多人包会拒绝它。
 
 ---
 
