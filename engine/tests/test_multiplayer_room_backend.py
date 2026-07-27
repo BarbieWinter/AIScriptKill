@@ -74,6 +74,12 @@ class _PresenceRepository:
         self.member = member
         self.updated: dict[str, object] | None = None
 
+    async def advisory_lock(self, _session_id):
+        return None
+
+    async def lock_room(self, _session_id):
+        return self.room
+
     async def get_room(self, _session_id):
         return self.room
 

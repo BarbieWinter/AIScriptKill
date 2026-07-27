@@ -29,6 +29,7 @@ from engine.api.middleware.auth import (
 )
 from engine.api.schemas.multiplayer_rooms import (
     AcceptRoomInviteResponse,
+    ClosedRoomSnapshotV1,
     CreateMultiplayerSessionRequest,
     CreateMultiplayerSessionResponse,
     CreateRoomInviteRequest,
@@ -360,7 +361,9 @@ async def get_room_snapshot(
             package=package,
             event_rows=rows,
         )
-    raise conflict("ROOM_CLOSED", "多人房间已经关闭")
+    if room.status == "closed":
+        return _closed_snapshot(room, member)
+    raise conflict("ROOM_STATE_INVALID", "多人房间生命周期状态无效")
 
 
 async def update_scene_presence(
@@ -374,13 +377,14 @@ async def update_scene_presence(
     require_multiplayer_enabled()
     repository = MultiplayerRoomRepository(db)
     room_id = _uuid(session_id, "INVALID_SESSION_ID", "session_id 必须是 UUID")
-    room = await repository.get_room(room_id)
+    await repository.advisory_lock(room_id)
+    room = await repository.lock_room(room_id)
     if room is None:
         raise not_found("SESSION_NOT_FOUND", "未找到指定多人房间")
-    _require_active(room)
     member = await repository.joined_member(room.id, principal.id)
     if member is None:
         raise forbidden("NOT_ROOM_MEMBER", "当前身份不是房间成员")
+    _require_active(room)
     state = decode_room_game_state(room)
     if str(member.id) not in state.room.required_member_ids:
         raise forbidden("NOT_ROOM_MEMBER", "当前身份不是已开始房间的参与者")
@@ -424,6 +428,8 @@ async def get_multiplayer_review_if_present(
     member = await repository.joined_member(room.id, principal.id)
     if member is None:
         raise forbidden("NOT_ROOM_MEMBER", "当前身份不是房间成员")
+    if room.status != "completed":
+        raise conflict("REVIEW_NOT_AVAILABLE", "多人游戏完成后才能查看复盘")
     return project_multiplayer_review(
         room=room,
         member=member,
@@ -438,12 +444,6 @@ async def execute_room_command(
     db: AsyncSession,
 ) -> CommandResultV1:
     require_multiplayer_enabled()
-    if isinstance(command, EndIncompleteCommand):
-        raise unprocessable_entity(
-            "COMMAND_NOT_AVAILABLE",
-            "该命令不属于当前最小双人游戏能力",
-        )
-
     repository = MultiplayerRoomRepository(db)
     context = await _lock_mutation(repository, session_id, principal.id)
     receipts = SessionCommandRepository(db)
@@ -538,7 +538,13 @@ async def execute_room_command(
     context = await _lock_mutation(repository, session_id, principal.id)
 
     try:
-        if isinstance(command, _LOBBY_COMMANDS):
+        if context.room.status == "closed":
+            raise conflict("ROOM_CLOSED", "多人房间已经关闭")
+        if isinstance(command, EndIncompleteCommand):
+            if context.room.status == "completed":
+                raise conflict("ROOM_ALREADY_COMPLETED", "已完成房间不能改为未完成关闭")
+            _require_host(context.member)
+        elif isinstance(command, _LOBBY_COMMANDS):
             _require_lobby(context.room)
         else:
             _require_active(context.room)
@@ -591,7 +597,16 @@ async def execute_room_command(
         event_payload: dict[str, object] = {"command_type": command.type}
         event_required = False
         outbox_topic: str | None = "room.events.v1"
-        if isinstance(command, AssignCharacterCommand):
+        if isinstance(command, EndIncompleteCommand):
+            previous_status = context.room.status
+            revision = await _close_incomplete_room(repository, context)
+            event_required = True
+            event_type = "room.incomplete_closed"
+            event_payload = {
+                "command_type": command.type,
+                "previous_status": previous_status,
+            }
+        elif isinstance(command, AssignCharacterCommand):
             revision = await _assign_character(repository, context, command.payload.character_id)
             event_required = revision != context.room.revision
         elif isinstance(command, UnassignCharacterCommand):
@@ -804,6 +819,32 @@ async def _set_ready(
     return await repository.increment_revision(context.room.id)
 
 
+async def _close_incomplete_room(
+    repository: MultiplayerRoomRepository,
+    context: RoomMutationContext,
+) -> int:
+    next_revision = context.room.revision + 1
+    next_sequence = context.room.event_head_sequence + 1
+    state: Mapping[str, object] = context.room.state
+    if context.room.status == "active":
+        current = decode_room_game_state(context.room)
+        closed_room = current.room.model_copy(update={"status": RoomStatus.CLOSED})
+        closed = current.model_copy(
+            update={
+                "room": closed_room,
+                "room_revision": next_revision,
+            }
+        )
+        state = GameStateV2.model_validate(closed.model_dump()).model_dump(mode="json")
+    await repository.close_incomplete_room(
+        session_id=context.room.id,
+        state=state,
+        revision=next_revision,
+        event_head_sequence=next_sequence,
+    )
+    return next_revision
+
+
 async def _start_room(
     repository: MultiplayerRoomRepository,
     context: RoomMutationContext,
@@ -978,8 +1019,30 @@ def _lobby_snapshot(
             can_assign_character=room.status == "lobby",
             can_ready=(room.status == "lobby" and self_member.id in assignment_by_member),
             can_start=can_start,
+            can_end_incomplete=(room.status == "lobby" and self_member.room_role == "host"),
         ),
         invites=safe_invites,
+    )
+
+
+def _closed_snapshot(
+    room: StoredMultiplayerRoom,
+    member: StoredRoomMember,
+) -> ClosedRoomSnapshotV1:
+    if room.closed_at is None:
+        raise conflict("ROOM_STATE_INVALID", "已关闭多人房间缺少关闭时间")
+    package = _decode_room_package(room)
+    return ClosedRoomSnapshotV1(
+        session_id=room.id,
+        revision=room.revision,
+        event_head_sequence=room.event_head_sequence,
+        package=LobbyPackageSummary(
+            script_id=package.package.id,
+            title=package.package.title,
+            version=package.package.version,
+        ),
+        self_member_id=str(member.id),
+        closed_at=room.closed_at,
     )
 
 

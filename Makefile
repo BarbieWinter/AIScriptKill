@@ -50,7 +50,7 @@ test-durable-commands:
 	AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL="$${AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_MP3_RECOVERY_DB_URL="$${AISCRIPTKILL_MP3_RECOVERY_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL="$${AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
-	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
+	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_multiplayer_room_closure_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
 
 test-mp2-contract:
 	npm --prefix apps/web run test:e2e

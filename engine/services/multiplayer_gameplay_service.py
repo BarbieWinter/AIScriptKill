@@ -342,6 +342,7 @@ def project_gameplay_snapshot(
         settlement=settlement,
         hints=hints,
         can_advance=can_advance,
+        can_end_incomplete=(room.status == "active" and member.room_role == "host"),
         ending_id=state.ending_id,
     )
 
@@ -354,9 +355,9 @@ def project_multiplayer_review(
 ) -> CompletedReviewV1:
     """Return completed-only review content from the immutable room package."""
 
-    state = decode_room_game_state(room)
     if room.status != "completed":
         raise conflict("REVIEW_NOT_AVAILABLE", "多人游戏完成后才能查看复盘")
+    state = decode_room_game_state(room)
     try:
         definition = multiplayer_stage_contract(package, state.stage.stage_id)
         return project_completed_review(

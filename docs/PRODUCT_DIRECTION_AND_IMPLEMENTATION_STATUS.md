@@ -430,7 +430,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 断线后浏览器恢复 | 有快照/重试设计 | HTTP 轮询可重新取得快照，但无 pending command、receipt 或专项浏览器恢复 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
 | 认证实时事件流 | contracts 存在 | 运行时仍只有 ping/pong；前端继续轮询 | **仅设计** |
-| 未完成房间退出/释放 | 无 | `room.end_incomplete` 固定拒绝，弃局可能长期占用 principal reservation | **未开始** |
+| 未完成房间退出/释放 | 无 | 房主可关闭 lobby 或放弃 active 房间；双方获得最小 closed 快照，receipt/event/outbox 与邀请撤销、reservation 释放原子持久化 | **已完成** |
 | 通用 `activities[]` | 无 | 仍是固定四相 | **未开始** |
 | 受控 AI DM | 占位文件 | 只有固定提示和终局 truth，无 LLM 主持链路 | **未开始** |
 | 个人目标自动判定 | 无 | 仍为角色剧本文本 | **暂停，不属于第一版** |
@@ -459,6 +459,8 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 ```
 
 该闭环由 `engine/services/multiplayer_gameplay_service.py:113` 接收玩法命令并构造参与者安全快照，由 `LobbyBoundary.tsx:86` 切换到活跃游戏界面。终局通过 `ending_by_outcome` 将最终 `outcome_id` 解析为作者声明的 ending 并把房间标为 `completed`；两类 ID 不再要求同名。导入、发布、房间创建和冻结版本快照解码共同消费 `multiplayer_package_playability`，在写入或开局前拒绝不可完成的多人剧本版本。
+
+正常完成之外，房主可以在 lobby 显式关闭房间，或在 active 状态放弃未完成游戏。该路径只把生命周期推进到 `closed`，不会完成 gate、选择 ending、生成复盘或伪造参与者动作；清理后双方身份可以创建或加入其他房间。
 
 必须同时写清限制：
 
@@ -585,7 +587,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 2. 将提示 UI 合并进实际接线的场景壳，删除未接线 `GameplayShell` 的重复实现。
 3. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
 4. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
-5. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
+5. 将快照事件读取改为增量或有界投影，并在 completed 后停止无意义轮询。
 6. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
 7. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
 8. 删除旧搜证/NPC 产品入口及其依赖链。
@@ -644,12 +646,13 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest engine/tests/ -q` | **534 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| `uv run --frozen pytest engine/tests/ -q` | **534 passed, 19 skipped** | 19 项均为显式数据库环境门禁 |
 | T04 package / gameplay 聚焦测试 | **46 passed** | 覆盖目录/archive 完整库存、修正后的调查揭晓、两个冻结终局与双方复盘 |
-| `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
+| T06 incomplete-room closure 聚焦验收 | **3 database + 2 browser passed** | 覆盖 lobby 关闭、active 放弃、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
+| `make test-durable-commands` | **25 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **8 passed** | 命令恢复、事件 gap、大厅启动与活跃游戏私有投影浏览器契约 |
+| route-mocked Playwright | **10 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影与未完成房间关闭浏览器契约 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
 | `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
@@ -662,7 +665,7 @@ R5  旧方向物理清理
 - 不支持宣称 AI DM 已实现。
 - 不支持宣称 WebSocket 多人运行时已实现。
 - 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖实际 Mansion shell 的提示 UI、浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
+- 不覆盖实际 Mansion shell 的提示 UI、浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
 - 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
