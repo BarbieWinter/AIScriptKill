@@ -94,7 +94,8 @@ polling 中渲染真实同伴。坐标不进入 `GameStateV2`、revision 或 eve
 失败的讨论发送保留草稿；复盘可重试；网络结果不确定时，client 复用同一 `command_id` 重试一次；
 revision mismatch 只刷新，不自动重放 stale intent。
 
-当前 audited tree 只有 `MultiplayerMansionShell` 承担 active/completed gameplay 产品入口，不存在第二套已接线 gameplay shell。
+当前 audited tree 只有 `MultiplayerMansionShell` 承担 active/completed gameplay
+产品入口，不存在第二套已接线 gameplay shell。
 
 ## UI 所有权
 

@@ -419,6 +419,9 @@ function createGameplayApi() {
     failNextSnapshots(identity: Identity, count = 3) {
       snapshotFailures[identity] = count;
     },
+    restoreSnapshots(identity: Identity) {
+      snapshotFailures[identity] = 0;
+    },
     failNextMessage() {
       messageFailures = 1;
     },
@@ -618,6 +621,121 @@ test("fixed hint controls request and restore authored progressive hints without
     await expectScenePhase(host.page, "核对口供", "提交判断");
     await expect(host.page.getByRole("button", { name: "打开协作提示" })).toHaveCount(0);
     await expect(host.page.getByRole("heading", { name: "协作提示" })).toHaveCount(0);
+  } finally {
+    await Promise.all([host.context.close(), guest.context.close()]);
+  }
+});
+
+test("connected shell recovers synchronization and completes discussion decisions and review", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host");
+  const guest = await createPlayerPage(browser, api, "guest");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      guest.page.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
+
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await guest.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await expectScenePhase(guest.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+
+    api.failNextSnapshots("host", 20);
+    const syncWarning = host.page.getByText("同步暂时中断，正在显示上次成功状态。");
+    await expect(syncWarning).toBeVisible({ timeout: 15_000 });
+    api.restoreSnapshots("host");
+    await host.page.getByRole("button", { name: "重试同步" }).click();
+    await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    const messageInput = host.page.getByRole("textbox", { name: "讨论消息" });
+    await messageInput.fill("门锁没有损坏。");
+    api.failNextMessage();
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect(messageInput).toHaveValue("门锁没有损坏。");
+    await expect(
+      host.page.getByRole("main").getByText("Message send failed", { exact: true }),
+    ).toBeVisible();
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect(messageInput).toHaveValue("");
+    await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible({ timeout: 8_000 });
+
+    await host.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expectScenePhase(host.page, "核对口供", "提交判断");
+    await expectScenePhase(guest.page, "核对口供", "提交判断");
+
+    await host.page.getByRole("button", { name: "打开判断" }).click();
+    await guest.page.getByRole("button", { name: "打开判断" }).click();
+    await expect(host.page.getByRole("heading", { name: "二十点二十分的金属声最可能来自哪种情况？" })).toBeVisible();
+    await host.page.getByText("有人在二十点二十分强行进入值班室", { exact: true }).click();
+    await host.page.getByRole("button", { name: "确认选择" }).click();
+    await expect(guest.page.getByText("1/2 位玩家已提交", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByText("有人早已在室内，金属声来自钥匙掉落", { exact: true }).click();
+    await guest.page.getByRole("button", { name: "确认选择" }).click();
+    await expect(host.page.getByTestId("revealed-ballots")).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "进入下一阶段" }).click();
+    await expectScenePhase(host.page, "共同终判", "阅读角色信息");
+    await expectScenePhase(guest.page, "共同终判", "阅读角色信息");
+
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await guest.page.getByRole("button", { name: "角色章" }).click();
+    await expect(host.page.getByTestId("chapter-investigator-final-judgment")).toBeVisible();
+    await expect(guest.page.getByTestId("chapter-insider-final-judgment")).toBeVisible();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await expectScenePhase(host.page, "共同终判", "公开讨论");
+    await expectScenePhase(guest.page, "共同终判", "公开讨论");
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    await host.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await expectScenePhase(host.page, "共同终判", "提交判断");
+    await expectScenePhase(guest.page, "共同终判", "提交判断");
+
+    await host.page.getByRole("button", { name: "打开判断" }).click();
+    await guest.page.getByRole("button", { name: "打开判断" }).click();
+    const finalChoice = "认定知情人违规进入并隐瞒，但没有证据证明其破门或损毁记录";
+    await host.page.getByText(finalChoice, { exact: true }).click();
+    await host.page.getByRole("button", { name: "确认选择" }).click();
+    await expect(guest.page.getByText("1/2 位玩家已提交", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByText(finalChoice, { exact: true }).click();
+    await guest.page.getByRole("button", { name: "确认选择" }).click();
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await expect(guest.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+
+    api.failNextReviews("host");
+    await host.page.getByRole("button", { name: "打开复盘" }).click();
+    await expect(host.page.getByText("Temporary review failure", { exact: true })).toBeVisible({ timeout: 12_000 });
+    await host.page.getByRole("button", { name: "重新加载复盘" }).click();
+    await expect(host.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
+    await expect(host.page.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
+
+    await guest.page.getByRole("button", { name: "打开复盘" }).click();
+    await expect(guest.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
+    await expect(guest.page.getByText("知情人的完整复盘章节。")).toBeVisible();
+    expect(host.webSockets).toEqual([]);
+    expect(guest.webSockets).toEqual([]);
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }

@@ -647,7 +647,7 @@ R5  旧方向物理清理
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **9 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影，以及公开材料/协作提示固定入口与刷新恢复浏览器契约 |
+| route-mocked Playwright | **10 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示入口，以及同步、讨论、判断与复盘恢复浏览器契约 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
 | `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
