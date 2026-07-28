@@ -65,7 +65,7 @@ class StartRoomCommand(_CommandBase):
 
 
 class EndIncompletePayload(ContractModel):
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 class EndIncompleteCommand(_CommandBase):

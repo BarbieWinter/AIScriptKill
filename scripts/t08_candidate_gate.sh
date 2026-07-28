@@ -5,6 +5,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_BASE_URL="http://127.0.0.1:8000"
 WEB_BASE_URL="http://127.0.0.1:3000"
+CANDIDATE_BASE_REF="${T08_CANDIDATE_BASE_REF:-main}"
 ADMIN_EMAIL="t08-candidate-admin@local.invalid"
 ADMIN_PASSWORD="t08-candidate-local-password"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aiscriptkill-t08.XXXXXX")"
@@ -20,6 +21,21 @@ log() {
 fail() {
   printf '\n[T08] FAILED: %s\n' "$1" >&2
   exit 1
+}
+
+check_candidate_tree() {
+  log "Checking candidate repository cleanliness"
+  local base_commit
+  base_commit="$(git merge-base HEAD "$CANDIDATE_BASE_REF")" \
+    || fail "cannot resolve candidate base ref: $CANDIDATE_BASE_REF"
+  git diff --check "$base_commit"
+  git diff --cached --check
+
+  local conflict_markers
+  if conflict_markers="$(git grep --untracked -nE '^(<<<<<<< |=======|>>>>>>> )' -- .)"; then
+    printf '%s\n' "$conflict_markers" >&2
+    fail "candidate tree contains unresolved conflict markers"
+  fi
 }
 
 cleanup() {
@@ -151,11 +167,12 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 cd "$ROOT_DIR"
 
-for command_name in curl jq npm supabase uv zip; do
+for command_name in curl git jq npm supabase uv zip; do
   require_command "$command_name"
 done
 require_service_stopped "$API_BASE_URL/health/db" "FastAPI"
 require_service_stopped "$WEB_BASE_URL/multiplayer" "Next.js"
+check_candidate_tree
 
 log "Provisioning a blank migrated Supabase database"
 supabase status >/dev/null 2>&1 || supabase start -x vector,logflare

@@ -90,7 +90,7 @@ make lint-web
 ```
 
 `make test-t08-candidate` 是破坏性的本地发布门禁：它使用 `--no-seed` 重置本地
-Supabase，执行完整后端、数据库、静态分析、生产构建和 route-mocked 浏览器测试，随后
+Supabase，先检查候选提交与工作树的冲突标记/空白错误，再执行完整后端、数据库、静态分析、生产构建和 route-mocked 浏览器测试，随后
 通过真实管理员 API 发布标准双人包并运行双身份 Live 旅程。不要对包含需保留数据的本地
 数据库执行该命令。
 

@@ -447,6 +447,7 @@ def test_command_union_accepts_all_frozen_types_and_rejects_future_payloads() ->
         ("room.resync", {"last_event_sequence": -1}),
         ("hint.request", {"hint_id": "", "level": 1}),
         ("room.resync", {"last_event_sequence": 8, "member_id": "member-a"}),
+        ("room.end_incomplete", {"reason": "x" * 2001}),
     ):
         with pytest.raises(ValidationError):
             COMMAND_ADAPTER.validate_json(
