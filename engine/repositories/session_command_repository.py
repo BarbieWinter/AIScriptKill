@@ -378,6 +378,29 @@ class SessionCommandRepository:
         )
         return cast(Sequence[dict[str, object]], rows)
 
+    async def list_events_by_type(
+        self,
+        session_id: UUID,
+        event_type: str,
+        through_sequence: int,
+    ) -> Sequence[dict[str, object]]:
+        rows = (
+            (
+                await self.db.execute(
+                    select(session_events)
+                    .where(
+                        session_events.c.session_id == session_id,
+                        session_events.c.event_type == event_type,
+                        session_events.c.sequence <= through_sequence,
+                    )
+                    .order_by(session_events.c.sequence)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return cast(Sequence[dict[str, object]], rows)
+
 
 def _lease_deadline(seconds: int):
     if seconds < 1:

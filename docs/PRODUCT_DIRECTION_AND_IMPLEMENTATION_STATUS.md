@@ -261,7 +261,7 @@ YAML 声明发放点
 玩家坐标 ──► 进入热点 ──► 才能发现关键证据                 [禁止]
 ```
 
-当前 reducer 在阶段局部 V2 状态内按 `stage_enter`、`all_players_read`、`settlement_done` 和 `outcome:*` 触发材料公开；阶段推进会把本阶段精确揭晓 ID 归档到 V2 历史字段，snapshot 同时使用该精确历史和已到达阶段的确定性回填构造累计公共档案。新包仍禁止在非终局阶段声明 `outcome:*` 材料，以保持新创作契约简单且可验证；宽容读取的旧冻结包则能在后续推进时保留这类历史结果材料。`mode: none` 仍会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
+当前 reducer 在阶段局部 V2 状态内按 `stage_enter`、`all_players_read`、`settlement_done` 和 `outcome:*` 触发材料公开；阶段推进会把本阶段精确揭晓 ID 归档到 V2 历史字段，snapshot 使用该精确历史构造累计公共档案。只有带 `prior_revealed_materials_version: 1` 的状态才把该字段视为完整权威；缺少版本标记的过渡/旧房间即使已被默认值序列化为空数组，也只合并已声明的持久 ID 与已越过阶段的无条件公共材料，并在下一次有效状态变更时固化精确版本。系统不会反推或猜测互斥 outcome，因此不会泄露未发生的剧情。新包仍禁止在非终局阶段声明 `outcome:*` 材料，以保持新创作契约简单且可验证；宽容读取的旧冻结包则能在后续推进时保留这类历史结果材料。`mode: none` 仍会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
 
 但当前投影仍同时接受 `clue`、`evidence` 和 `media`，见 `engine/services/multiplayer_gameplay_service.py:481`；旧 `evidence` 概念仍和历史搜证模型纠缠。后续应保留“作者明确发放的线索卡/公共材料”，删除“通过场景、热点或动作发现 evidence”的获取模型。
 
@@ -430,7 +430,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 断线后浏览器恢复 | 有快照/重试设计 | HTTP 轮询可重新取得快照，但无 pending command、receipt 或专项浏览器恢复 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
 | 认证实时事件流 | contracts 存在 | 运行时仍只有 ping/pong；前端继续轮询 | **仅设计** |
-| 未完成房间退出/释放 | 无 | `room.end_incomplete` 固定拒绝，弃局可能长期占用 principal reservation | **未开始** |
+| 未完成房间退出/释放 | 无 | 房主可关闭 lobby 或放弃 active 房间；双方获得最小 closed 快照，receipt/event/outbox 与邀请撤销、reservation 释放原子持久化 | **已完成** |
 | 通用 `activities[]` | 无 | 仍是固定四相 | **未开始** |
 | 受控 AI DM | 占位文件 | 只有固定提示和终局 truth，无 LLM 主持链路 | **未开始** |
 | 个人目标自动判定 | 无 | 仍为角色剧本文本 | **暂停，不属于第一版** |
@@ -459,6 +459,8 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 ```
 
 该闭环由 `engine/services/multiplayer_gameplay_service.py:113` 接收玩法命令并构造参与者安全快照，由 `LobbyBoundary.tsx:86` 切换到活跃游戏界面。终局通过 `ending_by_outcome` 将最终 `outcome_id` 解析为作者声明的 ending 并把房间标为 `completed`；两类 ID 不再要求同名。导入、发布、房间创建和冻结版本快照解码共同消费 `multiplayer_package_playability`，在写入或开局前拒绝不可完成的多人剧本版本。
+
+正常完成之外，房主可以在 lobby 显式关闭房间，或在 active 状态放弃未完成游戏。该路径只把生命周期推进到 `closed`，不会完成 gate、选择 ending、生成复盘或伪造参与者动作；清理后双方身份可以创建或加入其他房间。
 
 必须同时写清限制：
 
@@ -513,7 +515,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 Browser B 通过相同 HTTP 路径独立轮询。
 ```
 
-这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影每 2 秒从 sequence 0 读取完整事件历史，completed 页面仍持续轮询，因此讨论历史增长后会产生线性放大成本。
+这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影已只读取 `discussion.message`，completed 页面也会停止轮询；但 active 房间仍会在每次快照中读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。
 
 ### 11.2 目标多人运行架构
 
@@ -583,7 +585,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 
 1. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
 2. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
-3. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
+3. 将 active 房间的累计讨论历史改为增量或有界投影。
 4. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
 5. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
 6. 删除旧搜证/NPC 产品入口及其依赖链。
@@ -607,7 +609,7 @@ R2  恢复与实时同步
  │  - pending command / 5xx / reconnect 浏览器验收
  │  - gameplay outbox → worker → authenticated room events
  │  - snapshot + cursor replay + gap resync
- │  - bounded event projection + completed stop-poll
+ │  - bounded active discussion projection
  │  - abandon/close + reservation release
  ▼
 R3  通用活动模型
@@ -642,12 +644,13 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest` | **546 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
-| T04 package / gameplay 聚焦测试 | **76 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、V2 精确历史兼容读取与跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
-| `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
+| `uv run --frozen pytest` | **569 passed** | 已连接本地迁移数据库运行全部显式数据库门禁；未执行会重置本地 Supabase 的 T08 候选脚本 |
+| T04 package / gameplay 聚焦测试 | **78 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房缺失历史字段的无条件材料恢复与写回、V2 精确历史校验及跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
+| T06 incomplete-room closure 聚焦验收 | **3 database + 2 browser passed** | 覆盖 lobby 关闭、active 放弃、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
+| `make test-durable-commands` | **25 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **21 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示/讨论入口、完成态讨论记录、无结算 reveal 推进、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| route-mocked Playwright | **25 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、未完成房间关闭及双方缓存释放、位置上报退避与终止错误熔断、固定材料/提示/讨论入口、完成态讨论记录、无结算 reveal 推进、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
 | 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
@@ -661,10 +664,10 @@ R5  旧方向物理清理
 - 不支持宣称 AI DM 已实现。
 - 不支持宣称 WebSocket 多人运行时已实现。
 - 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
+- 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
-- 旧冻结包继续按宽容规则读取；当前及后续阶段推进会在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入精确历史字段的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。
+- 旧冻结包继续按宽容规则读取；当前及后续阶段推进会用显式历史版本标记在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入版本化精确历史的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。
 - 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
 
 ---

@@ -309,6 +309,7 @@ def test_supabase_jwt_verifier_requires_issuer_audience_and_expiry(
     assert claims.sub == "00000000-0000-0000-0000-000000000001"
     assert captured["audience"] == "authenticated"
     assert captured["issuer"] == "https://project.supabase.co/auth/v1"
+    assert captured["leeway"] == 5
     assert captured["options"] == {"require": ["aud", "exp", "iss", "sub"]}
 
 

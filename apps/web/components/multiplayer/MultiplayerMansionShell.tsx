@@ -531,17 +531,40 @@ export function MultiplayerMansionShell({
     timer: ReturnType<typeof setTimeout> | null;
     inFlight: boolean;
     queued: boolean;
-  }>({ lastPose: null, lastSentAt: 0, timer: null, inFlight: false, queued: false });
+    disabled: boolean;
+    failureCount: number;
+    retryNotBefore: number;
+  }>({
+    lastPose: null,
+    lastSentAt: 0,
+    timer: null,
+    inFlight: false,
+    queued: false,
+    disabled: false,
+    failureCount: 0,
+    retryNotBefore: 0,
+  });
 
   const sendLatestPresence = useCallback(async () => {
     const state = presenceRef.current;
-    if (!state.lastPose) return;
+    if (state.disabled || !state.lastPose) return;
+    const now = Date.now();
+    if (now < state.retryNotBefore) {
+      if (!state.timer) {
+        state.timer = setTimeout(() => {
+          state.timer = null;
+          void sendLatestPresence();
+        }, state.retryNotBefore - now);
+      }
+      return;
+    }
     if (state.inFlight) {
       state.queued = true;
       return;
     }
     state.inFlight = true;
     state.queued = false;
+    state.lastSentAt = now;
     const pose = state.lastPose;
     try {
       await client.updateScenePresence(snapshot.session_id, {
@@ -550,10 +573,19 @@ export function MultiplayerMansionShell({
         facing: pose.facing,
         moving: pose.moving,
       });
-      state.lastSentAt = Date.now();
+      state.failureCount = 0;
+      state.retryNotBefore = 0;
     } catch (error) {
       if (error instanceof MultiplayerClientError && [401, 403, 409, 422].includes(error.status)) {
+        state.disabled = true;
         state.lastPose = null;
+        state.queued = false;
+      } else {
+        state.failureCount += 1;
+        state.retryNotBefore = Date.now() + Math.min(
+          PRESENCE_SEND_INTERVAL * 2 ** (state.failureCount - 1),
+          PRESENCE_HEARTBEAT_INTERVAL,
+        );
       }
     } finally {
       state.inFlight = false;
@@ -563,8 +595,14 @@ export function MultiplayerMansionShell({
 
   const reportPlayerPose = useCallback((pose: LocalScenePose) => {
     const state = presenceRef.current;
+    if (state.disabled) return;
     state.lastPose = pose;
-    const delay = Math.max(0, PRESENCE_SEND_INTERVAL - (Date.now() - state.lastSentAt));
+    const now = Date.now();
+    const delay = Math.max(
+      0,
+      PRESENCE_SEND_INTERVAL - (now - state.lastSentAt),
+      state.retryNotBefore - now,
+    );
     if (state.timer) return;
     state.timer = setTimeout(() => {
       state.timer = null;
@@ -577,29 +615,35 @@ export function MultiplayerMansionShell({
   const presenceIdentityRef = useRef("");
   useEffect(() => {
     if (!hasSelfPlayer || snapshot.status !== "active") return;
-    const state = presenceRef.current;
     const identity = `${snapshot.session_id}:${snapshot.self_member_id}`;
-    if (presenceIdentityRef.current !== identity) {
-      presenceIdentityRef.current = identity;
-      state.lastPose = {
-        ...initialPlayerPosition,
-        facing: selfSceneFacing ?? (selfCharacterId === "insider" ? "right" : "left"),
-        moving: false,
-      };
-    }
-    void sendLatestPresence();
-    const interval = window.setInterval(() => void sendLatestPresence(), PRESENCE_HEARTBEAT_INTERVAL);
-    return () => window.clearInterval(interval);
+    if (presenceIdentityRef.current === identity) return;
+    presenceIdentityRef.current = identity;
+    const state = presenceRef.current;
+    state.disabled = false;
+    state.failureCount = 0;
+    state.retryNotBefore = 0;
+    state.queued = false;
+    state.lastPose = {
+      ...initialPlayerPosition,
+      facing: selfSceneFacing ?? (selfCharacterId === "insider" ? "right" : "left"),
+      moving: false,
+    };
   }, [
     hasSelfPlayer,
     initialPlayerPosition,
     selfCharacterId,
     selfSceneFacing,
-    sendLatestPresence,
     snapshot.self_member_id,
     snapshot.session_id,
     snapshot.status,
   ]);
+
+  useEffect(() => {
+    if (!hasSelfPlayer || snapshot.status !== "active") return;
+    void sendLatestPresence();
+    const interval = window.setInterval(() => void sendLatestPresence(), PRESENCE_HEARTBEAT_INTERVAL);
+    return () => window.clearInterval(interval);
+  }, [hasSelfPlayer, sendLatestPresence, snapshot.status]);
 
   useEffect(() => () => {
     const state = presenceRef.current;

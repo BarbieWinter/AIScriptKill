@@ -199,6 +199,7 @@ def test_lobby_snapshot_schema_has_no_private_authority_fields() -> None:
                 "can_assign_character": True,
                 "can_ready": False,
                 "can_start": False,
+                "can_end_incomplete": True,
             },
             "invites": [],
         }

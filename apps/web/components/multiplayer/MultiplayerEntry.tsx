@@ -12,18 +12,18 @@ import {
 } from "@/lib/multiplayer/error-messages";
 import {
   createMultiplayerRoomClient,
+  currentMultiplayerRoomKey,
   MultiplayerClientError,
 } from "@/lib/multiplayer/room-client";
 
 const SCRIPT_ID = "mp1-two-player";
-const currentRoomKey = ["multiplayer", "current-room"] as const;
 
 export function MultiplayerEntry() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const client = useMemo(() => createMultiplayerRoomClient(), []);
   const currentRoom = useQuery({
-    queryKey: currentRoomKey,
+    queryKey: currentMultiplayerRoomKey,
     queryFn: ({ signal }) => client.getCurrentRoom(signal),
     retry: shouldRetryMultiplayer,
     refetchOnWindowFocus: true,
@@ -31,7 +31,7 @@ export function MultiplayerEntry() {
   const createRoom = useMutation({
     mutationFn: () => client.createRoom(SCRIPT_ID),
     onSuccess: (room) => {
-      queryClient.setQueryData(currentRoomKey, room);
+      queryClient.setQueryData(currentMultiplayerRoomKey, room);
       router.push(`/play/${encodeURIComponent(room.session_id)}/lobby`);
     },
     onError: (error) => {
@@ -86,7 +86,7 @@ export function MultiplayerEntry() {
             <button
               type="button"
               onClick={() => createRoom.mutate()}
-              disabled={createRoom.isPending || currentRoom.isError}
+              disabled={createRoom.isPending || (currentRoom.isError && currentRoom.data === undefined)}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#c6a867] px-5 py-3.5 text-sm font-semibold text-[#11120f] transition hover:bg-[#d6ba78] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {createRoom.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}

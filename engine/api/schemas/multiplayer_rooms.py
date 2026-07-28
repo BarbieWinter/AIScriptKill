@@ -112,6 +112,7 @@ class LobbyCapabilities(ApiModel):
     can_assign_character: bool
     can_ready: bool
     can_start: bool
+    can_end_incomplete: bool
 
 
 class LobbySnapshotV1(ApiModel):
@@ -283,6 +284,7 @@ class GameplaySnapshotV1(ApiModel):
     settlement: GameplaySettlement | None = None
     hints: tuple[GameplayHint, ...] = ()
     can_advance: bool = False
+    can_end_incomplete: bool = False
     ending_id: str | None = None
 
     @model_validator(mode="after")
@@ -292,8 +294,20 @@ class GameplaySnapshotV1(ApiModel):
         return self
 
 
+class ClosedRoomSnapshotV1(ApiModel):
+    session_id: UUID
+    mode: Literal["multiplayer_v1"] = "multiplayer_v1"
+    status: Literal["closed"] = "closed"
+    revision: int = Field(ge=0)
+    event_head_sequence: int = Field(ge=0)
+    package: LobbyPackageSummary
+    self_member_id: str
+    closed_at: datetime
+    review_available: Literal[False] = False
+
+
 RoomSnapshotV1: TypeAlias = Annotated[
-    LobbySnapshotV1 | GameplaySnapshotV1,
+    LobbySnapshotV1 | GameplaySnapshotV1 | ClosedRoomSnapshotV1,
     Field(discriminator="status"),
 ]
 
@@ -315,6 +329,7 @@ __all__ = [
     "CreateMultiplayerSessionRequest",
     "CreateMultiplayerSessionResponse",
     "CreateRoomInviteRequest",
+    "ClosedRoomSnapshotV1",
     "CreateRoomInviteResponse",
     "CurrentMultiplayerSession",
     "GameplayChapter",

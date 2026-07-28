@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web test test-coverage test-database-privileges test-checkpoint-recovery test-durable-commands test-mp2-contract test-mp2-live lint lint-api lint-web typecheck-api format install verify-dev-tools db-start db-stop db-reset db-migrate clean help
+.PHONY: dev dev-api dev-web test test-coverage test-database-privileges test-checkpoint-recovery test-durable-commands test-mp2-contract test-mp2-live test-t08-candidate lint lint-api lint-web typecheck-api format install verify-dev-tools db-start db-stop db-reset db-migrate clean help
 
 # 通用开发目标默认保留前端 Mock；需要真实 API 时可显式执行
 # `NEXT_PUBLIC_USE_MOCK=false make dev`（或 `make dev-web`）。
@@ -50,7 +50,7 @@ test-durable-commands:
 	AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL="$${AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_MP3_RECOVERY_DB_URL="$${AISCRIPTKILL_MP3_RECOVERY_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL="$${AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
-	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
+	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_multiplayer_room_closure_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
 
 test-mp2-contract:
 	uv run --frozen pytest engine/tests/test_multiplayer_gameplay_contract_fixture.py -q
@@ -60,6 +60,9 @@ test-mp2-live:
 	@curl --fail --silent "$${PLAYWRIGHT_API_BASE_URL:-http://127.0.0.1:8000}/health/db" >/dev/null || { echo "MP-2 LIVE BLOCKED: FastAPI/database health check failed."; exit 1; }
 	@curl --fail --silent "$${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:3000}/multiplayer" >/dev/null || { echo "MP-2 LIVE BLOCKED: target Next.js checkout is not reachable."; exit 1; }
 	npm --prefix apps/web run test:e2e:mp2-live
+
+test-t08-candidate:
+	@./scripts/t08_candidate_gate.sh
 
 # ── 代码检查 ──
 
@@ -130,6 +133,7 @@ help:
 	@echo "make test-durable-commands 使用已迁移的本地 PostgreSQL 验证持久命令、恢复、outbox 与权限"
 	@echo "make test-mp2-contract 运行 route-mocked MP-2 浏览器契约测试"
 	@echo "make test-mp2-live 针对已启动的真实 Supabase/FastAPI/Next 栈运行双身份完整通关测试"
+	@echo "make test-t08-candidate 从空白数据库运行完整双人候选发布门禁"
 	@echo "make lint        代码检查"
 	@echo "make typecheck-api 检查生产后端类型"
 	@echo "make verify-dev-tools 验证后端开发工具已按锁文件安装"

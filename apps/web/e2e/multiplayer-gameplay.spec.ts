@@ -119,6 +119,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
   let settlementVisible = true;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
+  const presenceFailures: Record<Identity, number | null> = { host: null, guest: null };
   const activeSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
   const nextCommandSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
   let eventHeadSequence = gameplayContract.states[initialState].host.event_head_sequence;
@@ -218,6 +219,13 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
         expect(body).not.toHaveProperty("member_id");
         expect(body).not.toHaveProperty("character_id");
         presenceBodies.push({ identity, body });
+        if (presenceFailures[identity] !== null) {
+          return json(
+            route,
+            { error: { code: "PRESENCE_REJECTED", message: "Presence rejected", details: {} } },
+            presenceFailures[identity],
+          );
+        }
         presence.set(identity, { x: body.x, y: body.y, facing: body.facing, moving: body.moving });
         return route.fulfill({ status: 204, body: "" });
       }
@@ -329,6 +337,9 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     failNextReviews(identity: Identity, count = 3) {
       reviewFailures[identity] = count;
     },
+    failPresence(identity: Identity, status = 500) {
+      presenceFailures[identity] = status;
+    },
     hidePublicMaterials() {
       publicMaterialsVisible = false;
     },
@@ -405,6 +416,55 @@ async function revealAllHints(host: Page, guest: Page) {
   await host.getByRole("button", { name: "关闭" }).click();
   await guest.getByRole("button", { name: "关闭" }).click();
 }
+
+test("failed scene presence uses bounded backoff while movement continues", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.failPresence("host");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    api.presenceBodies.length = 0;
+    const scene = host.page.locator(".mansion-demo");
+    const initialX = Number(await scene.getAttribute("data-player-x"));
+
+    await scene.click({ position: { x: 20, y: 20 } });
+    await host.page.keyboard.down("KeyD");
+    await host.page.waitForTimeout(2_200);
+    await host.page.keyboard.up("KeyD");
+    await expect.poll(async () => Number(await scene.getAttribute("data-player-x"))).toBeGreaterThan(initialX);
+
+    const attempts = api.presenceBodies.filter(({ identity }) => identity === "host").length;
+    expect(attempts).toBeGreaterThanOrEqual(1);
+    expect(attempts).toBeLessThanOrEqual(4);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("terminal scene presence rejection disables further movement reports", async ({ browser }) => {
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    api.failPresence("host", 403);
+    api.presenceBodies.length = 0;
+    const scene = host.page.locator(".mansion-demo");
+
+    await scene.click({ position: { x: 20, y: 20 } });
+    await host.page.keyboard.down("KeyD");
+    await host.page.waitForTimeout(2_200);
+    await host.page.keyboard.up("KeyD");
+
+    await expect.poll(() => api.presenceBodies.filter(({ identity }) => identity === "host").length)
+      .toBe(1);
+  } finally {
+    await host.context.close();
+  }
+});
 
 test("private chapters and public materials remain participant-safe in the movable scene", async ({ browser }) => {
   test.setTimeout(60_000);

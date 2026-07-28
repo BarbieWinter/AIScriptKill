@@ -41,6 +41,7 @@ from engine.repositories.multiplayer_room_models import (
     StoredRoomAssignment,
     StoredRoomMember,
 )
+from engine.repositories.session_command_repository import SessionCommandRepository
 from engine.services import multiplayer_feature
 from engine.services import multiplayer_room_service as service
 
@@ -53,6 +54,23 @@ class _CommitDb:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+
+class _EmptyMappingsResult:
+    def mappings(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _StatementRecordingDb:
+    def __init__(self) -> None:
+        self.statement = None
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _EmptyMappingsResult()
 
 
 class _CreateRepository:
@@ -73,6 +91,15 @@ class _PresenceRepository:
         self.room = room
         self.member = member
         self.updated: dict[str, object] | None = None
+        self.advisory_lock_calls = 0
+        self.room_lock_calls = 0
+
+    async def advisory_lock(self, _session_id):
+        self.advisory_lock_calls += 1
+
+    async def lock_room(self, _session_id):
+        self.room_lock_calls += 1
+        return self.room
 
     async def get_room(self, _session_id):
         return self.room
@@ -250,6 +277,22 @@ def test_repository_source_contains_no_commit_call() -> None:
     assert commit_calls == []
 
 
+@pytest.mark.asyncio
+async def test_discussion_event_query_is_bounded_by_snapshot_event_head() -> None:
+    db = _StatementRecordingDb()
+
+    await SessionCommandRepository(db).list_events_by_type(  # type: ignore[arg-type]
+        uuid4(),
+        "discussion.message",
+        7,
+    )
+
+    assert db.statement is not None
+    statement = str(db.statement)
+    assert "session_events.sequence <=" in statement
+    assert "LIMIT" not in statement
+
+
 def test_current_route_precedes_dynamic_session_route() -> None:
     paths = [route.path for route in sessions.router.routes]
     assert paths.index("/sessions/current") < paths.index("/sessions/{session_id}")
@@ -376,6 +419,8 @@ async def test_scene_presence_derives_member_and_never_advances_room_revision(
         "moving": True,
     }
     assert "member_id" not in repository.updated
+    assert repository.advisory_lock_calls == 0
+    assert repository.room_lock_calls == 0
     assert db.commit_calls == 1
 
 

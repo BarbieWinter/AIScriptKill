@@ -170,7 +170,10 @@ def _legacy_final_stage_room() -> tuple[
             }
         ).model_dump()
     )
-    return replace(room, state=legacy_state.model_dump(mode="json")), members
+    legacy_payload = legacy_state.model_dump(mode="json")
+    legacy_payload.pop("prior_revealed_material_ids")
+    legacy_payload.pop("prior_revealed_materials_version")
+    return replace(room, state=legacy_payload), members
 
 
 def _apply(
@@ -334,6 +337,91 @@ def test_snapshot_restores_deterministic_materials_for_legacy_advanced_room() ->
     ]
 
 
+def test_normalized_legacy_material_history_recovers_deterministic_prior_ids() -> None:
+    room, members = _legacy_final_stage_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    normalized_payload = decode_room_game_state(room).model_dump(mode="json")
+    normalized = replace(room, state=normalized_payload)
+
+    snapshot = project_gameplay_snapshot(
+        room=normalized,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert [material.id for material in snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+    mutation = apply_gameplay_command(
+        room=normalized,
+        member=members[0],
+        command=_stage_command(normalized, "stage.confirm_read", "final-judgment"),
+        package=package,
+    )
+    assert mutation.state.prior_revealed_material_ids == ("arrival-photo", "witness-note")
+    assert mutation.state.prior_revealed_materials_version == 1
+
+
+def test_legacy_advanced_room_does_not_guess_outcome_materials() -> None:
+    room, members = _legacy_final_stage_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    investigation_record = package.stages[0]
+    investigation_definition = dict(investigation_record.definition)
+    investigation_definition["public_materials"] = [
+        {
+            **material,
+            "reveal_at": (
+                "outcome:trust-investigator"
+                if material["id"] == "witness-note"
+                else material["reveal_at"]
+            ),
+        }
+        for material in investigation_definition["public_materials"]
+    ]
+    legacy_package = replace(
+        package,
+        stages=(
+            replace(investigation_record, definition=investigation_definition),
+            *package.stages[1:],
+        ),
+    )
+    frozen = encode_runtime_package_snapshot(legacy_package)
+    room = replace(
+        room,
+        runtime_package_snapshot=dict(frozen.payload),
+        runtime_package_sha256=frozen.sha256,
+    )
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+
+    snapshot = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert [material.id for material in snapshot.public_materials] == ["arrival-photo"]
+
+    mutation = apply_gameplay_command(
+        room=room,
+        member=members[0],
+        command=_stage_command(room, "stage.confirm_read", "final-judgment"),
+        package=package,
+    )
+    assert mutation.state.prior_revealed_material_ids == ("arrival-photo",)
+    assert mutation.state.prior_revealed_materials_version == 1
+
+
 def test_next_mutation_keeps_v2_material_state_stage_local_for_legacy_room() -> None:
     room, members = _legacy_final_stage_room()
     package = decode_runtime_package_snapshot(
@@ -459,6 +547,7 @@ def test_legacy_outcome_material_survives_stage_advance_and_redecode() -> None:
         "arrival-photo",
         "witness-note",
     )
+    assert restored.prior_revealed_materials_version == 1
     advanced = project_gameplay_snapshot(
         room=room,
         member=members[0],
@@ -470,6 +559,28 @@ def test_legacy_outcome_material_survives_stage_advance_and_redecode() -> None:
         "arrival-photo",
         "witness-note",
     ]
+
+
+def test_gameplay_command_rejects_invalid_persisted_material_history() -> None:
+    room, members = _legacy_final_stage_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    state = decode_room_game_state(room)
+    invalid_payload = state.model_dump(mode="json")
+    invalid_payload["prior_revealed_material_ids"] = ["undeclared-material"]
+    invalid = replace(room, state=invalid_payload)
+
+    with pytest.raises(ApiError) as exc_info:
+        apply_gameplay_command(
+            room=invalid,
+            member=members[0],
+            command=_stage_command(invalid, "stage.confirm_read", "final-judgment"),
+            package=package,
+        )
+
+    assert exc_info.value.error.code == "ROOM_STATE_INVALID"
 
 
 def test_non_mutating_commands_reject_invalid_stage_material_order() -> None:

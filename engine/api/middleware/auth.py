@@ -19,6 +19,7 @@ from engine.api.errors import forbidden, unauthorized
 
 bearer_scheme = HTTPBearer(auto_error=False)
 ADMIN_APP_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner"})
+JWT_CLOCK_SKEW_LEEWAY_SECONDS: Final = 5
 
 
 # ── Supabase JWT 声明 ──
@@ -105,6 +106,7 @@ class SupabaseJwtVerifier:
                 algorithms=["RS256", "ES256"],
                 audience=self._audience,
                 issuer=self._issuer,
+                leeway=JWT_CLOCK_SKEW_LEEWAY_SECONDS,
                 options={"require": ["aud", "exp", "iss", "sub"]},
             )
             return SupabaseClaims.model_validate(decoded_claims)

@@ -84,9 +84,15 @@ NEXT_PUBLIC_USE_MOCK=false make dev
 make test-durable-commands       # 持久命令、幂等与双人 HTTP 通关（需数据库）
 make test-checkpoint-recovery    # checkpoint 强杀恢复（需数据库）
 make test-mp2-live               # 真实 Supabase/FastAPI/Next 双人完整通关
+make test-t08-candidate          # 从空库执行完整双人候选发布门禁
 make test-database-privileges    # 数据库权限门禁
 make lint-web
 ```
+
+`make test-t08-candidate` 是破坏性的本地发布门禁：它使用 `--no-seed` 重置本地
+Supabase，执行完整后端、数据库、静态分析、生产构建和 route-mocked 浏览器测试，随后
+通过真实管理员 API 发布标准双人包并运行双身份 Live 旅程。不要对包含需保留数据的本地
+数据库执行该命令。
 
 ## 文档导航
 
