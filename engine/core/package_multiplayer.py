@@ -453,14 +453,8 @@ def multiplayer_package_playability(
                     continue
                 diagnostics.append(
                     MultiplayerPlayabilityDiagnostic(
-                        code=(
-                            "PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_"
-                            "MATERIAL_UNSUPPORTED"
-                        ),
-                        message=(
-                            "非终局阶段不支持 outcome 公共材料: "
-                            f"{stage.id}/{material.id}"
-                        ),
+                        code=("PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_MATERIAL_UNSUPPORTED"),
+                        message=(f"非终局阶段不支持 outcome 公共材料: {stage.id}/{material.id}"),
                         field=f"stages.{stage.id}.public_materials.{material.id}",
                         stage_id=stage.id,
                     )

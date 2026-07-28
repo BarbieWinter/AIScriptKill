@@ -339,9 +339,7 @@ def test_nonterminal_stage_cannot_author_outcome_materials() -> None:
     with pytest.raises(PackageArchiveError) as exc_info:
         load_package_archive(package_archive(files))
 
-    assert exc_info.value.code == (
-        "PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_MATERIAL_UNSUPPORTED"
-    )
+    assert exc_info.value.code == ("PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_MATERIAL_UNSUPPORTED")
     assert exc_info.value.message == (
         "非终局阶段不支持 outcome 公共材料: investigation/arrival-photo"
     )

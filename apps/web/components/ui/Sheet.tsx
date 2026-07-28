@@ -7,9 +7,9 @@
 
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 
 interface SheetProps {
@@ -17,9 +17,11 @@ interface SheetProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  banner?: React.ReactNode;
+  overlay?: React.ReactNode;
   side?: "right" | "bottom";
   className?: string;
-  modal?: boolean;
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -31,38 +33,46 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
-function sheetFocusRoots(root: HTMLElement) {
-  return [
-    root,
-    ...Array.from(document.querySelectorAll<HTMLElement>("[data-sheet-focus-portal]"))
-      .filter((portal) => !root.contains(portal)),
-  ];
-}
-
-function focusableElements(root: HTMLElement) {
-  const focusRoots = sheetFocusRoots(root);
-  const elements = focusRoots.flatMap((focusRoot) => (
-    Array.from(focusRoot.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-  )).filter(
-    (element) => !element.matches(":disabled") && element.getClientRects().length > 0,
+function tabbableElements(scope: HTMLElement) {
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+  ).filter(
+    (element) =>
+      !element.matches(":disabled")
+      && element.tabIndex >= 0
+      && element.getClientRects().length > 0,
   );
-  return elements.filter((element) => {
+
+  return candidates.filter((element) => {
     if (!(element instanceof HTMLInputElement) || element.type !== "radio" || !element.name) {
       return true;
     }
-    const group = elements.filter((candidate): candidate is HTMLInputElement => (
-      candidate instanceof HTMLInputElement
-      && candidate.type === "radio"
-      && candidate.name === element.name
-      && candidate.form === element.form
-    ));
-    return element === (group.find((candidate) => candidate.checked) ?? group[0]);
+    const group = candidates.filter(
+      (candidate): candidate is HTMLInputElement =>
+        candidate instanceof HTMLInputElement
+        && candidate.type === "radio"
+        && candidate.name === element.name
+        && candidate.form === element.form,
+    );
+    return element === (group.find((radio) => radio.checked) ?? group[0]);
   });
 }
 
-function restoreFallbackFocus() {
-  const fallback = document.querySelector<HTMLElement>("[data-sheet-focus-fallback]")
-    ?? document.querySelector<HTMLElement>("main, [role=\"main\"]");
+function activeFocusScope(root: HTMLElement, sheet: HTMLElement) {
+  return root.querySelector<HTMLElement>('[data-sheet-focus-scope="active"]') ?? sheet;
+}
+
+function isTopmostSheet(root: HTMLElement) {
+  const roots = Array.from(document.querySelectorAll<HTMLElement>("[data-sheet-root]"))
+    .filter((candidate) => candidate.getClientRects().length > 0);
+  return roots.at(-1) === root;
+}
+
+function fallbackPageFocus(explicitFallback: HTMLElement | null) {
+  const fallback = explicitFallback?.isConnected
+    ? explicitFallback
+    : document.querySelector<HTMLElement>("[data-sheet-focus-fallback]")
+      ?? document.querySelector<HTMLElement>('main, [role="main"]');
   if (fallback?.isConnected) {
     if (!fallback.hasAttribute("tabindex")) fallback.tabIndex = -1;
     fallback.focus();
@@ -77,10 +87,13 @@ export function Sheet({
   onClose,
   title,
   children,
+  banner,
+  overlay,
   side = "right",
   className,
-  modal = true,
+  fallbackFocusRef,
 }: SheetProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -93,6 +106,7 @@ export function Sheet({
       ? document.activeElement
       : null;
     previousFocusKeyRef.current = previousFocusRef.current?.getAttribute("data-sheet-trigger") ?? null;
+    const fallbackFocus = fallbackFocusRef?.current ?? null;
     const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       window.cancelAnimationFrame(frame);
@@ -103,7 +117,12 @@ export function Sheet({
       window.requestAnimationFrame(() => {
         const triggerStillMatches = previousFocusKey === null
           || previousFocus?.getAttribute("data-sheet-trigger") === previousFocusKey;
-        if (previousFocus?.isConnected && triggerStillMatches) {
+        if (
+          previousFocus?.isConnected
+          && triggerStillMatches
+          && !previousFocus.matches(":disabled")
+          && previousFocus.getClientRects().length > 0
+        ) {
           previousFocus.focus();
           return;
         }
@@ -118,28 +137,35 @@ export function Sheet({
         if (replacementTrigger) {
           replacementTrigger.focus();
         } else {
-          restoreFallbackFocus();
+          fallbackPageFocus(fallbackFocus);
         }
       });
     };
-  }, [open]);
+  }, [fallbackFocusRef, open]);
 
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      const root = rootRef.current;
+      const sheet = sheetRef.current;
+      if (!root || !sheet || !isTopmostSheet(root)) return;
+      const focusScope = activeFocusScope(root, sheet);
+
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        const nestedDismiss = focusScope === sheet
+          ? null
+          : focusScope.querySelector<HTMLElement>("[data-sheet-dismiss]");
+        if (nestedDismiss) nestedDismiss.click();
+        else onClose();
         return;
       }
       if (event.key !== "Tab") return;
 
-      const sheet = sheetRef.current;
-      if (!sheet) return;
-      const focusable = focusableElements(sheet);
+      const focusable = tabbableElements(focusScope);
       if (focusable.length === 0) {
         event.preventDefault();
-        sheet.focus();
+        focusScope.focus();
         return;
       }
 
@@ -158,11 +184,13 @@ export function Sheet({
       }
     };
     const handleFocusIn = (event: FocusEvent) => {
+      const root = rootRef.current;
       const sheet = sheetRef.current;
       const target = event.target;
-      if (!sheet || !(target instanceof HTMLElement)) return;
-      if (sheetFocusRoots(sheet).some((focusRoot) => focusRoot.contains(target))) return;
-      (focusableElements(sheet)[0] ?? sheet).focus();
+      if (!root || !sheet || !(target instanceof HTMLElement) || !isTopmostSheet(root)) return;
+      const focusScope = activeFocusScope(root, sheet);
+      if (focusScope.contains(target)) return;
+      (tabbableElements(focusScope)[0] ?? focusScope).focus();
     };
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("focusin", handleFocusIn, true);
@@ -172,7 +200,6 @@ export function Sheet({
     };
   }, [open, onClose]);
 
-  // 锁定背景滚动
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
@@ -184,93 +211,72 @@ export function Sheet({
     };
   }, [open]);
 
-  // 判断是否为手机端（通过媒体查询，运行时判断）
-  const isMobile =
-    typeof window !== "undefined" && window.innerWidth < 768;
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const effectiveSide = isMobile ? "bottom" : side;
 
+  if (!open) return null;
+
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          {/* 遮罩层 */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+    <div ref={rootRef} data-sheet-root>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      <motion.div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal={overlay ? undefined : "true"}
+        aria-hidden={overlay ? "true" : undefined}
+        aria-labelledby={titleId}
+        inert={overlay ? true : undefined}
+        tabIndex={-1}
+        className={cn(
+          "fixed z-50 border-[var(--border)] bg-[var(--panel-bg)] shadow-2xl",
+          effectiveSide === "right"
+            && "right-0 top-0 h-full w-full border-l md:w-[480px]",
+          effectiveSide === "bottom"
+            && "bottom-0 left-0 right-0 h-[85vh] overflow-hidden rounded-t-2xl border-t",
+          className,
+        )}
+        initial={effectiveSide === "right" ? { x: "100%" } : { y: "100%" }}
+        animate={effectiveSide === "right" ? { x: 0 } : { y: 0 }}
+        transition={{ type: "spring", damping: 25, stiffness: 250 }}
+        drag={effectiveSide === "bottom" ? "y" : false}
+        dragConstraints={{ top: 0, bottom: 150 }}
+        dragElastic={0.2}
+        onDragEnd={(_, info) => {
+          if (info.offset.y > 100) onClose();
+        }}
+      >
+        {effectiveSide === "bottom" && (
+          <div className="flex justify-center pb-1 pt-2">
+            <div className="h-1 w-10 rounded-full bg-[var(--muted)]" />
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+          <h2 id={titleId} className="text-lg font-bold">{title}</h2>
+          <button
+            ref={closeButtonRef}
+            type="button"
             onClick={onClose}
-          />
-
-          {/* 面板 */}
-          <motion.div
-            ref={sheetRef}
-            role="dialog"
-            aria-modal={modal ? "true" : undefined}
-            aria-labelledby={titleId}
-            tabIndex={-1}
-            className={cn(
-              "fixed z-50 bg-[var(--panel-bg)] border-[var(--border)] shadow-2xl",
-              // 右侧滑出
-              effectiveSide === "right" &&
-                "right-0 top-0 h-full w-full border-l md:w-[480px]",
-              // 底部弹出
-              effectiveSide === "bottom" &&
-                "bottom-0 left-0 right-0 h-[85vh] rounded-t-2xl border-t overflow-hidden",
-              className
-            )}
-            initial={
-              effectiveSide === "right"
-                ? { x: "100%" }
-                : { y: "100%" }
-            }
-            animate={
-              effectiveSide === "right"
-                ? { x: 0 }
-                : { y: 0 }
-            }
-            exit={
-              effectiveSide === "right"
-                ? { x: "100%" }
-                : { y: "100%" }
-            }
-            transition={{ type: "spring", damping: 25, stiffness: 250 }}
-            drag={effectiveSide === "bottom" ? "y" : false}
-            dragConstraints={{ top: 0, bottom: 150 }}
-            dragElastic={0.2}
-            onDragEnd={(_, info) => {
-              if (info.offset.y > 100) onClose();
-            }}
+            aria-label="关闭"
+            className="rounded-lg p-1.5 transition-colors hover:bg-[var(--accent)]"
           >
-            {/* 手机端拖拽手柄 */}
-            {effectiveSide === "bottom" && (
-              <div className="flex justify-center pt-2 pb-1">
-                <div className="h-1 w-10 rounded-full bg-[var(--muted)]" />
-              </div>
-            )}
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-            {/* 标题栏 */}
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <h2 id={titleId} className="text-lg font-bold">{title}</h2>
-              <button
-                ref={closeButtonRef}
-                type="button"
-                onClick={onClose}
-                aria-label="关闭"
-                className="rounded-lg p-1.5 transition-colors hover:bg-[var(--accent)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* 内容 */}
-            <div className="min-h-0 overflow-y-auto" style={{ height: "calc(100% - 52px)" }}>
-              {children}
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+        <div className="min-h-0 overflow-y-auto" style={{ height: "calc(100% - 52px)" }}>
+          {banner}
+          {children}
+        </div>
+      </motion.div>
+      {overlay}
+    </div>
   );
 }

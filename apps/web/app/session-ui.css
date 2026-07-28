@@ -73,6 +73,15 @@
 }
 .multiplayer-scene-error svg { width: 14px; height: 14px; flex: none; }
 .multiplayer-scene-error button { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #fecaca; }
+.multiplayer-sheet-error {
+  position: sticky;
+  left: auto;
+  top: 0;
+  z-index: 1;
+  max-width: none;
+  margin: 12px;
+  transform: none;
+}
 .demo-gameplay-host input,
 .demo-gameplay-host textarea,
 .demo-gameplay-host article,

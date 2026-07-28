@@ -642,12 +642,13 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest engine/tests/ -q` | **541 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
-| T04 package / gameplay 聚焦测试 | **51 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、V2 阶段局部状态与两个冻结终局复盘 |
+| `uv run --frozen pytest` | **545 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| T04 package / gameplay 聚焦测试 | **67 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、临时 V2 字段兼容读取、V2 阶段局部状态、收据序列语义与两个冻结终局复盘 |
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **17 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示入口、热点等价、Sheet 原生 radio Tab 顺序、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| route-mocked Playwright | **19 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示/讨论入口、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
 | `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |

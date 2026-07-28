@@ -53,6 +53,7 @@ test-durable-commands:
 	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
 
 test-mp2-contract:
+	uv run --frozen pytest engine/tests/test_multiplayer_gameplay_contract_fixture.py -q
 	npm --prefix apps/web run test:e2e
 
 test-mp2-live:

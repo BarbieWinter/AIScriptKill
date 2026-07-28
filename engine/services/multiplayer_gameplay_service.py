@@ -95,9 +95,12 @@ def decode_room_game_state(room: StoredMultiplayerRoom) -> GameStateV2:
 
     if room.status not in ("active", "completed") or room.state_schema_version != 2:
         raise conflict("ROOM_STATE_INVALID", "多人房间状态无法用于游戏")
+    state_payload = dict(room.state)
+    # A short-lived V2 writer persisted this field before stage-local restoration was retained.
+    state_payload.pop("prior_revealed_material_ids", None)
     try:
         state = GameStateV2.model_validate_json(
-            json.dumps(room.state, ensure_ascii=False, allow_nan=False)
+            json.dumps(state_payload, ensure_ascii=False, allow_nan=False)
         )
     except (ValidationError, TypeError, ValueError) as exc:
         raise conflict("ROOM_STATE_INVALID", "多人房间规范状态校验失败") from exc

@@ -161,9 +161,7 @@ def _legacy_final_stage_room() -> tuple[
     legacy_state = GameStateV2.model_validate(
         state.model_copy(
             update={
-                "room": state.room.model_copy(
-                    update={"current_stage_id": definition.id}
-                ),
+                "room": state.room.model_copy(update={"current_stage_id": definition.id}),
                 "private_by_member": private_by_member,
                 "stage": initialize_stage_runtime(
                     definition,
@@ -356,9 +354,9 @@ def test_next_mutation_keeps_v2_material_state_stage_local_for_legacy_room() -> 
     persisted = replace(
         room,
         revision=room.revision + 1,
-        state=mutation.state.model_copy(
-            update={"room_revision": room.revision + 1}
-        ).model_dump(mode="json"),
+        state=mutation.state.model_copy(update={"room_revision": room.revision + 1}).model_dump(
+            mode="json"
+        ),
     )
     snapshot = project_gameplay_snapshot(
         room=persisted,
@@ -612,6 +610,10 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
         "investigator-investigation",
         "investigator-final-judgment",
     ]
+    assert [material.id for material in final_snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
 
     for member in members:
         room = _apply(
@@ -678,7 +680,8 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
     assert all(review.ending.id == expected_ending_id for review in reviews)
     assert all(review.ending.outcome_text == expected_outcome_text for review in reviews)
     assert all(
-        review.truth.case_summary.startswith("知情人于二十点零五分违规使用备用钥匙")
+        review.truth.case_summary is not None
+        and review.truth.case_summary.startswith("知情人于二十点零五分违规使用备用钥匙")
         for review in reviews
     )
     assert {chapter.character_id for chapter in reviews[0].chapters} == {
@@ -689,6 +692,19 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
     review_json = reviews[0].model_dump_json()
     assert "private_by_member" not in review_json
     assert "ballots" not in review_json
+
+
+def test_room_state_decoder_accepts_deprecated_v2_prior_material_field() -> None:
+    room, _members = _active_room()
+    transitional_state = {
+        **room.state,
+        "prior_revealed_material_ids": ["arrival-photo"],
+    }
+
+    restored = decode_room_game_state(replace(room, state=transitional_state))
+
+    assert restored.room_revision == room.revision
+    assert "prior_revealed_material_ids" not in restored.model_dump(mode="json")
 
 
 def test_room_state_decoder_rejects_relational_mismatch() -> None:
