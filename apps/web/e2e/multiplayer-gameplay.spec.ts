@@ -116,6 +116,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
   let messageFailures = 0;
   let revisionFailures = 0;
   let publicMaterialsVisible = true;
+  let settlementVisible = true;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const activeSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
@@ -137,6 +138,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     snapshot.event_head_sequence = eventHeadSequence;
     snapshot.discussion_messages = clone(discussionMessages);
     if (!publicMaterialsVisible) snapshot.public_materials = [];
+    if (!settlementVisible) snapshot.settlement = null;
     snapshot.players = snapshot.players.map((player) => {
       const playerIdentity = player.member_id === members.host.memberId ? "host" : "guest";
       const pose = presence.get(playerIdentity);
@@ -329,6 +331,9 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     },
     hidePublicMaterials() {
       publicMaterialsVisible = false;
+    },
+    hideSettlement() {
+      settlementVisible = false;
     },
     setPresence(identity: Identity, pose: ScenePresence) {
       presence.set(identity, pose);
@@ -721,6 +726,41 @@ test("accepted discussion message stays pending until the authoritative snapshot
       () => api.commandBodies.filter(({ type }) => type === "discussion.send_message").length,
     ).toBe(2);
     await expect(dialog.getByText("照片时间与口供不一致。")).toBeVisible();
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("completed players can reopen the public discussion transcript read-only", async ({ browser }) => {
+  const api = createGameplayApi("message_completed");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    const dialog = host.page.getByRole("dialog", { name: "双人公开讨论" });
+    await expect(dialog.getByText("门锁没有损坏。")).toBeVisible();
+    await expect(dialog.getByRole("textbox", { name: "讨论消息" })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: /发送讨论消息|确认结束讨论|撤销结束确认/ })).toHaveCount(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("a reveal stage without settlement still exposes the fixed advance action", async ({ browser }) => {
+  const api = createGameplayApi("investigation_reveal");
+  api.hideSettlement();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "查看结果");
+    await host.page.getByRole("button", { name: "打开结论" }).click();
+    const dialog = host.page.getByRole("dialog", { name: "阶段结论" });
+    await expect(dialog.getByRole("button", { name: "进入下一阶段" })).toBeVisible();
+    await dialog.getByRole("button", { name: "进入下一阶段" }).click();
+    await expectScenePhase(host.page, "共同终判", "阅读角色信息");
   } finally {
     await host.context.close();
   }

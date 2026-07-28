@@ -171,6 +171,7 @@ class GameStateV2(ContractModel):
     players: dict[str, PlayerState]
     private_by_member: dict[str, PrivatePlayerState]
     stage: StageRuntimeState
+    prior_revealed_material_ids: UniqueIdentifierTuple = ()
     ending_id: Identifier | None = None
 
     @model_validator(mode="after")

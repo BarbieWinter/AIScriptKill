@@ -846,6 +846,8 @@ def test_enter_next_stage_unlocks_mapped_chapters_and_initializes_runtime() -> N
     )
     assert advanced.stage.phase is StagePhase.READ
     assert advanced.stage.revealed_material_ids == ("opening",)
+    assert advanced.prior_revealed_material_ids == revealed.stage.revealed_material_ids
+    assert "alpha-proof" in advanced.prior_revealed_material_ids
     assert advanced.private_by_member["member-a"].unlocked_chapter_ids == (
         current.chapters["character-a"],
         next_definition.chapters["character-a"],

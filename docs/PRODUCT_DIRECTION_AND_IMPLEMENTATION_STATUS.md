@@ -261,7 +261,7 @@ YAML 声明发放点
 玩家坐标 ──► 进入热点 ──► 才能发现关键证据                 [禁止]
 ```
 
-当前 reducer 在阶段局部 V2 状态内按 `stage_enter`、`all_players_read`、`settlement_done` 和终局 `outcome:*` 触发确定性材料公开；snapshot 再根据已到达阶段补齐此前阶段的确定性公共档案。新包禁止在非终局阶段声明 `outcome:*` 材料，避免依赖 V2 未保存的历史结算结果。`mode: none` 仍会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
+当前 reducer 在阶段局部 V2 状态内按 `stage_enter`、`all_players_read`、`settlement_done` 和 `outcome:*` 触发材料公开；阶段推进会把本阶段精确揭晓 ID 归档到 V2 历史字段，snapshot 同时使用该精确历史和已到达阶段的确定性回填构造累计公共档案。新包仍禁止在非终局阶段声明 `outcome:*` 材料，以保持新创作契约简单且可验证；宽容读取的旧冻结包则能在后续推进时保留这类历史结果材料。`mode: none` 仍会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
 
 但当前投影仍同时接受 `clue`、`evidence` 和 `media`，见 `engine/services/multiplayer_gameplay_service.py:481`；旧 `evidence` 概念仍和历史搜证模型纠缠。后续应保留“作者明确发放的线索卡/公共材料”，删除“通过场景、热点或动作发现 evidence”的获取模型。
 
@@ -642,12 +642,12 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest` | **545 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
-| T04 package / gameplay 聚焦测试 | **67 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、临时 V2 字段兼容读取、V2 阶段局部状态、收据序列语义与两个冻结终局复盘 |
+| `uv run --frozen pytest` | **546 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| T04 package / gameplay 聚焦测试 | **76 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、V2 精确历史兼容读取与跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **19 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示/讨论入口、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| route-mocked Playwright | **21 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示/讨论入口、完成态讨论记录、无结算 reveal 推进、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
 | 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
@@ -664,7 +664,7 @@ R5  旧方向物理清理
 - 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
-- 旧冻结包继续按宽容规则读取；若它曾在非终局阶段使用 `outcome:*` 公共材料，V2 已推进房间无法恢复该历史结果材料。新导入包已禁止产生这种歧义。
+- 旧冻结包继续按宽容规则读取；当前及后续阶段推进会在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入精确历史字段的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。
 - 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
 
 ---

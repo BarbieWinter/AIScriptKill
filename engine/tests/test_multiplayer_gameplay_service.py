@@ -370,6 +370,108 @@ def test_next_mutation_keeps_v2_material_state_stage_local_for_legacy_room() -> 
     ]
 
 
+def test_legacy_outcome_material_survives_stage_advance_and_redecode() -> None:
+    room, members = _active_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    investigation_record = package.stages[0]
+    investigation_definition = dict(investigation_record.definition)
+    public_materials = [
+        {
+            **material,
+            "reveal_at": (
+                "outcome:trust-investigator"
+                if material["id"] == "witness-note"
+                else material["reveal_at"]
+            ),
+        }
+        for material in investigation_definition["public_materials"]
+    ]
+    investigation_definition["public_materials"] = public_materials
+    legacy_package = replace(
+        package,
+        stages=(
+            replace(investigation_record, definition=investigation_definition),
+            *package.stages[1:],
+        ),
+    )
+    frozen = encode_runtime_package_snapshot(legacy_package)
+    room = replace(
+        room,
+        runtime_package_snapshot=dict(frozen.payload),
+        runtime_package_sha256=frozen.sha256,
+    )
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    investigation = multiplayer_stage_contract(package, "investigation")
+    settlement = investigation.settlement
+    assert isinstance(settlement, SecretVoteSettlementDefinition)
+
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "stage.confirm_read", "investigation"),
+        )
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            _stage_command(room, "discussion.confirm_close", "investigation"),
+        )
+    for member in members:
+        room = _apply(
+            room,
+            member,
+            SubmitSettlementCommand(
+                command_id=uuid4(),
+                expected_revision=room.revision,
+                type="settlement.submit",
+                payload=SubmitSettlementPayload(
+                    settlement_id=settlement.settlement_id,
+                    option_id="investigator-account",
+                ),
+            ),
+        )
+
+    revealed = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert [material.id for material in revealed.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+    room = _apply(
+        room,
+        members[0],
+        _stage_command(room, "stage.advance", "investigation"),
+    )
+    restored = decode_room_game_state(room)
+    assert restored.prior_revealed_material_ids == (
+        "arrival-photo",
+        "witness-note",
+    )
+    advanced = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert advanced.stage_id == "final-judgment"
+    assert [material.id for material in advanced.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+
 def test_non_mutating_commands_reject_invalid_stage_material_order() -> None:
     room, members = _active_room()
     package = decode_runtime_package_snapshot(
@@ -694,7 +796,7 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
     assert "ballots" not in review_json
 
 
-def test_room_state_decoder_accepts_deprecated_v2_prior_material_field() -> None:
+def test_room_state_decoder_preserves_v2_prior_material_field() -> None:
     room, _members = _active_room()
     transitional_state = {
         **room.state,
@@ -704,7 +806,7 @@ def test_room_state_decoder_accepts_deprecated_v2_prior_material_field() -> None
     restored = decode_room_game_state(replace(room, state=transitional_state))
 
     assert restored.room_revision == room.revision
-    assert "prior_revealed_material_ids" not in restored.model_dump(mode="json")
+    assert restored.prior_revealed_material_ids == ("arrival-photo",)
 
 
 def test_room_state_decoder_rejects_relational_mismatch() -> None:

@@ -223,11 +223,20 @@ def enter_next_stage(
         required_member_ids=state.room.required_member_ids,
     )
     next_room = state.room.model_copy(update={"current_stage_id": next_definition.id})
+    prior_revealed_material_ids = tuple(
+        dict.fromkeys(
+            (
+                *state.prior_revealed_material_ids,
+                *state.stage.revealed_material_ids,
+            )
+        )
+    )
     next_state = state.model_copy(
         update={
             "room": next_room,
             "private_by_member": private_by_member,
             "stage": next_stage,
+            "prior_revealed_material_ids": prior_revealed_material_ids,
         }
     )
     return GameStateV2.model_validate(next_state.model_dump())

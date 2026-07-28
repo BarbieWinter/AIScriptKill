@@ -96,8 +96,6 @@ def decode_room_game_state(room: StoredMultiplayerRoom) -> GameStateV2:
     if room.status not in ("active", "completed") or room.state_schema_version != 2:
         raise conflict("ROOM_STATE_INVALID", "多人房间状态无法用于游戏")
     state_payload = dict(room.state)
-    # A short-lived V2 writer persisted this field before stage-local restoration was retained.
-    state_payload.pop("prior_revealed_material_ids", None)
     try:
         state = GameStateV2.model_validate_json(
             json.dumps(state_payload, ensure_ascii=False, allow_nan=False)
@@ -348,8 +346,9 @@ def project_gameplay_snapshot(
         public_materials=_project_materials(
             package,
             reached_definitions,
-            _restore_deterministic_material_ids(
+            _restore_revealed_material_ids(
                 reached_definitions,
+                state.prior_revealed_material_ids,
                 participant.stage.revealed_material_ids,
             ),
         ),
@@ -500,12 +499,28 @@ def _validate_stage_material_ids(
         raise conflict("ROOM_STATE_INVALID", "房间公共素材顺序无效")
 
 
-def _restore_deterministic_material_ids(
+def _restore_revealed_material_ids(
     reached_definitions: tuple[MultiplayerStageDefinition, ...],
-    revealed_ids: tuple[str, ...],
+    persisted_prior_ids: tuple[str, ...],
+    current_revealed_ids: tuple[str, ...],
 ) -> tuple[str, ...]:
     current_definition = reached_definitions[-1]
-    _validate_stage_material_ids(current_definition, revealed_ids)
+    _validate_stage_material_ids(current_definition, current_revealed_ids)
+    prior_authored_ids = tuple(
+        dict.fromkeys(
+            material.id
+            for definition in reached_definitions[:-1]
+            for material in definition.public_materials
+        )
+    )
+    if any(material_id not in prior_authored_ids for material_id in persisted_prior_ids):
+        raise conflict("ROOM_STATE_INVALID", "房间包含未声明的历史公共素材")
+    expected_prior_ids = tuple(
+        material_id for material_id in prior_authored_ids if material_id in persisted_prior_ids
+    )
+    if persisted_prior_ids != expected_prior_ids:
+        raise conflict("ROOM_STATE_INVALID", "房间历史公共素材顺序无效")
+
     authored_ids = tuple(
         dict.fromkeys(
             material.id
@@ -513,16 +528,16 @@ def _restore_deterministic_material_ids(
             for material in definition.public_materials
         )
     )
-
-    # Reaching a later stage proves deterministic triggers completed.
-    # V2 cannot recover prior outcomes, so current authoring forbids that ambiguity.
     deterministic_prior_ids = {
         material.id
         for definition in reached_definitions[:-1]
         for material in definition.public_materials
         if material.reveal_at in {"stage_enter", "all_players_read", "settlement_done"}
     }
-    restored_ids = deterministic_prior_ids.union(revealed_ids)
+    restored_ids = deterministic_prior_ids.union(
+        persisted_prior_ids,
+        current_revealed_ids,
+    )
     return tuple(material_id for material_id in authored_ids if material_id in restored_ids)
 
 

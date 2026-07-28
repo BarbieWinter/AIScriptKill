@@ -56,12 +56,13 @@ function isScenePanelAvailable(
   snapshot: GameplaySnapshotV1,
   hintPanelAvailable: boolean,
   discussionPanelAvailable: boolean,
+  settlementPanelAvailable: boolean,
 ) {
   if (panel === null || panel === "chapters") return true;
   if (panel === "materials") return snapshot.public_materials.length > 0;
   if (panel === "hints") return hintPanelAvailable;
   if (panel === "discussion") return discussionPanelAvailable;
-  if (panel === "settlement") return snapshot.phase === "settle" || snapshot.phase === "reveal";
+  if (panel === "settlement") return settlementPanelAvailable;
   return snapshot.status === "completed";
 }
 
@@ -433,8 +434,15 @@ export function MultiplayerMansionShell({
     || snapshot.hints.some((hint) => hint.revealed_levels.length > 0);
   const discussionCommandsAvailable = snapshot.status === "active"
     && snapshot.phase === "discuss";
-  const discussionPanelAvailable = snapshot.status === "active"
-    && (discussionCommandsAvailable || snapshot.discussion_messages.length > 0);
+  const discussionPanelAvailable = discussionCommandsAvailable
+    || snapshot.discussion_messages.length > 0;
+  const settlementPanelAvailable = (snapshot.phase === "settle" || snapshot.phase === "reveal")
+    && (
+      snapshot.settlement !== null
+      || snapshot.can_advance
+    );
+  const settlementEntryAvailable = snapshot.status === "active"
+    && settlementPanelAvailable;
   const panelContext = `${snapshot.stage_id}:${snapshot.phase}`;
   const contextSensitivePanel = panel === "hints" || panel === "discussion";
   const panelOpenedInCurrentContext = !contextSensitivePanel
@@ -445,6 +453,7 @@ export function MultiplayerMansionShell({
       snapshot,
       hintPanelAvailable,
       discussionPanelAvailable,
+      settlementPanelAvailable,
     )
     ? panel
     : null;
@@ -762,7 +771,7 @@ export function MultiplayerMansionShell({
             {discussionPanelAvailable && (
               <button type="button" data-sheet-trigger="discussion" onClick={() => selectPanel("discussion")}><MessageCircle />打开讨论</button>
             )}
-            {snapshot.status === "active" && (snapshot.phase === "settle" || snapshot.phase === "reveal") && (
+            {settlementEntryAvailable && (
               <button type="button" data-sheet-trigger="settlement" onClick={() => selectPanel("settlement")}>
                 <ShieldCheck />
                 {snapshot.phase === "settle" ? "打开判断" : "打开结论"}
@@ -804,7 +813,7 @@ export function MultiplayerMansionShell({
             />
           </Sheet>
           <Sheet fallbackFocusRef={panelFallbackRef} banner={activePanel === "settlement" ? renderCommandError(true) : null} open={activePanel === "settlement"} onClose={() => selectPanel(null)} title={snapshot.phase === "settle" ? "圆桌判断" : "阶段结论"} className="md:w-[min(680px,72vw)]">
-            {snapshot.settlement && (
+            {snapshot.settlement ? (
               <SettlementPanel
                 snapshot={snapshot}
                 settlement={snapshot.settlement}
@@ -812,7 +821,19 @@ export function MultiplayerMansionShell({
                 onSubmit={submitSettlement}
                 onAdvance={() => sendCommand({ expected_revision: snapshot.revision, type: "stage.advance", payload: { stage_id: snapshot.stage_id } })}
               />
-            )}
+            ) : snapshot.phase === "reveal" && snapshot.can_advance ? (
+              <div className="space-y-4 px-5 py-6 md:px-8">
+                <p className="text-sm leading-7 text-[#c3c0b7]">本阶段已完成。</p>
+                <button
+                  type="button"
+                  disabled={commandPending}
+                  onClick={() => sendCommand({ expected_revision: snapshot.revision, type: "stage.advance", payload: { stage_id: snapshot.stage_id } })}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#c6a867] px-4 py-3 text-sm font-semibold text-[#11120f] disabled:opacity-45"
+                >
+                  <StepForward className="h-4 w-4" />进入下一阶段
+                </button>
+              </div>
+            ) : null}
           </Sheet>
           <Sheet fallbackFocusRef={panelFallbackRef} banner={activePanel === "review" ? renderCommandError(true) : null} open={activePanel === "review"} onClose={() => selectPanel(null)} title="案件复盘" className="md:w-[min(760px,78vw)]">
             <div className="space-y-6 p-5 md:p-8">
