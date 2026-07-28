@@ -993,7 +993,10 @@ def _decode_room_package(room: StoredMultiplayerRoom):
         )
     except RuntimePackageSnapshotError as exc:
         raise conflict("ROOM_PACKAGE_INVALID", "房间固定剧本包校验失败") from exc
-    playability = multiplayer_package_playability(package)
+    playability = multiplayer_package_playability(
+        package,
+        allow_legacy_material_contract=True,
+    )
     if not playability.playable:
         diagnostic = playability.diagnostics[0]
         raise conflict(

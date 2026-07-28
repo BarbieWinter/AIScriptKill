@@ -186,11 +186,14 @@ function createGameplayApi() {
       read_member_ids: [...readMembers],
       discussion_close_member_ids: [...closed].map((item) => members[item].memberId),
       chapters,
-      public_materials: publicMaterialsVisible && stageId === "investigation"
-        ? [{ id: "arrival-photo", kind: "clue", title: "抵达照片", text: "照片记录了抵达时刻。", media_type: null, url: null }]
-        : publicMaterialsVisible && status === "completed"
-          ? [{ id: "case-reconstruction", kind: "clue", title: "核验后的时间线", text: "知情人早已在室内，金属声来自钥匙落地。", media_type: null, url: null }]
-          : [],
+      public_materials: publicMaterialsVisible
+        ? [
+            { id: "arrival-photo", kind: "clue", title: "抵达照片", text: "照片记录了抵达时刻。", media_type: null, url: null },
+            ...(status === "completed"
+              ? [{ id: "case-reconstruction", kind: "clue", title: "核验后的时间线", text: "知情人早已在室内，金属声来自钥匙落地。", media_type: null, url: null }]
+              : []),
+          ]
+        : [],
       discussion_messages: messages,
       settlement: settlement(identity),
       hints: stageId === "investigation"
@@ -416,6 +419,34 @@ function createGameplayApi() {
 
   return {
     install,
+    enterDiscussion() {
+      status = "active";
+      stageId = "investigation";
+      phase = "discuss";
+      read.clear();
+      readMembers.clear();
+      for (const identity of Object.keys(members) as Identity[]) {
+        read.add(identity);
+        readMembers.add(members[identity].memberId);
+      }
+      closed.clear();
+    },
+    enterSettlement() {
+      status = "active";
+      stageId = "investigation";
+      phase = "settle";
+      votes.clear();
+    },
+    completeRoom() {
+      status = "completed";
+      stageId = "final-judgment";
+      phase = "reveal";
+      endingId = "conflicting-accounts";
+      sharedOptionId = "timeline-conflict";
+      sharedConfirmations.clear();
+      sharedConfirmations.add("host");
+      sharedConfirmations.add("guest");
+    },
     failNextSnapshots(identity: Identity, count = 3) {
       snapshotFailures[identity] = count;
     },
@@ -430,6 +461,9 @@ function createGameplayApi() {
     },
     hidePublicMaterials() {
       publicMaterialsVisible = false;
+    },
+    setPresence(identity: Identity, pose: ScenePresence) {
+      presence.set(identity, pose);
     },
     commandBodies,
     presenceBodies,
@@ -480,10 +514,20 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
     await expect(restoredArchiveEntry).toBeVisible();
     await restoredArchiveEntry.click();
     await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
+    await host.page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (dialog?.textContent?.includes("公开档案") && !dialog.textContent.includes("照片记录了抵达时刻。")) {
+          document.documentElement.dataset.invalidMaterialPanelFrame = "true";
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
 
     api.hidePublicMaterials();
     await expect(restoredArchiveEntry).toHaveCount(0, { timeout: 8_000 });
     await expect(host.page.getByRole("heading", { name: "公开档案" })).toHaveCount(0);
+    await expect(host.page.locator("html")).not.toHaveAttribute("data-invalid-material-panel-frame", "true");
 
     const hostScene = host.page.locator(".mansion-demo");
     const guestScene = guest.page.locator(".mansion-demo");
@@ -582,6 +626,12 @@ test("fixed hint controls request and restore authored progressive hints without
     await expect(fixedHintEntry).toBeFocused();
     await host.page.keyboard.press("Enter");
     await expect(hintDialog).toBeVisible();
+    await expect(hintDialog.getByRole("button", { name: "关闭" })).toBeFocused();
+    const backgroundArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
+    await backgroundArchiveEntry.focus();
+    await expect(hintDialog.getByRole("button", { name: "关闭" })).toBeFocused();
+    await host.page.keyboard.press("Shift+Tab");
+    await expect(hintDialog.getByRole("button", { name: "请求第 1 级提示" })).toBeFocused();
     expect(api.commandBodies).toHaveLength(commandsBeforeOpen);
     await expect(hostScene).toHaveAttribute("data-player-x", initialX ?? "");
     await expect(hostScene).toHaveAttribute("data-player-y", initialY ?? "");
@@ -619,15 +669,172 @@ test("fixed hint controls request and restore authored progressive hints without
     await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
     await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
     await expectScenePhase(host.page, "核对口供", "提交判断");
-    await expect(host.page.getByRole("button", { name: "打开协作提示" })).toHaveCount(0);
-    await expect(host.page.getByRole("heading", { name: "协作提示" })).toHaveCount(0);
+    await expect(host.page.locator("[data-sheet-focus-fallback]")).toBeFocused();
+    const settlementHintEntry = host.page.getByRole("button", { name: "打开协作提示" });
+    await expect(settlementHintEntry).toBeVisible();
+    await settlementHintEntry.click();
+    await expect(host.page.getByText(hintLevels[2])).toBeVisible();
+    await expect(host.page.getByRole("button", { name: /请求第|同意公开第/ })).toHaveCount(0);
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }
 });
 
-test("connected shell recovers synchronization and completes discussion decisions and review", async ({ browser }) => {
-  test.setTimeout(120_000);
+test("Sheet restores focus to a replacement trigger with the same logical identity", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.enterDiscussion();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    const discussionEntry = host.page.getByRole("button", { name: "打开讨论" });
+    await discussionEntry.focus();
+    await host.page.keyboard.press("Enter");
+    await expect(host.page.getByRole("dialog", { name: "双人公开讨论" })).toBeVisible();
+
+    await host.page.evaluate(() => {
+      const trigger = document.querySelector<HTMLElement>('[data-sheet-trigger="discussion"]');
+      if (!trigger) throw new Error("discussion trigger missing");
+      trigger.replaceWith(trigger.cloneNode(true));
+    });
+    await host.page.keyboard.press("Escape");
+    await expect(host.page.getByRole("button", { name: "打开讨论" })).toBeFocused();
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("settlement radio group follows native Tab order inside the Sheet", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.enterSettlement();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "提交判断");
+    await host.page.getByRole("button", { name: "打开判断" }).click();
+
+    const dialog = host.page.getByRole("dialog", { name: "圆桌判断" });
+    const closeButton = dialog.getByRole("button", { name: "关闭" });
+    const firstOption = dialog.getByRole("radio").first();
+    await expect(closeButton).toBeFocused();
+    await host.page.keyboard.press("Tab");
+    await expect(firstOption).toBeFocused();
+    await host.page.keyboard.press("Tab");
+    await expect(closeButton).toBeFocused();
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("cached gameplay snapshot recovers after polling interruption", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.enterDiscussion();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+
+    api.failNextSnapshots("host", 20);
+    const syncWarning = host.page.getByText("同步暂时中断，正在显示上次成功状态。");
+    await expect(syncWarning).toBeVisible({ timeout: 15_000 });
+    api.restoreSnapshots("host");
+    await host.page.getByRole("button", { name: "重试同步" }).click();
+    await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("discussion command failure preserves the draft and exposes recovery above the Sheet", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.enterDiscussion();
+  const host = await createPlayerPage(browser, api, "host");
+  const guest = await createPlayerPage(browser, api, "guest");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      guest.page.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    const messageInput = host.page.getByRole("textbox", { name: "讨论消息" });
+    await messageInput.fill("门锁没有损坏。");
+    api.failNextMessage();
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect(messageInput).toHaveValue("门锁没有损坏。");
+    const commandError = host.page.getByRole("alert").filter({ hasText: "Message send failed" });
+    await expect(commandError).toBeVisible();
+    const sendButton = host.page.getByRole("button", { name: "发送讨论消息" });
+    await sendButton.focus();
+    await host.page.keyboard.press("Tab");
+    await host.page.keyboard.press("Tab");
+    const syncButton = commandError.getByRole("button", { name: "同步" });
+    await expect(syncButton).toBeFocused();
+    await host.page.keyboard.press("Enter");
+    await expect(commandError).toHaveCount(0);
+    await expect(host.page.getByRole("dialog", { name: "双人公开讨论" })).toBeFocused();
+    await expect(messageInput).toHaveValue("门锁没有损坏。");
+    await sendButton.click();
+    await expect(messageInput).toHaveValue("");
+    await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible({ timeout: 8_000 });
+  } finally {
+    await Promise.all([host.context.close(), guest.context.close()]);
+  }
+});
+
+test("completed review retries without replaying the game journey", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.completeRoom();
+  api.failNextReviews("host");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "打开复盘" }).click();
+    await expect(host.page.getByText("Temporary review failure", { exact: true })).toBeVisible({ timeout: 12_000 });
+    await host.page.getByRole("button", { name: "重新加载复盘" }).click();
+    await expect(host.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
+    await expect(host.page.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("scene review hotspot opens the same completed surface as the fixed entry", async ({ context, page }) => {
+  const api = createGameplayApi();
+  api.completeRoom();
+  api.setPresence("host", { x: 1500, y: 1150, facing: "left", moving: false });
+  const token = await installAnonymousAuth(context, "host");
+  await api.install(page, "host", token);
+
+  await page.goto(`/play/${sessionId}/lobby`);
+  await expect(page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+
+  await page.getByRole("button", { name: "打开复盘" }).click();
+  const reviewDialog = page.getByRole("dialog", { name: "案件复盘" });
+  await expect(reviewDialog.getByRole("heading", { name: "矛盾的口供" })).toBeVisible();
+  await expect(reviewDialog.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
+  await reviewDialog.getByRole("button", { name: "关闭" }).click();
+  await expect(reviewDialog).toHaveCount(0);
+
+  const commandCount = api.commandBodies.length;
+  const reviewHotspot = page.locator('[data-hotspot-id="multiplayer-review"]');
+  await expect(reviewHotspot).toBeEnabled();
+  await reviewHotspot.click();
+  await expect(reviewDialog.getByRole("heading", { name: "矛盾的口供" })).toBeVisible();
+  await expect(reviewDialog.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
+  expect(api.commandBodies).toHaveLength(commandCount);
+});
+
+
+test("connected shell completes a two-player gameplay and review smoke journey", async ({ browser }) => {
+  test.setTimeout(60_000);
   const api = createGameplayApi();
   const host = await createPlayerPage(browser, api, "host");
   const guest = await createPlayerPage(browser, api, "guest");
@@ -650,24 +857,10 @@ test("connected shell recovers synchronization and completes discussion decision
     await host.page.getByRole("button", { name: "关闭" }).click();
     await guest.page.getByRole("button", { name: "关闭" }).click();
 
-    api.failNextSnapshots("host", 20);
-    const syncWarning = host.page.getByText("同步暂时中断，正在显示上次成功状态。");
-    await expect(syncWarning).toBeVisible({ timeout: 15_000 });
-    api.restoreSnapshots("host");
-    await host.page.getByRole("button", { name: "重试同步" }).click();
-    await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
-    await expectScenePhase(host.page, "核对口供", "公开讨论");
-
     await host.page.getByRole("button", { name: "打开讨论" }).click();
     await guest.page.getByRole("button", { name: "打开讨论" }).click();
     const messageInput = host.page.getByRole("textbox", { name: "讨论消息" });
     await messageInput.fill("门锁没有损坏。");
-    api.failNextMessage();
-    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
-    await expect(messageInput).toHaveValue("门锁没有损坏。");
-    await expect(
-      host.page.getByRole("main").getByText("Message send failed", { exact: true }),
-    ).toBeVisible();
     await host.page.getByRole("button", { name: "发送讨论消息" }).click();
     await expect(messageInput).toHaveValue("");
     await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible({ timeout: 8_000 });
@@ -683,6 +876,12 @@ test("connected shell recovers synchronization and completes discussion decision
     await expect(host.page.getByRole("heading", { name: "二十点二十分的金属声最可能来自哪种情况？" })).toBeVisible();
     await host.page.getByText("有人在二十点二十分强行进入值班室", { exact: true }).click();
     await host.page.getByRole("button", { name: "确认选择" }).click();
+    await expect(host.page.getByRole("button", { name: "已提交，等待同伴" })).toBeDisabled({ timeout: 8_000 });
+    const lockedSettlementDialog = host.page.getByRole("dialog", { name: "圆桌判断" });
+    const lockedSettlementClose = lockedSettlementDialog.getByRole("button", { name: "关闭" });
+    await lockedSettlementClose.focus();
+    await host.page.keyboard.press("Tab");
+    await expect(lockedSettlementClose).toBeFocused();
     await expect(guest.page.getByText("1/2 位玩家已提交", { exact: true })).toBeVisible({ timeout: 8_000 });
     await guest.page.getByText("有人早已在室内，金属声来自钥匙掉落", { exact: true }).click();
     await guest.page.getByRole("button", { name: "确认选择" }).click();
@@ -690,6 +889,11 @@ test("connected shell recovers synchronization and completes discussion decision
     await host.page.getByRole("button", { name: "进入下一阶段" }).click();
     await expectScenePhase(host.page, "共同终判", "阅读角色信息");
     await expectScenePhase(guest.page, "共同终判", "阅读角色信息");
+    const retainedArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
+    await expect(retainedArchiveEntry).toBeVisible();
+    await retainedArchiveEntry.click();
+    await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
+    await host.page.getByRole("button", { name: "关闭" }).click();
 
     await host.page.getByRole("button", { name: "角色章" }).click();
     await guest.page.getByRole("button", { name: "角色章" }).click();
@@ -721,13 +925,10 @@ test("connected shell recovers synchronization and completes discussion decision
     await guest.page.getByRole("button", { name: "确认选择" }).click();
     await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
     await expect(guest.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await host.page.getByRole("button", { name: "关闭" }).click();
-    await guest.page.getByRole("button", { name: "关闭" }).click();
+    await expect(host.page.getByRole("dialog", { name: "圆桌判断" })).toHaveCount(0);
+    await expect(guest.page.getByRole("dialog", { name: "圆桌判断" })).toHaveCount(0);
 
-    api.failNextReviews("host");
     await host.page.getByRole("button", { name: "打开复盘" }).click();
-    await expect(host.page.getByText("Temporary review failure", { exact: true })).toBeVisible({ timeout: 12_000 });
-    await host.page.getByRole("button", { name: "重新加载复盘" }).click();
     await expect(host.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
     await expect(host.page.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
 
@@ -739,4 +940,80 @@ test("connected shell recovers synchronization and completes discussion decision
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }
+});
+
+test("@mobile fixed scene controls and Sheet actions remain touch-operable", async ({ context, page }) => {
+  test.setTimeout(60_000);
+  const api = createGameplayApi();
+  const token = await installAnonymousAuth(context, "host");
+  await api.install(page, "host", token);
+
+  await page.goto(`/play/${sessionId}/lobby`);
+  await expectScenePhase(page, "核对口供", "阅读角色信息");
+  expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+
+  const archiveEntry = page.getByRole("button", { name: "打开公开档案" });
+  await expect(archiveEntry).toBeVisible();
+  const entryBox = await archiveEntry.boundingBox();
+  expect(entryBox).not.toBeNull();
+  expect(entryBox!.x).toBeGreaterThanOrEqual(0);
+  expect(entryBox!.x + entryBox!.width).toBeLessThanOrEqual(390);
+  expect(entryBox!.y + entryBox!.height).toBeLessThanOrEqual(844);
+
+  await archiveEntry.tap();
+  const archiveDialog = page.getByRole("dialog", { name: "公开档案" });
+  await expect(archiveDialog).toBeVisible();
+  await expect(archiveDialog.getByText("照片记录了抵达时刻。")).toBeVisible();
+  const closeButton = archiveDialog.getByRole("button", { name: "关闭" });
+  await expect.poll(async () => {
+    const closeBox = await closeButton.boundingBox();
+    return closeBox ? closeBox.y + closeBox.height : Number.POSITIVE_INFINITY;
+  }).toBeLessThanOrEqual(844);
+  await closeButton.tap();
+  await expect(archiveDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "角色章" }).tap();
+  const chapterDialog = page.getByRole("dialog", { name: "调查员的角色手记" });
+  await expect(chapterDialog).toBeVisible();
+  await expect(chapterDialog.getByRole("button", { name: "我已读完" })).toBeVisible();
+  await chapterDialog.getByRole("button", { name: "关闭" }).tap();
+  await expect(chapterDialog).toHaveCount(0);
+
+  api.enterDiscussion();
+  await page.reload();
+  await expectScenePhase(page, "核对口供", "公开讨论");
+  await page.getByRole("button", { name: "打开协作提示" }).tap();
+  const hintDialog = page.getByRole("dialog", { name: "协作提示" });
+  await expect(hintDialog).toBeVisible();
+  await hintDialog.getByRole("button", { name: "请求第 1 级提示" }).tap();
+  await expect(hintDialog.getByRole("button", { name: "已确认，等待同伴" })).toBeDisabled();
+  await hintDialog.getByRole("button", { name: "关闭" }).tap();
+  await expect(hintDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "打开讨论" }).tap();
+  const discussionDialog = page.getByRole("dialog", { name: "双人公开讨论" });
+  const messageInput = discussionDialog.getByRole("textbox", { name: "讨论消息" });
+  await messageInput.fill("移动端讨论可用。");
+  await discussionDialog.getByRole("button", { name: "发送讨论消息" }).tap();
+  await expect(messageInput).toHaveValue("");
+  await expect(discussionDialog.getByText("移动端讨论可用。")).toBeVisible();
+  await discussionDialog.getByRole("button", { name: "关闭" }).tap();
+  await expect(discussionDialog).toHaveCount(0);
+
+  api.enterSettlement();
+  await page.reload();
+  await expectScenePhase(page, "核对口供", "提交判断");
+  await page.getByRole("button", { name: "打开判断" }).tap();
+  const settlementDialog = page.getByRole("dialog", { name: "圆桌判断" });
+  await settlementDialog.getByText("有人在二十点二十分强行进入值班室", { exact: true }).tap();
+  await settlementDialog.getByRole("button", { name: "确认选择" }).tap();
+  await expect(settlementDialog.getByRole("button", { name: "已提交，等待同伴" })).toBeDisabled();
+
+  api.completeRoom();
+  await page.reload();
+  await expect(page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole("button", { name: "打开复盘" }).tap();
+  const reviewDialog = page.getByRole("dialog", { name: "案件复盘" });
+  await expect(reviewDialog.getByRole("heading", { name: "矛盾的口供" })).toBeVisible();
+  await expect(reviewDialog.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
 });

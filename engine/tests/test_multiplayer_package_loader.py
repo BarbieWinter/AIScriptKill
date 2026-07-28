@@ -311,6 +311,63 @@ def test_multiplayer_package_requires_enough_playable_characters() -> None:
     assert exc_info.value.code == "PACKAGE_MULTIPLAYER_PLAYER_COUNT_INVALID"
 
 
+def test_multiplayer_public_material_ids_cannot_be_reused_across_stages() -> None:
+    files = _fixture_files()
+    path = "stages/final-judgment.yml"
+    files[path] = _text_file(files, path).replace(
+        '  - id: "case-reconstruction"',
+        '  - id: "arrival-photo"',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_MULTIPLAYER_MATERIAL_ID_REUSED"
+    assert exc_info.value.message == (
+        "公共材料 id 不能跨多人阶段复用: arrival-photo (investigation/final-judgment)"
+    )
+
+
+def test_nonterminal_stage_cannot_author_outcome_materials() -> None:
+    files = _fixture_files()
+    path = "stages/investigation.yml"
+    files[path] = _text_file(files, path).replace(
+        '    reveal_at: "stage_enter"',
+        '    reveal_at: "outcome:trust-investigator"',
+    )
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == (
+        "PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_MATERIAL_UNSUPPORTED"
+    )
+    assert exc_info.value.message == (
+        "非终局阶段不支持 outcome 公共材料: investigation/arrival-photo"
+    )
+
+
+def test_frozen_package_can_grandfather_legacy_cross_stage_material_id() -> None:
+    package = load_package_directory(FIXTURE_ROOT, publish=True)
+    final_stage = package.stages[-1]
+    definition = dict(final_stage.definition)
+    public_materials = [dict(item) for item in definition["public_materials"]]
+    public_materials[0]["id"] = "arrival-photo"
+    definition["public_materials"] = public_materials
+    legacy = replace(
+        package,
+        stages=(*package.stages[:-1], replace(final_stage, definition=definition)),
+    )
+
+    playability = multiplayer_package_playability(
+        legacy,
+        allow_legacy_material_contract=True,
+    )
+
+    assert playability.playable is True
+    assert playability.diagnostics == ()
+
+
 @pytest.mark.parametrize(
     ("old", "new", "expected_message"),
     (
@@ -397,17 +454,19 @@ def test_outcome_material_trigger_resolves_only_within_its_stage() -> None:
     assert "insufficient-evidence" in exc_info.value.message
 
 
-def test_outcome_material_trigger_accepts_option_and_tie_outcomes_from_same_stage() -> None:
-    for outcome_id in ("trust-insider", "split-vote"):
+def test_terminal_outcome_material_trigger_accepts_declared_outcomes() -> None:
+    for outcome_id in ("conflicting-accounts", "insufficient-evidence"):
         files = _fixture_files()
-        files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(
-            'reveal_at: "all_players_read"', f'reveal_at: "outcome:{outcome_id}"'
+        path = "stages/final-judgment.yml"
+        files[path] = _text_file(files, path).replace(
+            '    reveal_at: "settlement_done"',
+            f'    reveal_at: "outcome:{outcome_id}"',
         )
 
         package = load_package_archive(package_archive(files))
 
-        investigation = package.stages[0].definition
-        assert investigation["public_materials"][1]["reveal_at"] == f"outcome:{outcome_id}"
+        final_stage = package.stages[1].definition
+        assert final_stage["public_materials"][0]["reveal_at"] == f"outcome:{outcome_id}"
 
 
 def test_final_judgment_must_be_the_terminal_stage() -> None:

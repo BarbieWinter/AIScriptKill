@@ -19,6 +19,57 @@ interface SheetProps {
   children: React.ReactNode;
   side?: "right" | "bottom";
   className?: string;
+  modal?: boolean;
+}
+
+const FOCUSABLE_SELECTOR = [
+  "button",
+  "a[href]",
+  "input",
+  "textarea",
+  "select",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function sheetFocusRoots(root: HTMLElement) {
+  return [
+    root,
+    ...Array.from(document.querySelectorAll<HTMLElement>("[data-sheet-focus-portal]"))
+      .filter((portal) => !root.contains(portal)),
+  ];
+}
+
+function focusableElements(root: HTMLElement) {
+  const focusRoots = sheetFocusRoots(root);
+  const elements = focusRoots.flatMap((focusRoot) => (
+    Array.from(focusRoot.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+  )).filter(
+    (element) => !element.matches(":disabled") && element.getClientRects().length > 0,
+  );
+  return elements.filter((element) => {
+    if (!(element instanceof HTMLInputElement) || element.type !== "radio" || !element.name) {
+      return true;
+    }
+    const group = elements.filter((candidate): candidate is HTMLInputElement => (
+      candidate instanceof HTMLInputElement
+      && candidate.type === "radio"
+      && candidate.name === element.name
+      && candidate.form === element.form
+    ));
+    return element === (group.find((candidate) => candidate.checked) ?? group[0]);
+  });
+}
+
+function restoreFallbackFocus() {
+  const fallback = document.querySelector<HTMLElement>("[data-sheet-focus-fallback]")
+    ?? document.querySelector<HTMLElement>("main, [role=\"main\"]");
+  if (fallback?.isConnected) {
+    if (!fallback.hasAttribute("tabindex")) fallback.tabIndex = -1;
+    fallback.focus();
+    return;
+  }
+  document.body.tabIndex = -1;
+  document.body.focus();
 }
 
 export function Sheet({
@@ -28,10 +79,12 @@ export function Sheet({
   children,
   side = "right",
   className,
+  modal = true,
 }: SheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const previousFocusKeyRef = useRef<string | null>(null);
   const titleId = useId();
 
   useEffect(() => {
@@ -39,22 +92,84 @@ export function Sheet({
     previousFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    previousFocusKeyRef.current = previousFocusRef.current?.getAttribute("data-sheet-trigger") ?? null;
     const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       window.cancelAnimationFrame(frame);
       const previousFocus = previousFocusRef.current;
+      const previousFocusKey = previousFocusKeyRef.current;
       previousFocusRef.current = null;
-      if (previousFocus?.isConnected) previousFocus.focus();
+      previousFocusKeyRef.current = null;
+      window.requestAnimationFrame(() => {
+        const triggerStillMatches = previousFocusKey === null
+          || previousFocus?.getAttribute("data-sheet-trigger") === previousFocusKey;
+        if (previousFocus?.isConnected && triggerStillMatches) {
+          previousFocus.focus();
+          return;
+        }
+        const replacementTrigger = previousFocusKey === null
+          ? null
+          : Array.from(document.querySelectorAll<HTMLElement>("[data-sheet-trigger]"))
+            .find((element) => (
+              element.getAttribute("data-sheet-trigger") === previousFocusKey
+              && !element.matches(":disabled")
+              && element.getClientRects().length > 0
+            ));
+        if (replacementTrigger) {
+          replacementTrigger.focus();
+        } else {
+          restoreFallbackFocus();
+        }
+      });
     };
   }, [open]);
 
-  // ESC 键关闭
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const sheet = sheetRef.current;
+      if (!sheet) return;
+      const focusable = focusableElements(sheet);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        sheet.focus();
+        return;
+      }
+
+      const activeIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (activeIndex < 0) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeIndex === 0) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeIndex === focusable.length - 1) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    if (open) window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    const handleFocusIn = (event: FocusEvent) => {
+      const sheet = sheetRef.current;
+      const target = event.target;
+      if (!sheet || !(target instanceof HTMLElement)) return;
+      if (sheetFocusRoots(sheet).some((focusRoot) => focusRoot.contains(target))) return;
+      (focusableElements(sheet)[0] ?? sheet).focus();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+    };
   }, [open, onClose]);
 
   // 锁定背景滚动
@@ -68,27 +183,6 @@ export function Sheet({
       document.body.style.overflow = "";
     };
   }, [open]);
-
-  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Tab") return;
-    const focusable = sheetRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    );
-    if (!focusable || focusable.length === 0) {
-      event.preventDefault();
-      sheetRef.current?.focus();
-      return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
 
   // 判断是否为手机端（通过媒体查询，运行时判断）
   const isMobile =
@@ -113,10 +207,9 @@ export function Sheet({
           <motion.div
             ref={sheetRef}
             role="dialog"
-            aria-modal="true"
+            aria-modal={modal ? "true" : undefined}
             aria-labelledby={titleId}
             tabIndex={-1}
-            onKeyDown={trapFocus}
             className={cn(
               "fixed z-50 bg-[var(--panel-bg)] border-[var(--border)] shadow-2xl",
               // 右侧滑出

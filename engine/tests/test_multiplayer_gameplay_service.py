@@ -23,6 +23,8 @@ from engine.contracts.multiplayer_v1.commands import (
     ConfirmSharedChoiceCommand,
     ConfirmSharedChoicePayload,
     MultiplayerCommand,
+    RoomResyncCommand,
+    RoomResyncPayload,
     SendDiscussionMessageCommand,
     SendDiscussionMessagePayload,
     StageCommandPayload,
@@ -36,7 +38,7 @@ from engine.contracts.multiplayer_v1.state import (
     PrivatePlayerState,
     RoomState,
 )
-from engine.contracts.multiplayer_v1.vocabulary import RoomStatus
+from engine.contracts.multiplayer_v1.vocabulary import RoomStatus, StagePhase
 from engine.core.multiplayer_state_machine import initialize_stage_runtime
 from engine.core.package_loader import load_package_directory
 from engine.core.package_multiplayer import multiplayer_stage_contract
@@ -131,6 +133,46 @@ def _active_room() -> tuple[StoredMultiplayerRoom, tuple[StoredRoomMember, ...]]
         for index, member_id in enumerate(MEMBER_IDS)
     )
     return room, members
+
+
+def _legacy_final_stage_room() -> tuple[
+    StoredMultiplayerRoom,
+    tuple[StoredRoomMember, ...],
+]:
+    room, members = _active_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    state = decode_room_game_state(room)
+    definition = multiplayer_stage_contract(package, "final-judgment")
+    private_by_member = {
+        member_id: private_state.model_copy(
+            update={
+                "unlocked_chapter_ids": (
+                    private_state.unlocked_chapter_ids[0],
+                    definition.chapters[private_state.character_id],
+                )
+            }
+        )
+        for member_id, private_state in state.private_by_member.items()
+        if private_state.character_id is not None
+    }
+    legacy_state = GameStateV2.model_validate(
+        state.model_copy(
+            update={
+                "room": state.room.model_copy(
+                    update={"current_stage_id": definition.id}
+                ),
+                "private_by_member": private_by_member,
+                "stage": initialize_stage_runtime(
+                    definition,
+                    required_member_ids=state.room.required_member_ids,
+                ),
+            }
+        ).model_dump()
+    )
+    return replace(room, state=legacy_state.model_dump(mode="json")), members
 
 
 def _apply(
@@ -271,6 +313,114 @@ def test_snapshot_whitelists_private_content_and_validates_public_chat() -> None
             event_rows=({**event, "payload": invalid_payload},),
         )
     assert exc_info.value.error.code == "ROOM_EVENT_INVALID"
+
+
+def test_snapshot_restores_deterministic_materials_for_legacy_advanced_room() -> None:
+    room, members = _legacy_final_stage_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+
+    snapshot = project_gameplay_snapshot(
+        room=room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+
+    assert snapshot.stage_id == "final-judgment"
+    assert [material.id for material in snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+
+def test_next_mutation_keeps_v2_material_state_stage_local_for_legacy_room() -> None:
+    room, members = _legacy_final_stage_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+
+    mutation = apply_gameplay_command(
+        room=room,
+        member=members[0],
+        command=_stage_command(room, "stage.confirm_read", "final-judgment"),
+        package=package,
+    )
+
+    assert mutation.state_changed is True
+    assert mutation.state.stage.revealed_material_ids == ()
+
+    persisted = replace(
+        room,
+        revision=room.revision + 1,
+        state=mutation.state.model_copy(
+            update={"room_revision": room.revision + 1}
+        ).model_dump(mode="json"),
+    )
+    snapshot = project_gameplay_snapshot(
+        room=persisted,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert [material.id for material in snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+
+def test_non_mutating_commands_reject_invalid_stage_material_order() -> None:
+    room, members = _active_room()
+    package = decode_runtime_package_snapshot(
+        room.runtime_package_snapshot,
+        room.runtime_package_sha256,
+    )
+    state = decode_room_game_state(room)
+    invalid_state = GameStateV2.model_validate(
+        state.model_copy(
+            update={
+                "stage": state.stage.model_copy(
+                    update={
+                        "phase": StagePhase.DISCUSS,
+                        "read_member_ids": state.room.required_member_ids,
+                        "revealed_material_ids": ("witness-note", "arrival-photo"),
+                    }
+                )
+            }
+        ).model_dump()
+    )
+    invalid_room = replace(room, state=invalid_state.model_dump(mode="json"))
+    commands: tuple[MultiplayerCommand, ...] = (
+        SendDiscussionMessageCommand(
+            command_id=uuid4(),
+            expected_revision=room.revision,
+            type="discussion.send_message",
+            payload=SendDiscussionMessagePayload(
+                stage_id="investigation",
+                message_id=uuid4(),
+                text="顺序异常不应接受消息。",
+            ),
+        ),
+        RoomResyncCommand(
+            command_id=uuid4(),
+            expected_revision=room.revision,
+            type="room.resync",
+            payload=RoomResyncPayload(last_event_sequence=0),
+        ),
+    )
+
+    for command in commands:
+        with pytest.raises(ApiError) as exc_info:
+            apply_gameplay_command(
+                room=invalid_room,
+                member=members[0],
+                command=command,
+                package=package,
+            )
+        assert exc_info.value.error.code == "ROOM_STATE_INVALID"
 
 
 def test_snapshot_projects_only_fresh_member_scene_presence() -> None:
@@ -454,6 +604,10 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
         event_rows=(),
     )
     assert final_snapshot.stage_id == "final-judgment"
+    assert [material.id for material in final_snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
     assert [chapter.id for chapter in final_snapshot.chapters] == [
         "investigator-investigation",
         "investigator-final-judgment",
@@ -500,6 +654,16 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
     assert completed.ending_id == expected_ending_id
     assert completed.settlement is not None
     assert completed.settlement.outcome_id == expected_ending_id
+    assert [material.id for material in completed.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+        "case-reconstruction",
+        (
+            "limited-finding"
+            if expected_ending_id == "conflicting-accounts"
+            else "unsupported-finding"
+        ),
+    ]
     assert completed.can_advance is False
 
     reviews = tuple(

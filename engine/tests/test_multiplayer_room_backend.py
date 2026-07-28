@@ -197,6 +197,26 @@ def _room_with_missing_ending_mapping() -> StoredMultiplayerRoom:
     )
 
 
+def _room_with_legacy_cross_stage_material_id() -> StoredMultiplayerRoom:
+    room = _room()
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    final_stage = package.stages[-1]
+    definition = dict(final_stage.definition)
+    public_materials = [dict(item) for item in definition["public_materials"]]
+    public_materials[0]["id"] = "arrival-photo"
+    definition["public_materials"] = public_materials
+    legacy = replace(
+        package,
+        stages=(*package.stages[:-1], replace(final_stage, definition=definition)),
+    )
+    snapshot = encode_runtime_package_snapshot(legacy)
+    return replace(
+        room,
+        runtime_package_snapshot=dict(snapshot.payload),
+        runtime_package_sha256=snapshot.sha256,
+    )
+
+
 def _member(
     room: StoredMultiplayerRoom,
     *,
@@ -462,6 +482,14 @@ async def test_create_rejects_package_before_room_mutation_with_playability_diag
     assert exc_info.value.error.details["outcome_id"] == "insufficient-evidence"
     assert repository.lock_calls == 1
     assert repository.create_calls == 0
+
+
+def test_room_decode_grandfathers_legacy_cross_stage_material_id() -> None:
+    room = _room_with_legacy_cross_stage_material_id()
+
+    package = service._decode_room_package(room)  # noqa: SLF001
+
+    assert package.package.id == room.script_id
 
 
 @pytest.mark.asyncio

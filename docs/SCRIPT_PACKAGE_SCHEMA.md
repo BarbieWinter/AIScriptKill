@@ -107,7 +107,7 @@ stage_min: return_to_snow_village
 
 ### 1.2 `multiplayer_v1` authoring contract
 
-> 以下示例说明多人包的严格 JSON/YAML 形状。声明多人策略的剧本包会在导入、发布、建房和冻结快照解码时接受同一组 playability 校验。
+> 以下示例说明多人包的严格 JSON/YAML 形状。导入、发布和建房使用当前严格 playability 规则；冻结快照解码保留相同运行能力校验，但对历史材料 ID 复用和非终局 outcome 材料采用宽容读取，避免追溯淘汰既有房间。
 
 所有 MP-0 authoring 模型继承 `ContractModel`，统一配置为 `strict=True`、`frozen=True`、`extra="forbid"`。未知字段和类型强制转换会被拒绝。
 
@@ -138,7 +138,7 @@ public_materials:
   - id: witness-record
     reveal_at: all_players_read
   - id: vote-followup
-    reveal_at: outcome:suspect-b
+    reveal_at: settlement_done
 discussion:
   suggested_minutes: 15
   close_policy: all_players
@@ -165,7 +165,8 @@ hints:
 局部校验包括：
 
 - `public_materials[].reveal_at` 只能是 `stage_enter`、`all_players_read`、`settlement_done` 或非空 `outcome:<id>`；
-- 同一阶段内公共材料 ID 与提示 ID 分别唯一；
+- 同一阶段内公共材料 ID 与提示 ID 分别唯一；完整剧本包还要求公共材料 ID 跨阶段唯一；
+- 非终局阶段不允许 `outcome:<id>` 公共材料，确保 V2 阶段局部状态可从已到达阶段确定性恢复公共档案；
 - `suggested_minutes` 省略时为 `null`，存在时必须大于 0；`close_policy` 默认且只能为 `all_players`；
 - 每个提示恰好包含 3 条有序非空文案；
 - authoring model 负责局部形状校验；跨文件 material、chapter、outcome 引用由完整剧本包校验统一检查。

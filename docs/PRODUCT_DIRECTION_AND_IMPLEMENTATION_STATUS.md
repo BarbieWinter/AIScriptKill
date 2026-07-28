@@ -261,7 +261,7 @@ YAML 声明发放点
 玩家坐标 ──► 进入热点 ──► 才能发现关键证据                 [禁止]
 ```
 
-当前 reducer 已经按 `stage_enter`、`all_players_read`、`settlement_done` 和 `outcome:*` 触发确定性材料公开，见 `engine/core/multiplayer_state_machine.py:590`。这是应保留的方向，但 `mode: none` 也会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
+当前 reducer 在阶段局部 V2 状态内按 `stage_enter`、`all_players_read`、`settlement_done` 和终局 `outcome:*` 触发确定性材料公开；snapshot 再根据已到达阶段补齐此前阶段的确定性公共档案。新包禁止在非终局阶段声明 `outcome:*` 材料，避免依赖 V2 未保存的历史结算结果。`mode: none` 仍会触发 legacy `settlement_done`；迁移到活动模型时应改成与实际活动完成点一致的中性命名。
 
 但当前投影仍同时接受 `clue`、`evidence` 和 `media`，见 `engine/services/multiplayer_gameplay_service.py:481`；旧 `evidence` 概念仍和历史搜证模型纠缠。后续应保留“作者明确发放的线索卡/公共材料”，删除“通过场景、热点或动作发现 evidence”的获取模型。
 
@@ -288,7 +288,7 @@ stage_rewards:
 
 ## 7. 受控 AI DM 的目标运行方式
 
-当前 `engine/agents/dm_agent.py` 和 `engine/agents/hint_agent.py` 仍是两行占位文件。样例包新增的 `dm_guide/truth.yml` 已能支持终局复盘，但它不是可运行的 AI DM 主持脚本。固定 YAML 提示已有 reducer、command、snapshot 和实际接线的 `MultiplayerMansionShell` UI：讨论阶段可从固定入口逐级请求提示，经全员确认后只显示 snapshot 已公开的层级，刷新后恢复，并在进入正式判断时关闭。该能力完全确定性运行，不调用 LLM，也不代表受控 AI DM 已实现。
+当前 `engine/agents/dm_agent.py` 和 `engine/agents/hint_agent.py` 仍是两行占位文件。样例包新增的 `dm_guide/truth.yml` 已能支持终局复盘，但它不是可运行的 AI DM 主持脚本。固定 YAML 提示已有 reducer、command、snapshot 和实际接线的 `MultiplayerMansionShell` UI：讨论阶段可从固定入口逐级请求提示，经全员确认后只显示 snapshot 已公开的层级，刷新后恢复；进入正式判断后关闭请求与确认能力，但此前已公开的层级继续只读可见。该能力完全确定性运行，不调用 LLM，也不代表受控 AI DM 已实现。
 
 目标调用链应是：
 
@@ -328,7 +328,7 @@ dm_chapter:
     use_progressive_hints: true
 ```
 
-AI DM 的输入应使用“有界近期消息 + 稳定摘要”，而不是无限累积整局聊天。正式决策开始后，内容性提示关闭，只保留程序说明。
+AI DM 的输入应使用“有界近期消息 + 稳定摘要”，而不是无限累积整局聊天。正式决策开始后，不再允许请求或确认新的内容性提示；此前已公开的提示仍作为房间公共记录只读可见。
 
 ---
 
@@ -360,7 +360,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 
 ### 8.3 当前实现的偏差
 
-`MultiplayerMansionShell` 仍把角色手记、公开档案、讨论室、圆桌判断和复盘映射成 `DemoSessionHotspot`，并通过 `MansionDemo.onInvestigate` 打开对应面板。角色手记已有固定 HUD 入口，公开/终局档案、协作提示、讨论、判断和复盘均有阶段 overlay 直达按钮。玩家无需移动或接近热点即可打开 snapshot 已授权的玩法表面；公开材料和已揭示提示会在刷新后随权威快照恢复，提示只在讨论阶段提供请求/确认能力，进入正式判断后自动关闭。
+`MultiplayerMansionShell` 仍把角色手记、公开档案、讨论室、圆桌判断和复盘映射成 `DemoSessionHotspot`，并通过 `MansionDemo.onInvestigate` 打开对应面板。角色手记已有固定 HUD 入口，公开/终局档案、协作提示、讨论、判断和复盘均有阶段 overlay 直达按钮。玩家无需移动或接近热点即可打开 snapshot 已授权的玩法表面；公开材料和已揭示提示会在刷新后随权威快照恢复，提示只在讨论阶段提供请求/确认能力，进入正式判断后转为已公开内容只读。
 
 当前实现设置了 `includeDemoContent={false}`，避免直接复用旧 demo 证据内容。舞台热点现已降级为可选的等价快捷入口，不影响内容是否已发放、活动是否完成或阶段是否推进；多人壳层对 legacy hotspot 类型和 `onInvestigate` 的物理依赖仍需在后续旧方向清理中删除。
 
@@ -425,7 +425,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 样例内容一致性 | 双人样例已存在 | 已修正第一阶段调查员选项的错误归因，并锁定目录/archive 完整库存和两个冻结终局 | **已完成（严格双人样例）** |
 | 持久命令与数据库恢复 | 部分命令恢复基础 | 服务端回执、幂等、stale reclaim、attempt fencing 和权限已接通 | **已完成（服务端已测范围）** |
 | outbox 实时投递 | 基础表/设计存在 | 表、事务写入与 batch dispatcher 存在；gameplay 不写 topic，且无 adapter/worker | **部分完成** |
-| 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段关闭 | **已完成（候选基线）** |
+| 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段禁用请求/确认并保留已公开内容只读 | **已完成（候选基线）** |
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
 | 断线后浏览器恢复 | 有快照/重试设计 | HTTP 轮询可重新取得快照，但无 pending command、receipt 或专项浏览器恢复 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
@@ -642,12 +642,12 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest engine/tests/ -q` | **534 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
-| T04 package / gameplay 聚焦测试 | **46 passed** | 覆盖目录/archive 完整库存、修正后的调查揭晓、两个冻结终局与双方复盘 |
+| `uv run --frozen pytest engine/tests/ -q` | **541 passed, 16 skipped** | 16 项均为显式数据库环境门禁 |
+| T04 package / gameplay 聚焦测试 | **51 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房确定性材料回填、V2 阶段局部状态与两个冻结终局复盘 |
 | `make test-durable-commands` | **22 passed** | 覆盖命令幂等、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **10 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示入口，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| route-mocked Playwright | **17 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、固定材料/提示入口、热点等价、Sheet 原生 radio Tab 顺序、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
 | `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
@@ -663,6 +663,7 @@ R5  旧方向物理清理
 - 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker、长讨论历史轮询成本或弃局释放。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
+- 旧冻结包继续按宽容规则读取；若它曾在非终局阶段使用 `outcome:*` 公共材料，V2 已推进房间无法恢复该历史结果材料。新导入包已禁止产生这种歧义。
 - 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
 
 ---

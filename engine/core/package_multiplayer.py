@@ -62,6 +62,8 @@ def split_stage_mapping(
 def _validate_multiplayer_content(
     package: ScriptPackageImport,
     manifest: PackageManifest,
+    *,
+    allow_legacy_material_contract: bool,
 ) -> None:
     """校验多人策略、角色章节、公共材料与阶段局部结果引用。"""
 
@@ -87,6 +89,7 @@ def _validate_multiplayer_content(
         )
 
     material_ids = _disjoint_material_ids(package)
+    material_stage_owners: dict[str, str] = {}
     chapters_by_id = {chapter.id: chapter for chapter in package.chapters}
     for stage_record in package.stages:
         stage = _multiplayer_stage(stage_record.definition)
@@ -112,6 +115,14 @@ def _validate_multiplayer_content(
                     f"stage {stage.id} 的章节 {chapter_id} 不属于角色 {character_id}",
                 )
         for material in stage.public_materials:
+            previous_stage_id = material_stage_owners.get(material.id)
+            if previous_stage_id is not None and not allow_legacy_material_contract:
+                raise PackageArchiveError(
+                    "PACKAGE_MULTIPLAYER_MATERIAL_ID_REUSED",
+                    "公共材料 id 不能跨多人阶段复用: "
+                    f"{material.id} ({previous_stage_id}/{stage.id})",
+                )
+            material_stage_owners[material.id] = stage.id
             ensure_reference(
                 f"stage {stage.id} 的公共材料引用",
                 material.id,
@@ -225,6 +236,8 @@ class MultiplayerPackagePlayability:
 
 def multiplayer_package_playability(
     package: ScriptPackageImport,
+    *,
+    allow_legacy_material_contract: bool = False,
 ) -> MultiplayerPackagePlayability:
     """Return the deterministic Multiplayer v1 playability decision for one package."""
 
@@ -253,7 +266,11 @@ def multiplayer_package_playability(
         manifest = PackageManifest.model_validate_json(
             json.dumps(manifest_config, ensure_ascii=False)
         )
-        _validate_multiplayer_content(package, manifest)
+        _validate_multiplayer_content(
+            package,
+            manifest,
+            allow_legacy_material_contract=allow_legacy_material_contract,
+        )
         guide = DmGuideFiles.model_validate(package.dm_guide)
         stage_index = stage_index_from_mapping(package.stage_index)
         ordered_stages = multiplayer_stages_from_package(package)
@@ -428,6 +445,26 @@ def multiplayer_package_playability(
             stages=stage_contracts,
         )
     )
+
+    if not allow_legacy_material_contract:
+        for stage in stage_contracts[:-1]:
+            for material in stage.public_materials:
+                if not material.reveal_at.startswith("outcome:"):
+                    continue
+                diagnostics.append(
+                    MultiplayerPlayabilityDiagnostic(
+                        code=(
+                            "PACKAGE_MULTIPLAYER_NONTERMINAL_OUTCOME_"
+                            "MATERIAL_UNSUPPORTED"
+                        ),
+                        message=(
+                            "非终局阶段不支持 outcome 公共材料: "
+                            f"{stage.id}/{material.id}"
+                        ),
+                        field=f"stages.{stage.id}.public_materials.{material.id}",
+                        stage_id=stage.id,
+                    )
+                )
 
     for stage in stage_contracts[:-1]:
         if stage.settlement.default_effect is SettlementEffect.RECORD_AND_CONTINUE:

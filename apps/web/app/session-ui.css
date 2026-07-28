@@ -55,6 +55,7 @@
 .multiplayer-scene-presence button svg { width: 12px; height: 12px; flex: none; }
 .multiplayer-scene-error {
   position: absolute;
+  z-index: 60;
   left: 50%;
   top: 18px;
   display: flex;

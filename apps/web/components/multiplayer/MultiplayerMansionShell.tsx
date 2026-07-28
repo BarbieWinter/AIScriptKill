@@ -172,11 +172,13 @@ function MaterialCard({ material }: { material: GameplayMaterial }) {
 function HintPanel({
   snapshot,
   pending,
+  canMutate,
   onRequest,
   onConfirm,
 }: {
   snapshot: GameplaySnapshotV1;
   pending: boolean;
+  canMutate: boolean;
   onRequest: (hint: GameplayHint, level: number) => void;
   onConfirm: (hint: GameplayHint, level: number) => void;
 }) {
@@ -204,7 +206,7 @@ function HintPanel({
                 ))}
               </ol>
             )}
-            {hint.pending_level !== null ? (
+            {canMutate && hint.pending_level !== null ? (
               <div>
                 <button
                   type="button"
@@ -219,7 +221,7 @@ function HintPanel({
                   {hint.confirming_member_ids.length}/{snapshot.players.length} 位玩家已确认
                 </p>
               </div>
-            ) : nextLevel <= HINT_LEVEL_COUNT ? (
+            ) : canMutate && nextLevel <= HINT_LEVEL_COUNT ? (
               <button
                 type="button"
                 disabled={pending}
@@ -228,9 +230,9 @@ function HintPanel({
               >
                 <Lightbulb className="h-4 w-4" />请求第 {nextLevel} 级提示
               </button>
-            ) : (
+            ) : canMutate ? (
               <p className="text-center text-xs text-[#777b75]">全部三级提示已公开</p>
-            )}
+            ) : null}
           </section>
         );
       })}
@@ -400,8 +402,31 @@ export function MultiplayerMansionShell({
 }) {
   const queryClient = useQueryClient();
   const [panel, setPanel] = useState<ScenePanel>(null);
+  const hintMutationAvailable = snapshot.status === "active"
+    && snapshot.phase === "discuss"
+    && snapshot.hints.length > 0;
+  const hintPanelAvailable = hintMutationAvailable
+    || snapshot.hints.some((hint) => hint.revealed_levels.length > 0);
+  const effectivePanel = panel === "materials" && snapshot.public_materials.length === 0
+    ? null
+    : panel === "hints" && !hintPanelAvailable
+      ? null
+      : panel === "discussion" && (snapshot.status !== "active" || snapshot.phase !== "discuss")
+        ? null
+        : panel === "settlement" && (
+          snapshot.status !== "active"
+          || (snapshot.phase !== "settle" && snapshot.phase !== "reveal")
+          || snapshot.settlement === null
+        )
+          ? null
+          : panel === "review" && snapshot.status !== "completed"
+            ? null
+            : panel;
   const refreshSnapshot = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: roomSnapshotKey(snapshot.session_id) }),
+    (throwOnError = false) => queryClient.invalidateQueries(
+      { queryKey: roomSnapshotKey(snapshot.session_id) },
+      { throwOnError },
+    ),
     [queryClient, snapshot.session_id],
   );
   const command = useMutation({
@@ -416,7 +441,7 @@ export function MultiplayerMansionShell({
   const review = useQuery({
     queryKey: multiplayerReviewKey(snapshot.session_id),
     queryFn: ({ signal }) => client.getReview(snapshot.session_id, signal),
-    enabled: snapshot.status === "completed" && panel === "review",
+    enabled: effectivePanel === "review",
     retry: shouldRetryMultiplayer,
   });
 
@@ -510,10 +535,6 @@ export function MultiplayerMansionShell({
   const hotspots = useMemo(() => sceneHotspots(snapshot), [snapshot]);
   const selfRead = snapshot.read_member_ids.includes(snapshot.self_member_id);
   const selfClosed = snapshot.discussion_close_member_ids.includes(snapshot.self_member_id);
-  const hintPanelAvailable = snapshot.status === "active"
-    && snapshot.phase === "discuss"
-    && snapshot.hints.length > 0;
-
   const presenceIdentityRef = useRef("");
   useEffect(() => {
     if (!hasSelfPlayer || snapshot.status !== "active") return;
@@ -550,11 +571,8 @@ export function MultiplayerMansionShell({
   }, []);
 
   useEffect(() => {
-    if (panel === "materials" && snapshot.public_materials.length === 0) setPanel(null);
-    if (panel === "hints" && !hintPanelAvailable) setPanel(null);
-    if (panel === "discussion" && snapshot.phase !== "discuss") setPanel(null);
-    if (panel === "settlement" && snapshot.phase !== "settle" && snapshot.phase !== "reveal") setPanel(null);
-  }, [hintPanelAvailable, panel, snapshot.phase, snapshot.public_materials.length]);
+    if (panel !== effectivePanel) setPanel(null);
+  }, [effectivePanel, panel]);
 
   const sendCommand = (input: RoomCommandInput, onSuccess?: () => void) => {
     command.reset();
@@ -564,6 +582,19 @@ export function MultiplayerMansionShell({
         onSuccess?.();
       },
     });
+  };
+  const recoverCommandError = () => {
+    const focusTarget = document.querySelector<HTMLElement>('[role="dialog"]')
+      ?? document.querySelector<HTMLElement>("[data-sheet-focus-fallback]");
+    void refreshSnapshot(true).then(() => {
+      command.reset();
+      window.requestAnimationFrame(() => {
+        const target = focusTarget?.isConnected
+          ? focusTarget
+          : document.querySelector<HTMLElement>("[data-sheet-focus-fallback]");
+        target?.focus();
+      });
+    }).catch(() => undefined);
   };
   const interact = (_sceneId: string, hotspotId: string) => {
     const nextPanel: Record<string, ScenePanel> = {
@@ -586,7 +617,7 @@ export function MultiplayerMansionShell({
     payload: { stage_id: snapshot.stage_id },
   });
   const requestHint = (hint: GameplayHint, level: number) => {
-    if (!hintPanelAvailable) return;
+    if (!hintMutationAvailable) return;
     sendCommand({
       expected_revision: snapshot.revision,
       type: "hint.request",
@@ -594,7 +625,7 @@ export function MultiplayerMansionShell({
     });
   };
   const confirmHint = (hint: GameplayHint, level: number) => {
-    if (!hintPanelAvailable) return;
+    if (!hintMutationAvailable) return;
     sendCommand({
       expected_revision: snapshot.revision,
       type: "hint.confirm",
@@ -628,7 +659,7 @@ export function MultiplayerMansionShell({
     <MansionDemo
       initialPlayerPosition={initialPlayerPosition}
       sessionHotspots={hotspots}
-      interactionBlocked={panel !== null}
+      interactionBlocked={effectivePanel !== null}
       interactionPending={command.isPending}
       onInvestigate={interact}
       onPlayerPose={reportPlayerPose}
@@ -643,55 +674,55 @@ export function MultiplayerMansionShell({
       onOpenJournal={() => setPanel("chapters")}
       overlay={
         <GameplayPanelHost>
-          <aside className="multiplayer-scene-presence" aria-label="双人进度">
+          <aside
+            className="multiplayer-scene-presence"
+            aria-label="双人进度"
+            tabIndex={-1}
+            data-sheet-focus-fallback
+          >
             <span>{selfPlayer?.character_name ?? "你"} · 你</span>
             <span>{otherPlayers[0]?.character_name ?? "同伴"} · {otherPlayers[0]?.scene_online ? "同场" : "连接中"}</span>
             {snapshot.status !== "completed" && (
               <b>{snapshot.phase === "read" ? `${snapshot.read_member_ids.length}/2 已读` : snapshot.phase === "discuss" ? `${snapshot.discussion_close_member_ids.length}/2 确认` : `${snapshot.settlement?.submitted_member_ids.length ?? 0}/2 提交`}</b>
             )}
             {snapshot.public_materials.length > 0 && (
-              <button type="button" onClick={() => setPanel("materials")}>
+              <button type="button" data-sheet-trigger="materials" onClick={() => setPanel("materials")}>
                 <Archive />
                 {snapshot.status === "completed" ? "打开终局档案" : "打开公开档案"}
               </button>
             )}
             {hintPanelAvailable && (
-              <button type="button" onClick={() => setPanel("hints")}><Lightbulb />打开协作提示</button>
+              <button type="button" data-sheet-trigger="hints" onClick={() => setPanel("hints")}><Lightbulb />打开协作提示</button>
             )}
             {snapshot.status === "completed" ? (
-              <button type="button" onClick={() => setPanel("review")}><Eye />打开复盘</button>
+              <button type="button" data-sheet-trigger="review" onClick={() => setPanel("review")}><Eye />打开复盘</button>
             ) : snapshot.phase === "discuss" ? (
-              <button type="button" onClick={() => setPanel("discussion")}><MessageCircle />打开讨论</button>
+              <button type="button" data-sheet-trigger="discussion" onClick={() => setPanel("discussion")}><MessageCircle />打开讨论</button>
             ) : snapshot.phase === "settle" || snapshot.phase === "reveal" ? (
-              <button type="button" onClick={() => setPanel("settlement")}>
+              <button type="button" data-sheet-trigger="settlement" onClick={() => setPanel("settlement")}>
                 <ShieldCheck />
                 {snapshot.phase === "settle" ? "打开判断" : "打开结论"}
               </button>
             ) : null}
           </aside>
-          {command.error && (
-            <div role="alert" className="multiplayer-scene-error">
-              <CircleAlert /><span>{multiplayerErrorMessage(command.error)}</span>
-              <button type="button" onClick={() => void refreshSnapshot()}><RotateCcw />同步</button>
-            </div>
-          )}
-          <Sheet open={panel === "chapters"} onClose={() => setPanel(null)} title={`${selfPlayer?.character_name ?? "当前角色"}的角色手记`} className="md:w-[min(680px,72vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "chapters"} onClose={() => setPanel(null)} title={`${selfPlayer?.character_name ?? "当前角色"}的角色手记`} className="md:w-[min(680px,72vw)]">
             <ChapterPanel snapshot={snapshot} pending={command.isPending} onConfirmRead={confirmRead} />
           </Sheet>
-          <Sheet open={panel === "materials"} onClose={() => setPanel(null)} title={snapshot.status === "completed" ? "终局档案" : "公开档案"} className="md:w-[min(680px,72vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "materials"} onClose={() => setPanel(null)} title={snapshot.status === "completed" ? "终局档案" : "公开档案"} className="md:w-[min(680px,72vw)]">
             <div className="grid gap-3 p-5 md:grid-cols-2">
               {snapshot.public_materials.map((material) => <MaterialCard key={material.id} material={material} />)}
             </div>
           </Sheet>
-          <Sheet open={panel === "hints" && hintPanelAvailable} onClose={() => setPanel(null)} title="协作提示" className="md:w-[min(620px,72vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "hints" && hintPanelAvailable} onClose={() => setPanel(null)} title="协作提示" className="md:w-[min(620px,72vw)]">
             <HintPanel
               snapshot={snapshot}
               pending={command.isPending}
+              canMutate={hintMutationAvailable}
               onRequest={requestHint}
               onConfirm={confirmHint}
             />
           </Sheet>
-          <Sheet open={panel === "discussion"} onClose={() => setPanel(null)} title="双人公开讨论" className="md:w-[min(620px,72vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "discussion"} onClose={() => setPanel(null)} title="双人公开讨论" className="md:w-[min(620px,72vw)]">
             <DiscussionPanel
               snapshot={snapshot}
               pending={command.isPending}
@@ -703,7 +734,7 @@ export function MultiplayerMansionShell({
               onToggleClose={toggleDiscussionClose}
             />
           </Sheet>
-          <Sheet open={panel === "settlement"} onClose={() => setPanel(null)} title={snapshot.phase === "settle" ? "圆桌判断" : "阶段结论"} className="md:w-[min(680px,72vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "settlement"} onClose={() => setPanel(null)} title={snapshot.phase === "settle" ? "圆桌判断" : "阶段结论"} className="md:w-[min(680px,72vw)]">
             {snapshot.settlement && (
               <SettlementPanel
                 snapshot={snapshot}
@@ -714,7 +745,7 @@ export function MultiplayerMansionShell({
               />
             )}
           </Sheet>
-          <Sheet open={panel === "review"} onClose={() => setPanel(null)} title="案件复盘" className="md:w-[min(760px,78vw)]">
+          <Sheet modal={!command.error} open={effectivePanel === "review"} onClose={() => setPanel(null)} title="案件复盘" className="md:w-[min(760px,78vw)]">
             <div className="space-y-6 p-5 md:p-8">
               {review.isPending && <p className="py-12 text-center text-sm text-[#969a94]"><LoaderCircle className="mx-auto mb-3 h-6 w-6 animate-spin" />正在打开复盘…</p>}
               {review.isError && (
@@ -753,6 +784,12 @@ export function MultiplayerMansionShell({
               )}
             </div>
           </Sheet>
+          {command.error && (
+            <div role="alert" className="multiplayer-scene-error" data-sheet-focus-portal>
+              <CircleAlert /><span>{multiplayerErrorMessage(command.error)}</span>
+              <button type="button" onClick={recoverCommandError}><RotateCcw />同步</button>
+            </div>
+          )}
         </GameplayPanelHost>
       }
     />

@@ -125,6 +125,7 @@ def apply_gameplay_command(
     member_id = str(member.id)
     try:
         definition = multiplayer_stage_contract(package, state.stage.stage_id)
+        _validate_stage_material_ids(definition, state.stage.revealed_material_ids)
         if isinstance(command, SendDiscussionMessageCommand):
             _validate_discussion_message(state, member_id, command)
             player = state.players[member_id]
@@ -143,6 +144,15 @@ def apply_gameplay_command(
                     "text": command.payload.text,
                 },
             )
+        if isinstance(command, RoomResyncCommand):
+            return GameplayMutation(
+                state=state,
+                state_changed=False,
+                event_required=False,
+                event_type="gameplay.resynced",
+                event_payload={},
+            )
+
         if isinstance(command, AdvanceStageCommand):
             if command.payload.stage_id != state.stage.stage_id:
                 raise InvalidStageTransitionError(
@@ -169,14 +179,6 @@ def apply_gameplay_command(
                     next_state,
                     definition=definition,
                 )
-        elif isinstance(command, RoomResyncCommand):
-            return GameplayMutation(
-                state=state,
-                state_changed=False,
-                event_required=False,
-                event_type="gameplay.resynced",
-                event_payload={},
-            )
         else:
             raise unprocessable_entity(
                 "COMMAND_NOT_AVAILABLE",
@@ -241,6 +243,13 @@ def project_gameplay_snapshot(
     )
     if current_index < 0:
         raise conflict("ROOM_PACKAGE_INVALID", "固定剧本包缺少当前多人阶段")
+    try:
+        reached_definitions = tuple(
+            multiplayer_stage_contract(package, stage.id)
+            for stage in ordered_stages[: current_index + 1]
+        )
+    except PackageMultiplayerError as exc:
+        raise conflict("ROOM_PACKAGE_INVALID", "固定剧本包的已到达阶段定义无效") from exc
 
     chapters_by_id = {chapter.id: chapter for chapter in package.chapters}
     character_id = participant.private_state.character_id
@@ -335,8 +344,11 @@ def project_gameplay_snapshot(
         chapters=tuple(chapters),
         public_materials=_project_materials(
             package,
-            definition,
-            participant.stage.revealed_material_ids,
+            reached_definitions,
+            _restore_deterministic_material_ids(
+                reached_definitions,
+                participant.stage.revealed_material_ids,
+            ),
         ),
         discussion_messages=_discussion_messages(event_rows, state),
         settlement=settlement,
@@ -473,17 +485,61 @@ def _project_settlement(
     )
 
 
-def _project_materials(
-    package: ScriptPackageImport,
+def _validate_stage_material_ids(
     definition: MultiplayerStageDefinition,
     revealed_ids: tuple[str, ...],
-) -> tuple[GameplayMaterial, ...]:
+) -> None:
     authored_ids = tuple(material.id for material in definition.public_materials)
     if any(material_id not in authored_ids for material_id in revealed_ids):
-        raise conflict("ROOM_STATE_INVALID", "当前阶段包含未声明的已揭晓公共素材")
+        raise conflict("ROOM_STATE_INVALID", "房间包含未声明的已揭晓公共素材")
     expected_ids = tuple(material_id for material_id in authored_ids if material_id in revealed_ids)
     if revealed_ids != expected_ids:
-        raise conflict("ROOM_STATE_INVALID", "当前阶段公共素材顺序无效")
+        raise conflict("ROOM_STATE_INVALID", "房间公共素材顺序无效")
+
+
+def _restore_deterministic_material_ids(
+    reached_definitions: tuple[MultiplayerStageDefinition, ...],
+    revealed_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    current_definition = reached_definitions[-1]
+    _validate_stage_material_ids(current_definition, revealed_ids)
+    authored_ids = tuple(
+        dict.fromkeys(
+            material.id
+            for definition in reached_definitions
+            for material in definition.public_materials
+        )
+    )
+
+    # Reaching a later stage proves deterministic triggers completed.
+    # V2 cannot recover prior outcomes, so current authoring forbids that ambiguity.
+    deterministic_prior_ids = {
+        material.id
+        for definition in reached_definitions[:-1]
+        for material in definition.public_materials
+        if material.reveal_at in {"stage_enter", "all_players_read", "settlement_done"}
+    }
+    restored_ids = deterministic_prior_ids.union(revealed_ids)
+    return tuple(material_id for material_id in authored_ids if material_id in restored_ids)
+
+
+def _project_materials(
+    package: ScriptPackageImport,
+    reached_definitions: tuple[MultiplayerStageDefinition, ...],
+    revealed_ids: tuple[str, ...],
+) -> tuple[GameplayMaterial, ...]:
+    authored_ids = tuple(
+        dict.fromkeys(
+            material.id
+            for definition in reached_definitions
+            for material in definition.public_materials
+        )
+    )
+    if any(material_id not in authored_ids for material_id in revealed_ids):
+        raise conflict("ROOM_STATE_INVALID", "房间包含未声明的已揭晓公共素材")
+    expected_ids = tuple(material_id for material_id in authored_ids if material_id in revealed_ids)
+    if revealed_ids != expected_ids:
+        raise conflict("ROOM_STATE_INVALID", "房间公共素材顺序无效")
     clues = {clue.id: clue for clue in package.clues}
     evidences = {evidence.id: evidence for evidence in package.evidences}
     media = {asset.id: asset for asset in package.media_assets}
