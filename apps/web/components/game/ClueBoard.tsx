@@ -7,8 +7,8 @@
 
 "use client";
 
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { Sheet } from "@/components/ui/Sheet";
 import { useActiveGameStore } from "@/components/game/GameSessionBoundary";
 import {
@@ -44,6 +44,17 @@ export function ClueBoard({
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClue, setSelectedClue] = useState<Clue | null>(null);
+  const clueTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const closeClueDetail = () => {
+    const trigger = clueTriggerRef.current;
+    setSelectedClue(null);
+    window.requestAnimationFrame(() => {
+      const focusTarget = trigger?.isConnected ? trigger : searchInputRef.current;
+      focusTarget?.focus();
+    });
+  };
 
   // 过滤线索
   const filteredClues = clues.filter((clue) => {
@@ -56,12 +67,73 @@ export function ClueBoard({
 
   return (
     <>
-      <Sheet open={open} onClose={onClose} title="线索板">
+      <Sheet
+        open={open}
+        onClose={onClose}
+        title="线索板"
+        overlay={selectedClue ? (
+          <motion.div
+            data-sheet-focus-scope="active"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`线索详情：${selectedClue.name}`}
+            tabIndex={-1}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+            onClick={closeClueDetail}
+          >
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", damping: 20 }}
+              onClick={(event) => event.stopPropagation()}
+              className={cn(
+                "relative max-w-md w-full rounded-2xl border p-6",
+                selectedClue.is_key
+                  ? "border-[var(--warning)]/30 bg-gradient-to-b from-[var(--warning)]/5 to-[var(--background)]"
+                  : "border-[var(--border)] bg-[var(--panel-bg)]"
+              )}
+            >
+              <div
+                className={cn(
+                  "mb-4 aspect-[16/9] rounded-xl bg-gradient-to-br",
+                  selectedClue.is_key
+                    ? "from-[var(--warning)]/30 to-[var(--warning)]/10"
+                    : "from-[var(--theme-primary)]/20 to-transparent"
+                )}
+              />
+              <div className="flex items-center gap-2 mb-3">
+                <h3 className="text-lg font-bold">{selectedClue.name}</h3>
+                {selectedClue.is_key && (
+                  <span className="rounded-full bg-[var(--warning)]/20 px-2 py-0.5 text-[10px] text-[var(--warning)]">
+                    关键线索
+                  </span>
+                )}
+              </div>
+              <p className="text-sm leading-relaxed text-[var(--muted-foreground)]">
+                {selectedClue.description || "这条线索暂时没有补充说明。"}
+              </p>
+              <button
+                autoFocus
+                data-sheet-dismiss
+                type="button"
+                onClick={closeClueDetail}
+                className="mt-6 w-full rounded-lg bg-[var(--accent)] py-2 text-sm transition-colors hover:bg-[var(--muted)]"
+              >
+                关闭
+              </button>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      >
         {/* 搜索栏 */}
         <div className="px-4 pt-3 pb-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="搜索线索…"
               value={searchQuery}
@@ -144,7 +216,10 @@ export function ClueBoard({
                     hidden: { opacity: 0, y: 15 },
                     show: { opacity: 1, y: 0 },
                   }}
-                  onClick={() => setSelectedClue(clue)}
+                  onClick={(event) => {
+                    clueTriggerRef.current = event.currentTarget;
+                    setSelectedClue(clue);
+                  }}
                   className={cn(
                     "group rounded-xl border p-3 text-left transition-all",
                     clue.is_key
@@ -174,64 +249,6 @@ export function ClueBoard({
           )}
         </div>
       </Sheet>
-
-      {/* 线索详情 Dialog */}
-      <AnimatePresence>
-        {selectedClue && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
-            onClick={() => setSelectedClue(null)}
-          >
-            {/* 遮罩 */}
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-
-            {/* 卡片 */}
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              transition={{ type: "spring", damping: 20 }}
-              onClick={(e) => e.stopPropagation()}
-              className={cn(
-                "relative max-w-md w-full rounded-2xl border p-6",
-                selectedClue.is_key
-                  ? "border-[var(--warning)]/30 bg-gradient-to-b from-[var(--warning)]/5 to-[var(--background)]"
-                  : "border-[var(--border)] bg-[var(--panel-bg)]"
-              )}
-            >
-              {/* 线索大图 */}
-              <div
-                className={cn(
-                  "mb-4 aspect-[16/9] rounded-xl bg-gradient-to-br",
-                  selectedClue.is_key
-                    ? "from-[var(--warning)]/30 to-[var(--warning)]/10"
-                    : "from-[var(--theme-primary)]/20 to-transparent"
-                )}
-              />
-              <div className="flex items-center gap-2 mb-3">
-                <h3 className="text-lg font-bold">{selectedClue.name}</h3>
-                {selectedClue.is_key && (
-                  <span className="rounded-full bg-[var(--warning)]/20 px-2 py-0.5 text-[10px] text-[var(--warning)]">
-                    关键线索
-                  </span>
-                )}
-              </div>
-              <p className="text-sm leading-relaxed text-[var(--muted-foreground)]">
-                {selectedClue.description || "这条线索暂时没有补充说明。"}
-              </p>
-              <button
-                onClick={() => setSelectedClue(null)}
-                className="mt-6 w-full rounded-lg bg-[var(--accent)] py-2 text-sm transition-colors hover:bg-[var(--muted)]"
-              >
-                关闭
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </>
   );
 }

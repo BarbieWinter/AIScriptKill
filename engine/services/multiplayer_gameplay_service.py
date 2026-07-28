@@ -101,6 +101,8 @@ def decode_room_game_state(room: StoredMultiplayerRoom) -> GameStateV2:
         )
     except (ValidationError, TypeError, ValueError) as exc:
         raise conflict("ROOM_STATE_INVALID", "多人房间规范状态校验失败") from exc
+    if "prior_revealed_material_ids" not in state.model_fields_set:
+        state = state.model_copy(update={"prior_revealed_material_ids": ()})
     if (
         state.session_id != room.id
         or state.room_revision != room.revision
@@ -241,6 +243,21 @@ def project_gameplay_snapshot(
     )
     if current_index < 0:
         raise conflict("ROOM_PACKAGE_INVALID", "固定剧本包缺少当前多人阶段")
+    try:
+        material_definitions = tuple(
+            multiplayer_stage_contract(package, stage.id)
+            for stage in ordered_stages[: current_index + 1]
+        )
+    except PackageMultiplayerError as exc:
+        raise conflict("ROOM_PACKAGE_INVALID", "房间固定剧本包的阶段定义无效") from exc
+    materials = _project_materials(
+        package,
+        material_definitions,
+        (
+            *state.prior_revealed_material_ids,
+            *participant.stage.revealed_material_ids,
+        ),
+    )
 
     chapters_by_id = {chapter.id: chapter for chapter in package.chapters}
     character_id = participant.private_state.character_id
@@ -333,11 +350,7 @@ def project_gameplay_snapshot(
         read_member_ids=participant.stage.read_member_ids,
         discussion_close_member_ids=participant.stage.discussion_close_member_ids,
         chapters=tuple(chapters),
-        public_materials=_project_materials(
-            package,
-            definition,
-            participant.stage.revealed_material_ids,
-        ),
+        public_materials=materials,
         discussion_messages=_discussion_messages(event_rows, state),
         settlement=settlement,
         hints=hints,
@@ -475,15 +488,17 @@ def _project_settlement(
 
 def _project_materials(
     package: ScriptPackageImport,
-    definition: MultiplayerStageDefinition,
+    definitions: Sequence[MultiplayerStageDefinition],
     revealed_ids: tuple[str, ...],
 ) -> tuple[GameplayMaterial, ...]:
-    authored_ids = tuple(material.id for material in definition.public_materials)
+    authored_ids = tuple(
+        material.id for definition in definitions for material in definition.public_materials
+    )
     if any(material_id not in authored_ids for material_id in revealed_ids):
-        raise conflict("ROOM_STATE_INVALID", "当前阶段包含未声明的已揭晓公共素材")
+        raise conflict("ROOM_STATE_INVALID", "房间包含未声明的已揭晓公共素材")
     expected_ids = tuple(material_id for material_id in authored_ids if material_id in revealed_ids)
     if revealed_ids != expected_ids:
-        raise conflict("ROOM_STATE_INVALID", "当前阶段公共素材顺序无效")
+        raise conflict("ROOM_STATE_INVALID", "房间公共素材顺序无效")
     clues = {clue.id: clue for clue in package.clues}
     evidences = {evidence.id: evidence for evidence in package.evidences}
     media = {asset.id: asset for asset in package.media_assets}

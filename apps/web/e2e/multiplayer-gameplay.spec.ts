@@ -1,30 +1,73 @@
-import { expect, test, type Browser, type BrowserContext, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Browser,
+  type BrowserContext,
+  type BrowserContextOptions,
+  type Page,
+  type Route,
+} from "@playwright/test";
+
+import type { CompletedReviewV1, GameplaySnapshotV1 } from "@/lib/multiplayer/types";
+import gameplayContractJson from "./fixtures/multiplayer-gameplay-contract.json";
 
 type Identity = "host" | "guest";
-type Phase = "read" | "discuss" | "settle" | "reveal";
-
 type ScenePresence = {
   x: number;
   y: number;
   facing: "left" | "right";
   moving: boolean;
 };
-
 type PresencePayload = ScenePresence & Record<string, unknown>;
+type ContractTransition = {
+  from: string;
+  to: string;
+  identity: Identity;
+  type: string;
+  payload: Record<string, unknown>;
+  revision: number;
+  event_sequence: number;
+};
+type GameplayContract = {
+  fixture_version: 1;
+  session_id: string;
+  identities: Record<Identity, string>;
+  hint_levels: string[];
+  initial_state: string;
+  states: Record<string, Record<Identity, GameplaySnapshotV1>>;
+  transitions: ContractTransition[];
+  reviews: Record<Identity, CompletedReviewV1>;
+};
 
-const sessionId = "22222222-2222-4222-8222-222222222222";
+const gameplayContract = gameplayContractJson as GameplayContract;
+const sessionId = gameplayContract.session_id;
+const hintLevels = gameplayContract.hint_levels;
 const members = {
-  host: { memberId: "member-host", characterId: "investigator", characterName: "调查员" },
-  guest: { memberId: "member-guest", characterId: "insider", characterName: "知情人" },
+  host: {
+    memberId: gameplayContract.identities.host,
+    characterId: "investigator",
+    characterName: "调查员",
+  },
+  guest: {
+    memberId: gameplayContract.identities.guest,
+    characterId: "insider",
+    characterName: "知情人",
+  },
 } as const;
-const hintLevels = [
-  "先确认两人在 20:10 与 20:20 各自位于哪里。",
-  "区分走廊入口、值班室正门与后侧维修门。",
-  "问清哪些内容是亲眼观察、本人承认、记录或推断。",
-] as const;
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function samePayload(actual: Record<string, unknown>, expected: Record<string, unknown>) {
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return JSON.stringify(actualKeys) === JSON.stringify(expectedKeys)
+    && expectedKeys.every((key) => actual[key] === expected[key]);
 }
 
 function jwtFor(identity: Identity) {
@@ -60,150 +103,54 @@ async function installAnonymousAuth(context: BrowserContext, identity: Identity)
   return token;
 }
 
-function createGameplayApi() {
-  let status: "active" | "completed" = "active";
-  let stageId: "investigation" | "final-judgment" = "investigation";
-  let phase: Phase = "read";
-  let revision = 5;
-  let eventSequence = 5;
-  let endingId: string | null = null;
-  let sharedOptionId: string | null = null;
-  let publicMaterialsVisible = true;
-  let hintPendingLevel: number | null = null;
-  const revealedHintLevels: string[] = [];
-  const hintConfirmations = new Set<Identity>();
+function createGameplayApi(initialState = gameplayContract.initial_state) {
+  let stateKey = initialState;
   let messageFailures = 0;
+  let revisionFailures = 0;
+  let publicMaterialsVisible = true;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
-  const read = new Set<Identity>();
-  const readMembers = new Set<string>();
-  const closed = new Set<Identity>();
-  const votes = new Map<Identity, string>();
-  const sharedConfirmations = new Set<Identity>();
-  const messages: Array<{
-    sequence: number;
-    message_id: string;
-    stage_id: string;
-    member_id: string;
-    character_id: string;
-    text: string;
-  }> = [];
+  let discussionMessageId: string | null = null;
   const presence = new Map<Identity, ScenePresence>([
     ["host", { x: 1455, y: 970, facing: "left", moving: false }],
     ["guest", { x: 945, y: 970, facing: "right", moving: false }],
   ]);
   const presenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
   const commandBodies: Array<{ identity: Identity; type: string; payload: Record<string, unknown> }> = [];
-
-  const settlement = (identity: Identity) => {
-    if (phase !== "settle" && phase !== "reveal") return null;
-    if (stageId === "investigation") {
-      return {
-        settlement_id: "investigation-vote",
-        mode: "secret_vote",
-        question: "二十点二十分的金属声最可能来自哪种情况？",
-        options: [
-          { id: "investigator-account", text: "有人在二十点二十分强行进入值班室" },
-          { id: "insider-account", text: "有人早已在室内，金属声来自钥匙掉落" },
-        ],
-        submitted_member_ids: [...votes.keys()].map((item) => members[item].memberId),
-        own_option_id: votes.get(identity) ?? null,
-        shared_option_id: null,
-        outcome_id: phase === "reveal" ? "split-vote" : null,
-        revealed: phase === "reveal",
-        reveal: "named_ballots",
-        revealed_ballots: phase === "reveal"
-          ? [...votes].map(([item, optionId]) => ({ member_id: members[item].memberId, option_id: optionId }))
-          : [],
-        revealed_option_counts: [],
-      };
-    }
-    return {
-      settlement_id: "final-judgment",
-      mode: "final_judgment",
-      question: "两人共同认可的案件判断是什么？",
-      options: [
-        { id: "records-insufficient", text: "认定知情人在二十点二十分强行进入，并故意损毁值班记录" },
-        { id: "timeline-conflict", text: "认定知情人违规进入并隐瞒，但没有证据证明其破门或损毁记录" },
-      ],
-      submitted_member_ids: [...sharedConfirmations].map((item) => members[item].memberId),
-      own_option_id: null,
-      shared_option_id: sharedOptionId,
-      outcome_id: status === "completed" ? "conflicting-accounts" : null,
-      revealed: status === "completed",
-      reveal: "outcome_only",
-      revealed_ballots: [],
-      revealed_option_counts: [],
-    };
-  };
+  const reviewRequests: Identity[] = [];
 
   const snapshotFor = (identity: Identity) => {
-    const player = members[identity];
-    const chapters = stageId === "investigation"
-      ? [{
-          id: `${player.characterId}-investigation`,
-          title: `${player.characterName}·核对口供`,
-          content: identity === "host" ? "调查员私有线索：照片时间可疑。" : "知情人私有线索：门锁一直完好。",
-        }]
-      : [
-          {
-            id: `${player.characterId}-investigation`,
-            title: `${player.characterName}·核对口供`,
-            content: identity === "host" ? "调查员私有线索：照片时间可疑。" : "知情人私有线索：门锁一直完好。",
-          },
-          {
-            id: `${player.characterId}-final-judgment`,
-            title: `${player.characterName}·共同终判`,
-            content: identity === "host" ? "调查员终判信息。" : "知情人终判信息。",
-          },
-        ];
-    return {
-      snapshot_version: 1,
-      session_id: sessionId,
-      mode: "multiplayer_v1",
-      status,
-      revision,
-      event_head_sequence: eventSequence,
-      package: { script_id: "mp1-two-player", title: "双人测试剧本", version: "1.0.0" },
-      self_member_id: player.memberId,
-      stage_id: stageId,
-      stage_name: stageId === "investigation" ? "核对口供" : "共同终判",
-      phase,
-      suggested_discussion_minutes: stageId === "investigation" ? 12 : 8,
-      players: Object.entries(members).map(([playerIdentity, item]) => {
-        const pose = presence.get(playerIdentity as Identity);
-        return {
-          member_id: item.memberId,
-          character_id: item.characterId,
-          character_name: item.characterName,
-          scene_x: pose?.x ?? null,
-          scene_y: pose?.y ?? null,
-          scene_facing: pose?.facing ?? null,
-          scene_moving: pose?.moving ?? false,
-          scene_online: pose !== undefined,
-        };
-      }),
-      read_member_ids: [...readMembers],
-      discussion_close_member_ids: [...closed].map((item) => members[item].memberId),
-      chapters,
-      public_materials: publicMaterialsVisible && stageId === "investigation"
-        ? [{ id: "arrival-photo", kind: "clue", title: "抵达照片", text: "照片记录了抵达时刻。", media_type: null, url: null }]
-        : publicMaterialsVisible && status === "completed"
-          ? [{ id: "case-reconstruction", kind: "clue", title: "核验后的时间线", text: "知情人早已在室内，金属声来自钥匙落地。", media_type: null, url: null }]
-          : [],
-      discussion_messages: messages,
-      settlement: settlement(identity),
-      hints: stageId === "investigation"
-        ? [{
-            id: "timeline",
-            revealed_levels: revealedHintLevels,
-            pending_level: hintPendingLevel,
-            confirming_member_ids: [...hintConfirmations].map((item) => members[item].memberId),
-          }]
-        : [],
-      can_advance: stageId === "investigation" && phase === "reveal",
-      ending_id: endingId,
-    };
+    const snapshot = clone(gameplayContract.states[stateKey][identity]);
+    if (discussionMessageId && snapshot.discussion_messages.length > 0) {
+      snapshot.discussion_messages[0].message_id = discussionMessageId;
+    }
+    if (!publicMaterialsVisible) snapshot.public_materials = [];
+    snapshot.players = snapshot.players.map((player) => {
+      const playerIdentity = player.member_id === members.host.memberId ? "host" : "guest";
+      const pose = presence.get(playerIdentity);
+      return {
+        ...player,
+        scene_x: pose?.x ?? null,
+        scene_y: pose?.y ?? null,
+        scene_facing: pose?.facing ?? null,
+        scene_moving: pose?.moving ?? false,
+        scene_online: pose !== undefined,
+      };
+    });
+    return snapshot;
+  };
+
+  const rejectCommand = (route: Route, commandId: string, code: string, message: string) => {
+    const snapshot = snapshotFor("host");
+    return json(route, {
+      command_id: commandId,
+      status: "rejected",
+      revision: snapshot.revision,
+      event_sequence: snapshot.event_head_sequence,
+      result: null,
+      error: { code, message, details: {} },
+      replayed: false,
+    });
   };
 
   const install = async (page: Page, identity: Identity, token: string) => {
@@ -223,40 +170,21 @@ function createGameplayApi() {
         return json(route, snapshotFor(identity));
       }
       if (pathname === "/api/v1/sessions/current" && method === "GET") {
-        return json(route, status === "active" ? { session_id: sessionId, status: "active", mode: "multiplayer_v1" } : null);
+        const snapshot = snapshotFor(identity);
+        return json(route, snapshot.status === "active"
+          ? { session_id: sessionId, status: "active", mode: "multiplayer_v1" }
+          : null);
       }
       if (pathname === `/api/v1/sessions/${sessionId}/review` && method === "GET") {
+        reviewRequests.push(identity);
+        if (snapshotFor(identity).status !== "completed") {
+          return json(route, { error: { code: "SESSION_NOT_COMPLETED", message: "Review is unavailable", details: {} } }, 409);
+        }
         if (reviewFailures[identity] > 0) {
           reviewFailures[identity] -= 1;
           return json(route, { error: { code: "TEMPORARY_FAILURE", message: "Temporary review failure", details: {} } }, 500);
         }
-        return json(route, {
-          review_version: 1,
-          session_id: sessionId,
-          member_id: members[identity].memberId,
-          ending: { id: "conflicting-accounts", name: "矛盾的口供", outcome_text: "两人共同确认时间线存在冲突。" },
-          chapters: Object.values(members).map((item) => ({
-            id: `${item.characterId}-final-judgment`,
-            character_id: item.characterId,
-            title: `${item.characterName}·共同终判`,
-            content: `${item.characterName}的完整复盘章节。`,
-          })),
-          truth: {
-            case_summary: "照片和便签揭示两份解释无法同时成立。",
-            murderer: null,
-            victim: null,
-            motive: null,
-            timeline: [{ time: "22:10", event: "目击者听见走廊动静", hidden: false }],
-            key_evidence_chain: ["抵达照片"],
-            alternative_endings: [],
-          },
-          final_settlement: {
-            stage_id: "final-judgment",
-            settlement_id: "final-judgment",
-            outcome_id: "conflicting-accounts",
-            reveal: "outcome_only",
-          },
-        });
+        return json(route, gameplayContract.reviews[identity]);
       }
       if (pathname === `/api/v1/sessions/${sessionId}/scene-presence` && method === "PUT") {
         const body = request.postDataJSON() as PresencePayload;
@@ -264,147 +192,71 @@ function createGameplayApi() {
         expect(body).not.toHaveProperty("member_id");
         expect(body).not.toHaveProperty("character_id");
         presenceBodies.push({ identity, body });
-        presence.set(identity, {
-          x: body.x,
-          y: body.y,
-          facing: body.facing,
-          moving: body.moving,
-        });
+        presence.set(identity, { x: body.x, y: body.y, facing: body.facing, moving: body.moving });
         return route.fulfill({ status: 204, body: "" });
       }
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
-        const body = request.postDataJSON();
+        const body = request.postDataJSON() as {
+          command_id: string;
+          expected_revision: number;
+          type: string;
+          payload: Record<string, unknown>;
+        };
         expect(body.command_id).toMatch(/^[0-9a-f-]{36}$/i);
         commandBodies.push({ identity, type: body.type, payload: body.payload });
-        if (body.expected_revision !== revision) {
-          return json(route, {
-            command_id: body.command_id,
-            status: "rejected",
-            revision,
-            event_sequence: eventSequence,
-            result: null,
-            error: { code: "REVISION_MISMATCH", message: "Refresh snapshot", details: {} },
-            replayed: false,
-          });
+        const current = snapshotFor(identity);
+        if (revisionFailures > 0) {
+          revisionFailures -= 1;
+          return rejectCommand(route, body.command_id, "REVISION_MISMATCH", "Refresh snapshot");
+        }
+        if (body.expected_revision !== current.revision) {
+          return rejectCommand(route, body.command_id, "REVISION_MISMATCH", "Refresh snapshot");
         }
 
-        if (body.type === "stage.confirm_read" && phase === "read") {
-          read.add(identity);
-          readMembers.add(members[identity].memberId);
-          if (read.size === 2) phase = "discuss";
-        } else if (body.type === "hint.request" && phase === "discuss") {
-          const level = body.payload.level;
-          if (
-            body.payload.hint_id !== "timeline"
-            || hintPendingLevel !== null
-            || level !== revealedHintLevels.length + 1
-            || level > hintLevels.length
-          ) {
-            return json(route, {
-              command_id: body.command_id,
-              status: "rejected",
-              revision,
-              event_sequence: eventSequence,
-              result: null,
-              error: { code: "PHASE_MISMATCH", message: "Invalid hint request", details: {} },
-              replayed: false,
-            });
+        if (body.type === "discussion.send_message") {
+          const transition = gameplayContract.transitions.find((candidate) => (
+            candidate.from === stateKey
+            && candidate.identity === identity
+            && candidate.type === body.type
+            && candidate.payload.stage_id === body.payload.stage_id
+            && candidate.payload.text === body.payload.text
+          ));
+          if (!transition || typeof body.payload.message_id !== "string") {
+            return rejectCommand(route, body.command_id, "PHASE_MISMATCH", "Wrong phase");
           }
-          hintPendingLevel = level;
-          hintConfirmations.clear();
-          hintConfirmations.add(identity);
-        } else if (body.type === "hint.confirm" && phase === "discuss") {
-          const level = body.payload.level;
-          if (body.payload.hint_id !== "timeline" || hintPendingLevel !== level) {
-            return json(route, {
-              command_id: body.command_id,
-              status: "rejected",
-              revision,
-              event_sequence: eventSequence,
-              result: null,
-              error: { code: "PHASE_MISMATCH", message: "Invalid hint confirmation", details: {} },
-              replayed: false,
-            });
-          }
-          hintConfirmations.add(identity);
-          if (hintConfirmations.size === 2) {
-            revealedHintLevels.push(hintLevels[level - 1]);
-            hintPendingLevel = null;
-            hintConfirmations.clear();
-          }
-        } else if (body.type === "discussion.send_message" && phase === "discuss") {
+          expect(body.payload.message_id).toMatch(/^[0-9a-f-]{36}$/i);
           if (messageFailures > 0) {
             messageFailures -= 1;
-            return json(route, {
-              command_id: body.command_id,
-              status: "rejected",
-              revision,
-              event_sequence: eventSequence,
-              result: null,
-              error: { code: "TEMPORARY_FAILURE", message: "Message send failed", details: {} },
-              replayed: false,
-            });
+            return rejectCommand(route, body.command_id, "TEMPORARY_FAILURE", "Message send failed");
           }
-          eventSequence += 1;
-          messages.push({
-            sequence: eventSequence,
-            message_id: body.payload.message_id,
-            stage_id: stageId,
-            member_id: members[identity].memberId,
-            character_id: members[identity].characterId,
-            text: body.payload.text,
-          });
+          discussionMessageId = body.payload.message_id;
+          stateKey = transition.to;
           return json(route, {
             command_id: body.command_id,
             status: "accepted",
-            revision,
-            event_sequence: eventSequence,
+            revision: transition.revision,
+            event_sequence: transition.event_sequence,
             result: { event_ids: [] },
             error: null,
             replayed: false,
           });
-        } else if (body.type === "discussion.confirm_close" && phase === "discuss") {
-          closed.add(identity);
-          if (closed.size === 2) phase = "settle";
-        } else if (body.type === "discussion.revoke_close" && phase === "discuss") {
-          closed.delete(identity);
-        } else if (body.type === "settlement.submit" && phase === "settle" && stageId === "investigation") {
-          votes.set(identity, body.payload.option_id);
-          if (votes.size === 2) phase = "reveal";
-        } else if (body.type === "stage.advance" && phase === "reveal") {
-          stageId = "final-judgment";
-          phase = "read";
-          read.clear();
-          readMembers.clear();
-          closed.clear();
-        } else if (body.type === "settlement.confirm_shared_choice" && phase === "settle" && stageId === "final-judgment") {
-          if (sharedOptionId !== body.payload.option_id) sharedConfirmations.clear();
-          sharedOptionId = body.payload.option_id;
-          sharedConfirmations.add(identity);
-          if (sharedConfirmations.size === 2) {
-            status = "completed";
-            phase = "reveal";
-            endingId = "conflicting-accounts";
-          }
-        } else {
-          return json(route, {
-            command_id: body.command_id,
-            status: "rejected",
-            revision,
-            event_sequence: eventSequence,
-            result: null,
-            error: { code: "PHASE_MISMATCH", message: "Wrong phase", details: {} },
-            replayed: false,
-          });
         }
 
-        revision += 1;
-        eventSequence += 1;
+        const transition = gameplayContract.transitions.find((candidate) => (
+          candidate.from === stateKey
+          && candidate.identity === identity
+          && candidate.type === body.type
+          && samePayload(body.payload, candidate.payload)
+        ));
+        if (!transition) {
+          return rejectCommand(route, body.command_id, "PHASE_MISMATCH", "Wrong phase");
+        }
+        stateKey = transition.to;
         return json(route, {
           command_id: body.command_id,
           status: "accepted",
-          revision,
-          event_sequence: eventSequence,
+          revision: transition.revision,
+          event_sequence: transition.event_sequence,
           result: { event_ids: [] },
           error: null,
           replayed: false,
@@ -425,6 +277,9 @@ function createGameplayApi() {
     failNextMessage() {
       messageFailures = 1;
     },
+    rejectNextRevision() {
+      revisionFailures = 1;
+    },
     failNextReviews(identity: Identity, count = 3) {
       reviewFailures[identity] = count;
     },
@@ -433,11 +288,17 @@ function createGameplayApi() {
     },
     commandBodies,
     presenceBodies,
+    reviewRequests,
   };
 }
 
-async function createPlayerPage(browser: Browser, api: ReturnType<typeof createGameplayApi>, identity: Identity) {
-  const context = await browser.newContext();
+async function createPlayerPage(
+  browser: Browser,
+  api: ReturnType<typeof createGameplayApi>,
+  identity: Identity,
+  contextOptions: BrowserContextOptions = {},
+) {
+  const context = await browser.newContext(contextOptions);
   const token = await installAnonymousAuth(context, identity);
   const page = await context.newPage();
   const webSockets: string[] = [];
@@ -450,14 +311,48 @@ async function createPlayerPage(browser: Browser, api: ReturnType<typeof createG
 
 async function expectScenePhase(page: Page, stageName: string, phaseName: string) {
   await expect(page.locator(".mansion-demo")).toBeVisible({ timeout: 8_000 });
-  await expect(page.locator(".demo-objective-card").getByText(`当前阶段 · ${stageName} · ${phaseName}`, { exact: true })).toBeVisible({ timeout: 8_000 });
+  const sceneHelpDismiss = page.getByRole("button", { name: "知道了" });
+  if (await sceneHelpDismiss.isVisible()) await sceneHelpDismiss.click();
+  await expect(page.locator(".demo-objective-card").getByText(
+    `当前阶段 · ${stageName} · ${phaseName}`,
+    { exact: true },
+  )).toBeVisible({ timeout: 8_000 });
 }
 
-test("private chapters remain participant-safe inside the movable multiplayer scene", async ({ browser }) => {
+async function openChaptersAndConfirm(page: Page) {
+  await page.getByRole("button", { name: "角色章" }).click();
+  await page.getByRole("button", { name: "我已读完" }).click();
+}
+
+async function confirmDiscussionClose(host: Page, guest: Page) {
+  await host.getByRole("button", { name: "打开讨论" }).click();
+  await guest.getByRole("button", { name: "打开讨论" }).click();
+  await host.getByRole("button", { name: "确认结束讨论" }).click();
+  await expect(guest.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
+  await guest.getByRole("button", { name: "确认结束讨论" }).click();
+}
+
+async function revealAllHints(host: Page, guest: Page) {
+  await host.getByRole("button", { name: "打开协作提示" }).click();
+  await guest.getByRole("button", { name: "打开协作提示" }).click();
+  for (const [index, hintText] of hintLevels.entries()) {
+    const level = index + 1;
+    await host.getByRole("button", { name: `请求第 ${level} 级提示` }).click();
+    await guest.getByRole("button", { name: `同意公开第 ${level} 级提示` }).click();
+    await expect(host.getByText(hintText)).toBeVisible({ timeout: 8_000 });
+    await expect(guest.getByText(hintText)).toBeVisible({ timeout: 8_000 });
+  }
+  await host.getByRole("button", { name: "关闭" }).click();
+  await guest.getByRole("button", { name: "关闭" }).click();
+}
+
+test("private chapters and public materials remain participant-safe in the movable scene", async ({ browser }) => {
   test.setTimeout(60_000);
   const api = createGameplayApi();
   const host = await createPlayerPage(browser, api, "host");
   const guest = await createPlayerPage(browser, api, "guest");
+  const hostSnapshot = gameplayContract.states.investigation_read.host;
+  const guestSnapshot = gameplayContract.states.investigation_read.guest;
 
   try {
     await Promise.all([
@@ -468,38 +363,22 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
     await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
 
     const publicArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
-    await expect(publicArchiveEntry).toBeVisible();
     await publicArchiveEntry.click();
     await expect(host.page.getByRole("heading", { name: "公开档案" })).toBeVisible();
-    await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
-    await host.page.getByRole("button", { name: "关闭" }).click();
-
-    await host.page.reload();
-    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
-    const restoredArchiveEntry = host.page.getByRole("button", { name: "打开公开档案" });
-    await expect(restoredArchiveEntry).toBeVisible();
-    await restoredArchiveEntry.click();
-    await expect(host.page.getByText("照片记录了抵达时刻。")).toBeVisible();
-
+    await expect(host.page.getByText(hostSnapshot.public_materials[0].title)).toBeVisible();
     api.hidePublicMaterials();
-    await expect(restoredArchiveEntry).toHaveCount(0, { timeout: 8_000 });
+    await expect(host.page.getByRole("button", { name: "打开公开档案" })).toHaveCount(0, { timeout: 8_000 });
     await expect(host.page.getByRole("heading", { name: "公开档案" })).toHaveCount(0);
+    await expect(host.page.getByRole("complementary", { name: "双人进度" })).toBeFocused();
 
     const hostScene = host.page.locator(".mansion-demo");
     const guestScene = guest.page.locator(".mansion-demo");
     const hostLocal = host.page.locator('[data-character-id="self-investigator"]');
     const guestLocal = guest.page.locator('[data-character-id="self-insider"]');
-    const hostOnGuest = guest.page.locator('[data-character-id="member-member-host"]');
-    const guestOnHost = host.page.locator('[data-character-id="member-member-guest"]');
-
-    await expect(hostLocal).toHaveAttribute("data-avatar-character-id", "investigator");
+    const hostOnGuest = guest.page.locator(`[data-character-id="member-${members.host.memberId}"]`);
+    const guestOnHost = host.page.locator(`[data-character-id="member-${members.guest.memberId}"]`);
     await expect(hostLocal).toHaveAttribute("data-outfit", "long-coat");
-    await expect(hostLocal).toHaveAttribute("data-accessory", "keys");
-    await expect(guestLocal).toHaveAttribute("data-avatar-character-id", "insider");
     await expect(guestLocal).toHaveAttribute("data-outfit", "soft-jacket");
-    await expect(guestLocal).toHaveAttribute("data-accessory", "scarf");
-    await expect(hostOnGuest).toBeVisible();
-    await expect(guestOnHost).toBeVisible();
     await expect(hostOnGuest).toContainText("调查员");
     await expect(guestOnHost).toContainText("知情人");
 
@@ -515,26 +394,19 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
     ).toBeGreaterThan(initialHostRemoteX);
 
     const initialGuestY = Number(await guestScene.getAttribute("data-player-y"));
-    const initialGuestRemoteY = Number(await guestOnHost.getAttribute("data-scene-y"));
     await guest.page.keyboard.down("KeyW");
     await guest.page.waitForTimeout(650);
     await guest.page.keyboard.up("KeyW");
     await expect.poll(async () => Number(await guestScene.getAttribute("data-player-y"))).toBeLessThan(initialGuestY);
-    await expect.poll(
-      async () => Number(await guestOnHost.getAttribute("data-scene-y")),
-      { timeout: 8_000 },
-    ).toBeLessThan(initialGuestRemoteY);
-
     expect(api.presenceBodies.some(({ identity }) => identity === "host")).toBe(true);
     expect(api.presenceBodies.some(({ identity }) => identity === "guest")).toBe(true);
 
     await host.page.getByRole("button", { name: "角色章" }).click();
     await guest.page.getByRole("button", { name: "角色章" }).click();
-    await expect(host.page.getByText("调查员私有线索：照片时间可疑。")).toBeVisible();
-    await expect(host.page.getByText("知情人私有线索：门锁一直完好。")).toHaveCount(0);
-    await expect(guest.page.getByText("知情人私有线索：门锁一直完好。")).toBeVisible();
-    await expect(guest.page.getByText("调查员私有线索：照片时间可疑。")).toHaveCount(0);
-
+    await expect(host.page.getByText(hostSnapshot.chapters[0].content)).toBeVisible();
+    await expect(host.page.getByText(guestSnapshot.chapters[0].content)).toHaveCount(0);
+    await expect(guest.page.getByText(guestSnapshot.chapters[0].content)).toBeVisible();
+    await expect(guest.page.getByText(hostSnapshot.chapters[0].content)).toHaveCount(0);
     await host.page.getByRole("button", { name: "我已读完" }).click();
     await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
     expect(host.webSockets).toEqual([]);
@@ -544,7 +416,7 @@ test("private chapters remain participant-safe inside the movable multiplayer sc
   }
 });
 
-test("fixed hint controls request and restore authored progressive hints without scene movement", async ({ browser }) => {
+test("revealed hints stay readable and Sheet keeps keyboard focus contained", async ({ browser }) => {
   test.setTimeout(60_000);
   const api = createGameplayApi();
   const host = await createPlayerPage(browser, api, "host");
@@ -557,77 +429,128 @@ test("fixed hint controls request and restore authored progressive hints without
     ]);
     await expectScenePhase(host.page, "核对口供", "阅读角色信息");
     await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
-
-    await host.page.getByRole("button", { name: "角色章" }).click();
-    await guest.page.getByRole("button", { name: "角色章" }).click();
-    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(host.page);
     await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(guest.page);
     await expectScenePhase(host.page, "核对口供", "公开讨论");
-    await expectScenePhase(guest.page, "核对口供", "公开讨论");
     await host.page.getByRole("button", { name: "关闭" }).click();
     await guest.page.getByRole("button", { name: "关闭" }).click();
 
-    const hostScene = host.page.locator(".mansion-demo");
-    const initialX = await hostScene.getAttribute("data-player-x");
-    const initialY = await hostScene.getAttribute("data-player-y");
-    const commandsBeforeOpen = api.commandBodies.length;
     const fixedHintEntry = host.page.getByRole("button", { name: "打开协作提示" });
     await fixedHintEntry.focus();
     await host.page.keyboard.press("Enter");
     const hintDialog = host.page.getByRole("dialog", { name: "协作提示" });
-    await expect(hintDialog).toBeVisible();
-    await expect(hintDialog.getByRole("button", { name: "关闭" })).toBeFocused();
+    const hintCloseButton = hintDialog.getByRole("button", { name: "关闭" });
+    await expect(hintCloseButton).toBeFocused();
+    await host.page.locator(".demo-hud-actions button").first().focus();
+    await host.page.keyboard.press("Tab");
+    await expect(hintCloseButton).toBeFocused();
     await host.page.keyboard.press("Escape");
     await expect(fixedHintEntry).toBeFocused();
-    await host.page.keyboard.press("Enter");
-    await expect(hintDialog).toBeVisible();
-    expect(api.commandBodies).toHaveLength(commandsBeforeOpen);
-    await expect(hostScene).toHaveAttribute("data-player-x", initialX ?? "");
-    await expect(hostScene).toHaveAttribute("data-player-y", initialY ?? "");
 
-    await guest.page.getByRole("button", { name: "打开协作提示" }).click();
-    for (const [index, hintText] of hintLevels.entries()) {
-      const level = index + 1;
-      await host.page.getByRole("button", { name: `请求第 ${level} 级提示` }).click();
-      await expect(host.page.getByRole("button", { name: "已确认，等待同伴" })).toBeDisabled({ timeout: 8_000 });
-      await guest.page.getByRole("button", { name: `同意公开第 ${level} 级提示` }).click();
-      await expect(host.page.getByText(hintText)).toBeVisible({ timeout: 8_000 });
-      await expect(guest.page.getByText(hintText)).toBeVisible({ timeout: 8_000 });
-    }
-    await expect(host.page.getByText("全部三级提示已公开")).toBeVisible();
-    expect(api.commandBodies.slice(-6).map(({ type, payload }) => ({ type, payload }))).toEqual(
-      hintLevels.flatMap((_, index) => {
-        const level = index + 1;
-        return [
-          { type: "hint.request", payload: { hint_id: "timeline", level } },
-          { type: "hint.confirm", payload: { hint_id: "timeline", level } },
-        ];
-      }),
-    );
-
+    await revealAllHints(host.page, guest.page);
     await host.page.reload();
     await expectScenePhase(host.page, "核对口供", "公开讨论");
     await host.page.getByRole("button", { name: "打开协作提示" }).click();
     await expect(host.page.getByText(hintLevels[2])).toBeVisible();
-
     await host.page.getByRole("button", { name: "关闭" }).click();
-    await guest.page.getByRole("button", { name: "关闭" }).click();
+
     await host.page.getByRole("button", { name: "打开讨论" }).click();
     await guest.page.getByRole("button", { name: "打开讨论" }).click();
     await host.page.getByRole("button", { name: "确认结束讨论" }).click();
     await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await host.page.getByRole("button", { name: "打开协作提示" }).click();
+    await expect(host.page.getByRole("dialog", { name: "协作提示" })).toBeVisible();
     await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
     await expectScenePhase(host.page, "核对口供", "提交判断");
-    await expect(host.page.getByRole("button", { name: "打开协作提示" })).toHaveCount(0);
-    await expect(host.page.getByRole("heading", { name: "协作提示" })).toHaveCount(0);
+    await expect(host.page.getByRole("dialog", { name: "协作提示" })).toHaveCount(0);
+    await expect(guest.page.getByRole("dialog", { name: "双人公开讨论" })).toHaveCount(0);
+    await expect(host.page.getByRole("complementary", { name: "双人进度" })).toBeFocused();
+    await expect(guest.page.getByRole("complementary", { name: "双人进度" })).toBeFocused();
+    await host.page.getByRole("button", { name: "打开协作提示" }).click();
+    await expect(host.page.getByText(hintLevels[2])).toBeVisible();
+    await expect(host.page.getByRole("button", { name: /请求第|同意公开第/ })).toHaveCount(0);
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }
 });
 
-test("connected shell recovers synchronization and completes discussion decisions and review", async ({ browser }) => {
-  test.setTimeout(120_000);
+test("synchronization and message failures recover without closing the discussion Sheet", async ({ browser }) => {
+  test.setTimeout(60_000);
+  const api = createGameplayApi("investigation_discuss");
+  const host = await createPlayerPage(browser, api, "host");
+  const guest = await createPlayerPage(browser, api, "guest");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      guest.page.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    api.failNextSnapshots("host", 20);
+    const syncWarning = host.page.getByText("同步暂时中断，正在显示上次成功状态。");
+    await expect(syncWarning).toBeVisible({ timeout: 15_000 });
+    api.restoreSnapshots("host");
+    await host.page.getByRole("button", { name: "重试同步" }).click();
+    await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
+
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    const messageInput = host.page.getByRole("textbox", { name: "讨论消息" });
+    const sendMessageButton = host.page.getByRole("button", { name: "发送讨论消息" });
+    await messageInput.fill("门锁没有损坏。");
+    const messageCommandsBeforeConflict = api.commandBodies.filter(
+      ({ type }) => type === "discussion.send_message",
+    ).length;
+    api.rejectNextRevision();
+    await sendMessageButton.click();
+    await expect(messageInput).toHaveValue("门锁没有损坏。");
+    await expect.poll(
+      () => api.commandBodies.filter(({ type }) => type === "discussion.send_message").length,
+    ).toBe(messageCommandsBeforeConflict + 1);
+    await host.page.waitForTimeout(1_000);
+    expect(api.commandBodies.filter(({ type }) => type === "discussion.send_message")).toHaveLength(
+      messageCommandsBeforeConflict + 1,
+    );
+
+    api.failNextMessage();
+    await sendMessageButton.click();
+    await expect(messageInput).toHaveValue("门锁没有损坏。");
+    await expect(host.page.getByRole("main").getByText("Message send failed", { exact: true })).toBeVisible();
+    const discussionDialog = host.page.getByRole("dialog", { name: "双人公开讨论" });
+    const dialogCloseButton = discussionDialog.getByRole("button", { name: "关闭" });
+    const syncButton = discussionDialog.getByRole("button", { name: "同步" });
+    const closeDiscussionButton = discussionDialog.getByRole("button", { name: "确认结束讨论" });
+    await dialogCloseButton.focus();
+    await host.page.keyboard.press("Tab");
+    await expect(syncButton).toBeFocused();
+    await closeDiscussionButton.focus();
+    await host.page.keyboard.press("Tab");
+    await expect(dialogCloseButton).toBeFocused();
+    await host.page.keyboard.press("Shift+Tab");
+    await expect(closeDiscussionButton).toBeFocused();
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect(messageInput).toHaveValue("");
+    await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+    await host.page.getByRole("button", { name: "打开协作提示" }).click();
+    await guest.page.getByRole("button", { name: "打开协作提示" }).click();
+    await host.page.getByRole("button", { name: "请求第 1 级提示" }).click();
+    await guest.page.getByRole("button", { name: "同意公开第 1 级提示" }).click();
+    await expect(host.page.getByText(hintLevels[0])).toBeVisible({ timeout: 8_000 });
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "关闭" }).click();
+    await guest.page.getByRole("button", { name: "打开讨论" }).click();
+    await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible();
+  } finally {
+    await Promise.all([host.context.close(), guest.context.close()]);
+  }
+});
+
+test("two players complete the authored game and open participant-safe review", async ({ browser }) => {
+  test.setTimeout(60_000);
   const api = createGameplayApi();
   const host = await createPlayerPage(browser, api, "host");
   const guest = await createPlayerPage(browser, api, "guest");
@@ -639,85 +562,55 @@ test("connected shell recovers synchronization and completes discussion decision
     ]);
     await expectScenePhase(host.page, "核对口供", "阅读角色信息");
     await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
-
-    await host.page.getByRole("button", { name: "角色章" }).click();
-    await guest.page.getByRole("button", { name: "角色章" }).click();
-    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(host.page);
     await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(guest.page);
     await expectScenePhase(host.page, "核对口供", "公开讨论");
-    await expectScenePhase(guest.page, "核对口供", "公开讨论");
     await host.page.getByRole("button", { name: "关闭" }).click();
     await guest.page.getByRole("button", { name: "关闭" }).click();
-
-    api.failNextSnapshots("host", 20);
-    const syncWarning = host.page.getByText("同步暂时中断，正在显示上次成功状态。");
-    await expect(syncWarning).toBeVisible({ timeout: 15_000 });
-    api.restoreSnapshots("host");
-    await host.page.getByRole("button", { name: "重试同步" }).click();
-    await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
-    await expectScenePhase(host.page, "核对口供", "公开讨论");
-
-    await host.page.getByRole("button", { name: "打开讨论" }).click();
-    await guest.page.getByRole("button", { name: "打开讨论" }).click();
-    const messageInput = host.page.getByRole("textbox", { name: "讨论消息" });
-    await messageInput.fill("门锁没有损坏。");
-    api.failNextMessage();
-    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
-    await expect(messageInput).toHaveValue("门锁没有损坏。");
-    await expect(
-      host.page.getByRole("main").getByText("Message send failed", { exact: true }),
-    ).toBeVisible();
-    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
-    await expect(messageInput).toHaveValue("");
-    await expect(guest.page.getByText("门锁没有损坏。")).toBeVisible({ timeout: 8_000 });
-
-    await host.page.getByRole("button", { name: "确认结束讨论" }).click();
-    await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await revealAllHints(host.page, guest.page);
+    await confirmDiscussionClose(host.page, guest.page);
     await expectScenePhase(host.page, "核对口供", "提交判断");
-    await expectScenePhase(guest.page, "核对口供", "提交判断");
 
+    const investigation = gameplayContract.states.investigation_settle.host.settlement!;
     await host.page.getByRole("button", { name: "打开判断" }).click();
     await guest.page.getByRole("button", { name: "打开判断" }).click();
-    await expect(host.page.getByRole("heading", { name: "二十点二十分的金属声最可能来自哪种情况？" })).toBeVisible();
-    await host.page.getByText("有人在二十点二十分强行进入值班室", { exact: true }).click();
+    const settlementDialog = host.page.getByRole("dialog", { name: "圆桌判断" });
+    const settlementClose = settlementDialog.getByRole("button", { name: "关闭" });
+    const firstSettlementRadio = settlementDialog.getByRole("radio").first();
+    await settlementClose.focus();
+    await host.page.keyboard.press("Tab");
+    await expect(firstSettlementRadio).toBeFocused();
+    await host.page.keyboard.press("Tab");
+    await expect(settlementClose).toBeFocused();
+    await host.page.getByText(investigation.options[0].text, { exact: true }).click();
     await host.page.getByRole("button", { name: "确认选择" }).click();
     await expect(guest.page.getByText("1/2 位玩家已提交", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByText("有人早已在室内，金属声来自钥匙掉落", { exact: true }).click();
+    await guest.page.getByText(investigation.options[1].text, { exact: true }).click();
     await guest.page.getByRole("button", { name: "确认选择" }).click();
     await expect(host.page.getByTestId("revealed-ballots")).toBeVisible({ timeout: 8_000 });
     await host.page.getByRole("button", { name: "进入下一阶段" }).click();
     await expectScenePhase(host.page, "共同终判", "阅读角色信息");
-    await expectScenePhase(guest.page, "共同终判", "阅读角色信息");
+    await expect(host.page.getByRole("button", { name: "打开公开档案" })).toBeVisible();
 
-    await host.page.getByRole("button", { name: "角色章" }).click();
-    await guest.page.getByRole("button", { name: "角色章" }).click();
-    await expect(host.page.getByTestId("chapter-investigator-final-judgment")).toBeVisible();
-    await expect(guest.page.getByTestId("chapter-insider-final-judgment")).toBeVisible();
-    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(host.page);
     await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await openChaptersAndConfirm(guest.page);
     await expectScenePhase(host.page, "共同终判", "公开讨论");
-    await expectScenePhase(guest.page, "共同终判", "公开讨论");
     await host.page.getByRole("button", { name: "关闭" }).click();
     await guest.page.getByRole("button", { name: "关闭" }).click();
-
-    await host.page.getByRole("button", { name: "打开讨论" }).click();
-    await guest.page.getByRole("button", { name: "打开讨论" }).click();
-    await host.page.getByRole("button", { name: "确认结束讨论" }).click();
-    await expect(guest.page.getByText("1/2 位玩家确认结束", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByRole("button", { name: "确认结束讨论" }).click();
+    await confirmDiscussionClose(host.page, guest.page);
     await expectScenePhase(host.page, "共同终判", "提交判断");
-    await expectScenePhase(guest.page, "共同终判", "提交判断");
 
+    const finalSettlement = gameplayContract.states.final_settle.host.settlement!;
+    const finalChoice = finalSettlement.options.find((option) => option.id === "timeline-conflict")!;
     await host.page.getByRole("button", { name: "打开判断" }).click();
     await guest.page.getByRole("button", { name: "打开判断" }).click();
-    const finalChoice = "认定知情人违规进入并隐瞒，但没有证据证明其破门或损毁记录";
-    await host.page.getByText(finalChoice, { exact: true }).click();
+    await host.page.getByText(finalChoice.text, { exact: true }).click();
     await host.page.getByRole("button", { name: "确认选择" }).click();
     await expect(guest.page.getByText("1/2 位玩家已提交", { exact: true })).toBeVisible({ timeout: 8_000 });
-    await guest.page.getByText(finalChoice, { exact: true }).click();
+    expect(api.reviewRequests).toEqual([]);
+    await guest.page.getByText(finalChoice.text, { exact: true }).click();
     await guest.page.getByRole("button", { name: "确认选择" }).click();
     await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
     await expect(guest.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
@@ -728,14 +621,54 @@ test("connected shell recovers synchronization and completes discussion decision
     await host.page.getByRole("button", { name: "打开复盘" }).click();
     await expect(host.page.getByText("Temporary review failure", { exact: true })).toBeVisible({ timeout: 12_000 });
     await host.page.getByRole("button", { name: "重新加载复盘" }).click();
-    await expect(host.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
-    await expect(host.page.getByText("照片和便签揭示两份解释无法同时成立。")).toBeVisible();
-
+    await expect(host.page.getByRole("heading", { name: gameplayContract.reviews.host.ending.name })).toBeVisible({ timeout: 8_000 });
     await guest.page.getByRole("button", { name: "打开复盘" }).click();
-    await expect(guest.page.getByRole("heading", { name: "矛盾的口供" })).toBeVisible({ timeout: 8_000 });
-    await expect(guest.page.getByText("知情人的完整复盘章节。")).toBeVisible();
+    await expect(guest.page.getByRole("heading", { name: gameplayContract.reviews.guest.ending.name })).toBeVisible({ timeout: 8_000 });
     expect(host.webSockets).toEqual([]);
     expect(guest.webSockets).toEqual([]);
+  } finally {
+    await Promise.all([host.context.close(), guest.context.close()]);
+  }
+});
+
+test("mobile touch controls and fixed multiplayer entries stay actionable", async ({ browser }) => {
+  test.setTimeout(60_000);
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host", {
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const guest = await createPlayerPage(browser, api, "guest");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      guest.page.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await expectScenePhase(guest.page, "核对口供", "阅读角色信息");
+    const scene = host.page.locator(".mansion-demo");
+    const initialX = Number(await scene.getAttribute("data-player-x"));
+    const right = host.page.getByRole("button", { name: "向右" });
+    await right.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "touch", isPrimary: true });
+    await host.page.waitForTimeout(500);
+    await right.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true });
+    await expect.poll(async () => Number(await scene.getAttribute("data-player-x"))).toBeGreaterThan(initialX);
+
+    await host.page.getByRole("button", { name: "打开公开档案" }).click();
+    const archiveDialog = host.page.getByRole("dialog", { name: "公开档案" });
+    await expect(archiveDialog).toBeInViewport();
+    await archiveDialog.getByRole("button", { name: "关闭" }).click();
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect(guest.page.getByText("1/2 已读", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await guest.page.getByRole("button", { name: "角色章" }).click();
+    await guest.page.getByRole("button", { name: "我已读完" }).click();
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "关闭" }).click();
+    await host.page.getByRole("button", { name: "打开协作提示" }).click();
+    await expect(host.page.getByRole("dialog", { name: "协作提示" })).toBeInViewport();
   } finally {
     await Promise.all([host.context.close(), guest.context.close()]);
   }

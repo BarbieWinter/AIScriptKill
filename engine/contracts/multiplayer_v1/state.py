@@ -170,6 +170,7 @@ class GameStateV2(ContractModel):
     room: RoomState
     players: dict[str, PlayerState]
     private_by_member: dict[str, PrivatePlayerState]
+    prior_revealed_material_ids: UniqueIdentifierTuple = ()
     stage: StageRuntimeState
     ending_id: Identifier | None = None
 

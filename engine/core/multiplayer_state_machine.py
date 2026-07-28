@@ -222,11 +222,16 @@ def enter_next_stage(
         next_definition,
         required_member_ids=state.room.required_member_ids,
     )
+    prior_revealed_material_ids = (
+        *state.prior_revealed_material_ids,
+        *state.stage.revealed_material_ids,
+    )
     next_room = state.room.model_copy(update={"current_stage_id": next_definition.id})
     next_state = state.model_copy(
         update={
             "room": next_room,
             "private_by_member": private_by_member,
+            "prior_revealed_material_ids": prior_revealed_material_ids,
             "stage": next_stage,
         }
     )

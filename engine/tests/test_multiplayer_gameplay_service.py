@@ -458,6 +458,22 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
         "investigator-investigation",
         "investigator-final-judgment",
     ]
+    assert [material.id for material in final_snapshot.public_materials] == [
+        "arrival-photo",
+        "witness-note",
+    ]
+
+    legacy_state = dict(room.state)
+    legacy_state.pop("prior_revealed_material_ids")
+    legacy_room = replace(room, state=legacy_state)
+    assert decode_room_game_state(legacy_room).prior_revealed_material_ids == ()
+    legacy_snapshot = project_gameplay_snapshot(
+        room=legacy_room,
+        member=members[0],
+        package=package,
+        event_rows=(),
+    )
+    assert legacy_snapshot.public_materials == ()
 
     for member in members:
         room = _apply(
@@ -514,7 +530,8 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
     assert all(review.ending.id == expected_ending_id for review in reviews)
     assert all(review.ending.outcome_text == expected_outcome_text for review in reviews)
     assert all(
-        review.truth.case_summary.startswith("知情人于二十点零五分违规使用备用钥匙")
+        review.truth.case_summary is not None
+        and review.truth.case_summary.startswith("知情人于二十点零五分违规使用备用钥匙")
         for review in reviews
     )
     assert {chapter.character_id for chapter in reviews[0].chapters} == {
@@ -530,6 +547,11 @@ def test_real_gameplay_commands_use_frozen_package_for_both_endings(
 def test_room_state_decoder_rejects_relational_mismatch() -> None:
     room, _members = _active_room()
     assert decode_room_game_state(room).room_revision == room.revision
+
+    legacy_state = dict(room.state)
+    legacy_state.pop("prior_revealed_material_ids")
+    restored_legacy = decode_room_game_state(replace(room, state=legacy_state))
+    assert restored_legacy.prior_revealed_material_ids == ()
 
     for invalid in (
         replace(room, revision=room.revision + 1),

@@ -189,6 +189,48 @@ function eventPage(
   };
 }
 
+test("clue detail covers the viewport and restores its trigger focus", async ({ page }) => {
+  await installBaseApi(page);
+  await page.route(`**/api/v1/sessions/${sessionId}/clues`, async (route) => {
+    await json(route, {
+      clues: [{
+        id: "door-lock-photo",
+        name: "门锁照片",
+        image_url: "",
+        description: "门锁没有损坏。",
+        is_key: true,
+        importance: 3,
+        status: "unlocked",
+      }],
+    });
+  });
+  await page.goto(`/play/snow-village/${sessionId}`);
+
+  await page.getByRole("button", { name: /线索板/ }).click();
+  const clueBoard = page.getByRole("dialog", { name: "线索板" });
+  const clueTrigger = page.getByRole("button", { name: /门锁照片/ });
+  await clueTrigger.click();
+  const detail = page.getByRole("dialog", { name: "线索详情：门锁照片" });
+  await expect(detail).toBeVisible();
+  const detailBox = await detail.boundingBox();
+  const viewport = page.viewportSize();
+  expect(detailBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(detailBox).toMatchObject({ x: 0, y: 0 });
+  expect(detailBox?.width).toBe(viewport?.width);
+  expect(detailBox?.height).toBe(viewport?.height);
+
+  await detail.click({ position: { x: 4, y: 4 } });
+  await expect(detail).toHaveCount(0);
+  await expect(clueBoard).toBeVisible();
+  await expect(clueTrigger).toBeFocused();
+
+  await clueTrigger.click();
+  await page.keyboard.press("Escape");
+  await expect(detail).toHaveCount(0);
+  await expect(clueTrigger).toBeFocused();
+});
+
 test("live action sends one durable command and advances the replay cursor", async ({ page }) => {
   const api = await installBaseApi(page);
   await page.goto(`/play/snow-village/${sessionId}`);

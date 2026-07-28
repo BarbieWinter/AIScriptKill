@@ -384,6 +384,20 @@ def test_public_material_namespaces_must_be_disjoint() -> None:
     assert "witness-note" in exc_info.value.message
 
 
+def test_public_material_cannot_be_reused_across_stages() -> None:
+    files = _fixture_files()
+    files["stages/final-judgment.yml"] = _text_file(
+        files,
+        "stages/final-judgment.yml",
+    ).replace('id: "case-reconstruction"', 'id: "arrival-photo"')
+
+    with pytest.raises(PackageArchiveError) as exc_info:
+        load_package_archive(package_archive(files))
+
+    assert exc_info.value.code == "PACKAGE_DUPLICATE_ID"
+    assert "arrival-photo" in exc_info.value.message
+
+
 def test_outcome_material_trigger_resolves_only_within_its_stage() -> None:
     files = _fixture_files()
     files["stages/investigation.yml"] = _text_file(files, "stages/investigation.yml").replace(

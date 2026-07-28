@@ -87,6 +87,7 @@ def _validate_multiplayer_content(
         )
 
     material_ids = _disjoint_material_ids(package)
+    material_stage_by_id: dict[str, str] = {}
     chapters_by_id = {chapter.id: chapter for chapter in package.chapters}
     for stage_record in package.stages:
         stage = _multiplayer_stage(stage_record.definition)
@@ -117,6 +118,13 @@ def _validate_multiplayer_content(
                 material.id,
                 material_ids,
             )
+            prior_stage_id = material_stage_by_id.get(material.id)
+            if prior_stage_id is not None:
+                raise PackageArchiveError(
+                    "PACKAGE_DUPLICATE_ID",
+                    f"公共材料 {material.id} 不能同时用于 stage {prior_stage_id} 与 {stage.id}",
+                )
+            material_stage_by_id[material.id] = stage.id
         _validate_outcome_triggers(stage)
 
 
