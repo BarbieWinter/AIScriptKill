@@ -6,7 +6,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo } from "react";
 
+import { LegacyReview } from "@/components/game/LegacyReview";
 import { CompletedReview } from "@/components/multiplayer/CompletedReview";
+import { api, isMockMode } from "@/lib/api";
+import type { Review } from "@/lib/game/types";
 import {
   multiplayerErrorCode,
   multiplayerErrorMessage,
@@ -14,16 +17,56 @@ import {
 } from "@/lib/multiplayer/error-messages";
 import {
   createMultiplayerRoomClient,
+  MultiplayerClientError,
   multiplayerReviewKey,
 } from "@/lib/multiplayer/room-client";
+import type { CompletedReviewV1 } from "@/lib/multiplayer/types";
+
+type ReviewData =
+  | { kind: "multiplayer"; data: CompletedReviewV1 }
+  | { kind: "legacy"; data: Review };
+
+function isCompletedReview(value: unknown): value is CompletedReviewV1 {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Partial<CompletedReviewV1>;
+  return typeof review.ending?.name === "string"
+    && typeof review.truth?.case_summary === "string"
+    && Array.isArray(review.chapters);
+}
+
+function isLegacyReview(value: unknown): value is Review {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Partial<Review>;
+  return typeof review.score === "number"
+    && typeof review.rating === "string"
+    && typeof review.truth_summary === "string";
+}
+
+const uuidSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default function ReviewPage() {
   const params = useParams<{ sessionId: string }>();
   const sessionId = params.sessionId;
   const client = useMemo(() => createMultiplayerRoomClient(), []);
-  const review = useQuery({
+  const review = useQuery<ReviewData>({
     queryKey: multiplayerReviewKey(sessionId),
-    queryFn: ({ signal }) => client.getReview(sessionId, signal),
+    queryFn: async ({ signal }) => {
+      if (isMockMode() && !uuidSessionId.test(sessionId)) {
+        return { kind: "legacy", data: await api.getReview(sessionId) };
+      }
+
+      try {
+        const payload = await client.getReview(sessionId, signal) as unknown;
+        if (isCompletedReview(payload)) return { kind: "multiplayer", data: payload };
+        if (isLegacyReview(payload)) return { kind: "legacy", data: payload };
+        throw new Error("复盘数据格式无效。");
+      } catch (error) {
+        if (error instanceof MultiplayerClientError && [401, 403, 404].includes(error.status)) {
+          return { kind: "legacy", data: await api.getReview(sessionId) };
+        }
+        throw error;
+      }
+    },
     retry: shouldRetryMultiplayer,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -92,11 +135,15 @@ export default function ReviewPage() {
                 刷新失败，正在显示上次成功的复盘。
               </div>
             )}
-            <CompletedReview
-              review={review.data}
-              returnHref="/multiplayer"
-              returnLabel="返回多人入口"
-            />
+            {review.data.kind === "multiplayer" ? (
+              <CompletedReview
+                review={review.data.data}
+                returnHref="/multiplayer"
+                returnLabel="返回多人入口"
+              />
+            ) : (
+              <LegacyReview review={review.data.data} />
+            )}
           </>
         )}
       </div>
