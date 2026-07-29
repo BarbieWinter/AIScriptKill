@@ -74,7 +74,7 @@ NEXT_PUBLIC_USE_MOCK=false make dev
 `apps/web/lib/multiplayer/room-client.ts` 为请求附加 bearer token，并提供 current、
 create、invite、联合 snapshot、完整 room command 和 completed review 方法。
 
-`LobbyBoundary` 在 `lobby`、`active` 与 `completed` 状态每 2 秒 polling；completed 仍需刷新同伴的展示位置，只有 presence 写入会在 completed 停止。
+`LobbyBoundary` 在 `lobby` 与 `active` 状态每 2 秒 polling；进入 `completed` 后停止自动 polling、窗口聚焦刷新和重连刷新，只有直接重载或显式刷新复盘才读取最小权威终局状态。presence 写入与 heartbeat 同样在 completed 停止。
 首次读取失败显示阻塞错误；已有缓存时的轮询中断保留当前页面并显示可重试提示。它按
 `status` discriminated union 分派：
 

@@ -286,10 +286,17 @@ export type CompletedReviewV1 = {
     stage_id: string;
     settlement_id: string;
     outcome_id: string;
-    reveal: "named_ballots" | "aggregate" | "outcome_only";
-    ballots?: Array<{ member_id: string; option_id: string }>;
-    option_counts?: Array<{ option_id: string; count: number }>;
-  };
+  } & (
+    | {
+        reveal: "named_ballots";
+        ballots: Array<{ member_id: string; option_id: string }>;
+      }
+    | {
+        reveal: "aggregate";
+        option_counts: Array<{ option_id: string; count: number }>;
+      }
+    | { reveal: "outcome_only" }
+  );
 };
 
 export type MultiplayerApiErrorBody = {

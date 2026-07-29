@@ -515,7 +515,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 Browser B 通过相同 HTTP 路径独立轮询。
 ```
 
-这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影已只读取 `discussion.message`，completed 页面也会停止轮询；但 active 房间仍会在每次快照中读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。
+这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影已只读取不超过当前 `event_head_sequence` 的 `discussion.message`；但 active 房间仍会每 2 秒读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。completed 页面会停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
 
 ### 11.2 目标多人运行架构
 

@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  BookOpen,
   Check,
   CircleAlert,
   Eye,
@@ -15,18 +14,19 @@ import {
   ShieldCheck,
   StepForward,
 } from "lucide-react";
-import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { GameplayPanelHost } from "@/components/demo/GameplayPanelHost";
 import { MansionDemo, type LocalScenePose, type SceneAvatar } from "@/components/demo/MansionDemo";
+import { CompletedReview } from "@/components/multiplayer/CompletedReview";
 import { Sheet } from "@/components/ui/Sheet";
 import type { DemoSessionHotspot } from "@/lib/demo-data";
 import {
   multiplayerErrorMessage,
   shouldRetryMultiplayer,
 } from "@/lib/multiplayer/error-messages";
+import { isCompletedReview } from "@/lib/multiplayer/review-validation";
 import {
   multiplayerReviewKey,
   MultiplayerClientError,
@@ -478,10 +478,17 @@ export function MultiplayerMansionShell({
     },
   });
   const review = useQuery({
-    queryKey: multiplayerReviewKey(snapshot.session_id),
-    queryFn: ({ signal }) => client.getReview(snapshot.session_id, signal),
+    queryKey: multiplayerReviewKey(snapshot.session_id, snapshot.self_member_id),
+    queryFn: async ({ signal }) => {
+      const payload = await client.getReview(snapshot.session_id, signal) as unknown;
+      if (!isCompletedReview(payload)) throw new Error("复盘数据格式无效。");
+      return payload;
+    },
     enabled: activePanel === "review",
     retry: shouldRetryMultiplayer,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const selfPlayer = useMemo(
@@ -525,20 +532,25 @@ export function MultiplayerMansionShell({
       : spawnByCharacter[selfCharacterId ?? ""] ?? { x: 1200, y: 1050 },
     [selfCharacterId, selfSceneX, selfSceneY],
   );
+  const presenceIdentity = hasSelfPlayer && snapshot.status === "active"
+    ? `${snapshot.session_id}:${snapshot.self_member_id}`
+    : null;
   const presenceRef = useRef<{
+    activeIdentity: string | null;
     lastPose: LocalScenePose | null;
     lastSentAt: number;
     timer: ReturnType<typeof setTimeout> | null;
-    inFlight: boolean;
+    inFlight: AbortController | null;
     queued: boolean;
     disabled: boolean;
     failureCount: number;
     retryNotBefore: number;
   }>({
+    activeIdentity: presenceIdentity,
     lastPose: null,
     lastSentAt: 0,
     timer: null,
-    inFlight: false,
+    inFlight: null,
     queued: false,
     disabled: false,
     failureCount: 0,
@@ -546,8 +558,14 @@ export function MultiplayerMansionShell({
   });
 
   const sendLatestPresence = useCallback(async () => {
+    const identity = presenceIdentity;
     const state = presenceRef.current;
-    if (state.disabled || !state.lastPose) return;
+    if (
+      identity === null
+      || state.activeIdentity !== identity
+      || state.disabled
+      || !state.lastPose
+    ) return;
     const now = Date.now();
     if (now < state.retryNotBefore) {
       if (!state.timer) {
@@ -562,7 +580,8 @@ export function MultiplayerMansionShell({
       state.queued = true;
       return;
     }
-    state.inFlight = true;
+    const controller = new AbortController();
+    state.inFlight = controller;
     state.queued = false;
     state.lastSentAt = now;
     const pose = state.lastPose;
@@ -572,11 +591,13 @@ export function MultiplayerMansionShell({
         y: Math.round(pose.y * 10) / 10,
         facing: pose.facing,
         moving: pose.moving,
-      });
+      }, controller.signal);
+      state.lastSentAt = Date.now();
       state.failureCount = 0;
       state.retryNotBefore = 0;
     } catch (error) {
-      if (error instanceof MultiplayerClientError && [401, 403, 409, 422].includes(error.status)) {
+      if (controller.signal.aborted || state.activeIdentity !== identity) return;
+      if (error instanceof MultiplayerClientError && [403, 409, 422].includes(error.status)) {
         state.disabled = true;
         state.lastPose = null;
         state.queued = false;
@@ -588,14 +609,21 @@ export function MultiplayerMansionShell({
         );
       }
     } finally {
-      state.inFlight = false;
-      if (state.queued && state.lastPose) void sendLatestPresence();
+      if (state.inFlight !== controller) return;
+      state.inFlight = null;
+      const flushQueued = state.activeIdentity === identity
+        && !state.disabled
+        && state.queued
+        && state.lastPose;
+      state.queued = false;
+      if (flushQueued) void sendLatestPresence();
     }
-  }, [client, snapshot.session_id]);
+  }, [client, presenceIdentity, snapshot.session_id]);
 
   const reportPlayerPose = useCallback((pose: LocalScenePose) => {
+    const identity = presenceIdentity;
     const state = presenceRef.current;
-    if (state.disabled) return;
+    if (identity === null || state.activeIdentity !== identity || state.disabled) return;
     state.lastPose = pose;
     const now = Date.now();
     const delay = Math.max(
@@ -608,50 +636,60 @@ export function MultiplayerMansionShell({
       state.timer = null;
       void sendLatestPresence();
     }, delay);
-  }, [sendLatestPresence]);
+  }, [presenceIdentity, sendLatestPresence]);
   const hotspots = useMemo(() => sceneHotspots(snapshot), [snapshot]);
   const selfRead = snapshot.read_member_ids.includes(snapshot.self_member_id);
   const selfClosed = snapshot.discussion_close_member_ids.includes(snapshot.self_member_id);
   const presenceIdentityRef = useRef("");
-  useEffect(() => {
-    if (!hasSelfPlayer || snapshot.status !== "active") return;
-    const identity = `${snapshot.session_id}:${snapshot.self_member_id}`;
-    if (presenceIdentityRef.current === identity) return;
-    presenceIdentityRef.current = identity;
+
+  useLayoutEffect(() => {
     const state = presenceRef.current;
+    state.activeIdentity = presenceIdentity;
     state.disabled = false;
     state.failureCount = 0;
     state.retryNotBefore = 0;
     state.queued = false;
-    state.lastPose = {
-      ...initialPlayerPosition,
-      facing: selfSceneFacing ?? (selfCharacterId === "insider" ? "right" : "left"),
-      moving: false,
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    state.inFlight?.abort();
+    state.inFlight = null;
+    if (presenceIdentity === null) {
+      presenceIdentityRef.current = "";
+      state.lastPose = null;
+    }
+    return () => {
+      presenceIdentityRef.current = "";
+      state.activeIdentity = null;
+      state.queued = false;
+      state.lastPose = null;
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = null;
+      state.inFlight?.abort();
+      state.inFlight = null;
     };
-  }, [
-    hasSelfPlayer,
-    initialPlayerPosition,
-    selfCharacterId,
-    selfSceneFacing,
-    snapshot.self_member_id,
-    snapshot.session_id,
-    snapshot.status,
-  ]);
+  }, [presenceIdentity]);
 
   useEffect(() => {
-    if (!hasSelfPlayer || snapshot.status !== "active") return;
+    if (presenceIdentity === null) return;
+    const state = presenceRef.current;
+    if (presenceIdentityRef.current !== presenceIdentity) {
+      presenceIdentityRef.current = presenceIdentity;
+      state.lastPose = {
+        ...initialPlayerPosition,
+        facing: selfSceneFacing ?? (selfCharacterId === "insider" ? "right" : "left"),
+        moving: false,
+      };
+    }
     void sendLatestPresence();
     const interval = window.setInterval(() => void sendLatestPresence(), PRESENCE_HEARTBEAT_INTERVAL);
     return () => window.clearInterval(interval);
-  }, [hasSelfPlayer, sendLatestPresence, snapshot.status]);
-
-  useEffect(() => () => {
-    const state = presenceRef.current;
-    if (state.timer) {
-      clearTimeout(state.timer);
-      state.timer = null;
-    }
-  }, []);
+  }, [
+    initialPlayerPosition,
+    presenceIdentity,
+    selfCharacterId,
+    selfSceneFacing,
+    sendLatestPresence,
+  ]);
 
   useEffect(() => {
     if (panel === activePanel) return;
@@ -779,7 +817,7 @@ export function MultiplayerMansionShell({
       interactionBlocked={activePanel !== null}
       interactionPending={commandPending}
       onInvestigate={interact}
-      onPlayerPose={reportPlayerPose}
+      onPlayerPose={presenceIdentity === null ? undefined : reportPlayerPose}
       playerName={selfPlayer?.character_name ?? "当前角色"}
       playerCharacterId={selfPlayer?.character_id}
       remoteAvatars={remoteAvatars}
@@ -888,34 +926,7 @@ export function MultiplayerMansionShell({
                   <button type="button" onClick={() => review.refetch()} className="mt-3 inline-flex items-center gap-2 underline"><RotateCcw className="h-4 w-4" />重新加载复盘</button>
                 </div>
               )}
-              {review.data && (
-                <>
-                  <header className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.05] p-6 text-center">
-                    <ShieldCheck className="mx-auto mb-3 text-emerald-300" />
-                    <p className="text-xs text-emerald-200/60">游戏完成</p>
-                    <h2 className="mt-1 text-2xl font-semibold">{review.data.ending.name}</h2>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[#c1c3bd]">{review.data.ending.outcome_text}</p>
-                  </header>
-                  <section>
-                    <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold"><Eye className="h-4 w-4 text-[#c9ae76]" />案件真相</h3>
-                    {review.data.truth.case_summary && <p className="mb-5 whitespace-pre-wrap text-sm leading-7 text-[#c1c3bd]">{review.data.truth.case_summary}</p>}
-                    <div className="space-y-3">
-                      {review.data.truth.timeline.map((item) => (
-                        <div key={`${item.time}-${item.event}`} className="grid gap-1 border-l border-[#c9ae76]/30 pl-4 sm:grid-cols-[6rem_1fr]">
-                          <span className="text-xs text-[#c9ae76]">{item.time}</span><span className="text-sm text-[#b8bbb4]">{item.event}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                  <section>
-                    <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold"><BookOpen className="h-4 w-4 text-[#c9ae76]" />双方角色章节</h3>
-                    <div className="space-y-5">
-                      {review.data.chapters.map((chapter) => <article key={chapter.id}><h4 className="mb-2 font-medium text-[#e3d8bd]">{chapter.title}</h4><p className="whitespace-pre-wrap text-sm leading-7 text-[#aeb1ab]">{chapter.content}</p></article>)}
-                    </div>
-                  </section>
-                  <div className="text-center"><Link href="/multiplayer" className="text-sm text-[#9fa29c] hover:text-white">返回多人入口</Link></div>
-                </>
-              )}
+              {review.data && <CompletedReview review={review.data} />}
             </div>
           </Sheet>
         </GameplayPanelHost>

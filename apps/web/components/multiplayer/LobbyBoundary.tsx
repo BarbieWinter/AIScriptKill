@@ -31,7 +31,15 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
         ? false
         : 2_000
     ),
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
+    refetchOnReconnect: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
+    refetchOnMount: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
   });
 
   useEffect(() => {

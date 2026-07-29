@@ -24,8 +24,8 @@ export const lobbySnapshotKey = roomSnapshotKey;
 
 export const currentMultiplayerRoomKey = ["multiplayer", "current-room"] as const;
 
-export function multiplayerReviewKey(sessionId: string) {
-  return ["multiplayer", "review", sessionId] as const;
+export function multiplayerReviewKey(sessionId: string, memberId: string) {
+  return ["multiplayer", "review", sessionId, memberId] as const;
 }
 
 export class MultiplayerClientError extends Error {
