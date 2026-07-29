@@ -513,7 +513,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 Browser B 通过相同 HTTP 路径独立轮询。
 ```
 
-这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影每 2 秒从 sequence 0 读取完整事件历史，completed 页面仍持续轮询，因此讨论历史增长后会产生线性放大成本。
+这里的 outbox 仍是基础设施，不是已上线事件总线：当前 gameplay 命令显式关闭 outbox topic，`publish_room_outbox_batch()` 也没有 transport adapter、常驻 worker 或 lifespan 接线。lobby 与 active 的快照投影仍每 2 秒从 sequence 0 读取完整事件历史，因此讨论历史增长后会产生线性放大成本；completed 页面已停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
 
 ### 11.2 目标多人运行架构
 
@@ -583,7 +583,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 
 1. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
 2. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
-3. 将快照事件读取改为增量或有界投影，completed 后停止无意义轮询；增加弃局/关闭房间与 reservation 释放。
+3. 将 lobby/active 快照事件读取改为增量或有界投影；增加弃局/关闭房间与 reservation 释放。
 4. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
 5. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
 6. 删除旧搜证/NPC 产品入口及其依赖链。

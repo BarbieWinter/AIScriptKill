@@ -23,8 +23,9 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
     queryKey: roomSnapshotKey(sessionId),
     queryFn: ({ signal }) => client.getSnapshot(sessionId, signal),
     retry: shouldRetryMultiplayer,
-    refetchInterval: 2_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.data?.status === "completed" ? false : 2_000,
+    refetchOnWindowFocus: (query) => query.state.data?.status !== "completed",
+    refetchOnReconnect: (query) => query.state.data?.status !== "completed",
   });
 
   if (snapshot.isPending) {

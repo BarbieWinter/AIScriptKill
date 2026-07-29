@@ -82,7 +82,9 @@ function jwtFor(identity: Identity) {
 
 async function installAnonymousAuth(context: BrowserContext, identity: Identity) {
   const token = jwtFor(identity);
+  let signupRequests = 0;
   await context.route("**/auth/v1/signup", async (route) => {
+    signupRequests += 1;
     const now = new Date().toISOString();
     await json(route, {
       access_token: token,
@@ -105,7 +107,10 @@ async function installAnonymousAuth(context: BrowserContext, identity: Identity)
       },
     });
   });
-  return token;
+  return {
+    token,
+    getSignupRequests: () => signupRequests,
+  };
 }
 
 function createGameplayApi(initialState = gameplayContract.initial_state) {
@@ -117,7 +122,10 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
   let revisionFailures = 0;
   let publicMaterialsVisible = true;
   let settlementVisible = true;
+  let holdNextPresence = false;
+  let releaseHeldPresence: (() => void) | null = null;
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
+  const snapshotRequests: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
   const activeSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
   const nextCommandSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
@@ -130,6 +138,8 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     ["guest", { x: 945, y: 970, facing: "right", moving: false }],
   ]);
   const presenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
+  const appliedPresenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
+  let abortedPresenceRequests = 0;
   const commandBodies: Array<{ identity: Identity; type: string; payload: Record<string, unknown> }> = [];
   const reviewRequests: Identity[] = [];
 
@@ -184,6 +194,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       const method = request.method();
 
       if (pathname === `/api/v1/sessions/${sessionId}/snapshot` && method === "GET") {
+        snapshotRequests[identity] += 1;
         const hold = activeSnapshotHolds[identity];
         if (hold) {
           await hold.promise;
@@ -218,8 +229,22 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
         expect(body).not.toHaveProperty("member_id");
         expect(body).not.toHaveProperty("character_id");
         presenceBodies.push({ identity, body });
+        const wasHeld = holdNextPresence;
+        if (wasHeld) {
+          holdNextPresence = false;
+          await new Promise<void>((resolve) => {
+            releaseHeldPresence = resolve;
+          });
+          releaseHeldPresence = null;
+        }
+        if (wasHeld && request.failure()) {
+          abortedPresenceRequests += 1;
+          return;
+        }
+        await route.fulfill({ status: 204, body: "" });
         presence.set(identity, { x: body.x, y: body.y, facing: body.facing, moving: body.moving });
-        return route.fulfill({ status: 204, body: "" });
+        appliedPresenceBodies.push({ identity, body });
+        return;
       }
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
         const body = request.postDataJSON() as {
@@ -346,9 +371,21 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       nextCommandSnapshotHolds[identity] = { promise, release };
       return release;
     },
+    setState(nextState: string) {
+      stateKey = nextState;
+    },
+    holdNextPresence() {
+      holdNextPresence = true;
+    },
+    releasePresence() {
+      releaseHeldPresence?.();
+    },
     commandBodies,
     presenceBodies,
+    appliedPresenceBodies,
+    getAbortedPresenceRequests: () => abortedPresenceRequests,
     reviewRequests,
+    snapshotRequests,
   };
 }
 
@@ -359,14 +396,14 @@ async function createPlayerPage(
   contextOptions: BrowserContextOptions = {},
 ) {
   const context = await browser.newContext(contextOptions);
-  const token = await installAnonymousAuth(context, identity);
+  const { token, getSignupRequests } = await installAnonymousAuth(context, identity);
   const page = await context.newPage();
   const webSockets: string[] = [];
   page.on("websocket", (socket) => {
     if (!socket.url().includes("/_next/")) webSockets.push(socket.url());
   });
   await api.install(page, identity, token);
-  return { context, page, webSockets };
+  return { context, page, webSockets, getSignupRequests };
 }
 
 async function expectScenePhase(page: Page, stageName: string, phaseName: string) {
@@ -785,10 +822,138 @@ test("completed review retries without replaying the game journey", async ({ bro
   }
 });
 
+test("active rooms retain recovery polling and presence traffic", async ({ browser }) => {
+  const api = createGameplayApi("investigation_discuss");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    const snapshotCount = api.snapshotRequests.host;
+    await expect.poll(() => api.snapshotRequests.host, { timeout: 4_000 }).toBeGreaterThan(snapshotCount);
+    await expect.poll(
+      () => api.presenceBodies.filter(({ identity }) => identity === "host").length,
+      { timeout: 4_000 },
+    ).toBeGreaterThan(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("completion cancels gameplay traffic and navigation does not revive it", async ({ browser }) => {
+  test.setTimeout(60_000);
+  const api = createGameplayApi("investigation_discuss");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await expect.poll(
+      () => api.appliedPresenceBodies.filter(({ identity }) => identity === "host").length,
+    ).toBeGreaterThan(0);
+    await host.page.waitForTimeout(750);
+    const presenceCount = api.presenceBodies.filter(
+      ({ identity }) => identity === "host",
+    ).length;
+    const appliedPresenceCount = api.appliedPresenceBodies.filter(
+      ({ identity }) => identity === "host",
+    ).length;
+    api.holdNextPresence();
+
+    await host.page.keyboard.down("KeyD");
+    await expect.poll(
+      () => api.presenceBodies.filter(({ identity }) => identity === "host").length,
+    ).toBe(presenceCount + 1);
+    await host.page.waitForTimeout(650);
+    await host.page.keyboard.up("KeyD");
+    api.setState("completed");
+    await expect(
+      host.page.getByText("当前阶段 · 游戏完成", { exact: true }),
+    ).toBeVisible({ timeout: 8_000 });
+    const completedSnapshotCount = api.snapshotRequests.host;
+
+    api.releasePresence();
+    await expect.poll(api.getAbortedPresenceRequests).toBe(1);
+    await host.page.waitForTimeout(5_500);
+    expect(api.snapshotRequests.host).toBe(completedSnapshotCount);
+    expect(
+      api.presenceBodies.filter(({ identity }) => identity === "host"),
+    ).toHaveLength(presenceCount + 1);
+    expect(
+      api.appliedPresenceBodies.filter(({ identity }) => identity === "host"),
+    ).toHaveLength(appliedPresenceCount);
+
+    await host.page.getByRole("button", { name: "打开复盘" }).click();
+    const endingName = gameplayContract.reviews.host.ending.name;
+    await expect(host.page.getByRole("heading", { name: endingName })).toBeVisible({ timeout: 8_000 });
+    expect(api.reviewRequests).toEqual(["host"]);
+    const backgroundPage = await host.context.newPage();
+    await backgroundPage.goto("about:blank");
+    await backgroundPage.bringToFront();
+    await host.page.bringToFront();
+    await host.context.setOffline(true);
+    await host.context.setOffline(false);
+    await host.page.waitForTimeout(1_500);
+    expect(api.snapshotRequests.host).toBe(completedSnapshotCount);
+    expect(api.reviewRequests).toEqual(["host"]);
+
+    await host.page.goto(`/play/${sessionId}/review`);
+    await expect(host.page.getByRole("heading", { name: endingName })).toBeVisible({ timeout: 8_000 });
+    expect(api.reviewRequests).toEqual(["host", "host"]);
+    await host.page.waitForTimeout(5_500);
+    expect(api.snapshotRequests.host).toBe(completedSnapshotCount);
+    expect(
+      api.presenceBodies.filter(({ identity }) => identity === "host"),
+    ).toHaveLength(presenceCount + 1);
+  } finally {
+    api.releasePresence();
+    await host.context.close();
+  }
+});
+
+test("direct completed review cold-loads and refreshes without gameplay traffic", async ({ browser }) => {
+  test.setTimeout(45_000);
+  const api = createGameplayApi("completed");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/review`);
+    const endingName = gameplayContract.reviews.host.ending.name;
+    await expect(host.page.getByRole("heading", { name: endingName })).toBeVisible({ timeout: 8_000 });
+    expect(host.getSignupRequests()).toBe(1);
+    expect(api.reviewRequests).toEqual(["host"]);
+    expect(api.snapshotRequests.host).toBe(0);
+    expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+
+    const backgroundPage = await host.context.newPage();
+    await backgroundPage.goto("about:blank");
+    await backgroundPage.bringToFront();
+    await host.page.bringToFront();
+    await host.context.setOffline(true);
+    await host.context.setOffline(false);
+    await host.page.waitForTimeout(5_500);
+    expect(api.reviewRequests).toEqual(["host"]);
+    expect(api.snapshotRequests.host).toBe(0);
+    expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+
+    await host.page.reload();
+    await expect(host.page.getByRole("heading", { name: endingName })).toBeVisible({ timeout: 8_000 });
+    expect(host.getSignupRequests()).toBe(1);
+    expect(api.reviewRequests).toEqual(["host", "host"]);
+    await host.page.getByRole("button", { name: "刷新复盘" }).click();
+    await expect.poll(() => api.reviewRequests.length).toBe(3);
+    expect(api.snapshotRequests.host).toBe(0);
+    expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+
 test("scene review hotspot opens the same completed surface as the fixed entry", async ({ context, page }) => {
   const api = createGameplayApi("completed");
   api.setPresence("host", { x: 1500, y: 1150, facing: "left", moving: false });
-  const token = await installAnonymousAuth(context, "host");
+  const { token } = await installAnonymousAuth(context, "host");
   await api.install(page, "host", token);
   const hostReview = gameplayContract.reviews.host;
 

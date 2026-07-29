@@ -72,6 +72,11 @@ function createMockRoomApi() {
   let revision = 0;
   const members = new Map<Identity, Member>();
   const invites: Invite[] = [];
+  const snapshotRequests: Record<Identity, number> = {
+    host: 0,
+    guest: 0,
+    outsider: 0,
+  };
 
   const publicInvites = () => invites.map(({ token: _token, ...invite }) => invite);
   const prerequisitesReady = () => {
@@ -143,6 +148,7 @@ function createMockRoomApi() {
       if (!member) return apiError(route, 403, "NOT_ROOM_MEMBER", "Not a member");
 
       if (pathname === `/api/v1/sessions/${sessionId}/snapshot` && method === "GET") {
+        snapshotRequests[identity] += 1;
         const orderedMembers = [...members.values()];
         if (status === "active") {
           return json(route, {
@@ -280,7 +286,7 @@ function createMockRoomApi() {
     });
   };
 
-  return { install };
+  return { install, snapshotRequests };
 }
 
 async function createPlayerPage(
@@ -301,6 +307,24 @@ async function createPlayerPage(
   await api.install(page, identity, token);
   return { context, page, webSockets };
 }
+
+test("lobby rooms retain recovery polling", async ({ browser }) => {
+  const api = createMockRoomApi();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto("/multiplayer");
+    await host.page.getByRole("button", { name: "创建双人房间" }).click();
+    await expect(host.page.getByRole("heading", { name: "房间大厅" })).toBeVisible();
+    const snapshotCount = api.snapshotRequests.host;
+    await expect.poll(
+      () => api.snapshotRequests.host,
+      { timeout: 4_000 },
+    ).toBeGreaterThan(snapshotCount);
+  } finally {
+    await host.context.close();
+  }
+});
 
 test("two anonymous players can join, select, ready, and atomically start without WebSocket", async ({ browser }) => {
   test.setTimeout(60_000);
