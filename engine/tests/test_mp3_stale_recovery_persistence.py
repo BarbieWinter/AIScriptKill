@@ -22,6 +22,7 @@ from engine.core.checkpoint_models import checkpoint_config
 from engine.db.session import build_async_database_url, build_connect_args
 from engine.db.tables import (
     game_sessions,
+    room_outbox,
     script_packages,
     session_checkpoints,
     session_command_receipts,
@@ -151,6 +152,15 @@ async def test_postgres_reclaims_one_expired_attempt_and_fences_stale_finalizati
 
         async with factory() as db:
             repository = SessionCommandRepository(db)
+            await db.execute(
+                update(game_sessions)
+                .where(game_sessions.c.id == session_id)
+                .values(
+                    state={"winning_attempt": 1},
+                    revision=1,
+                    event_head_sequence=1,
+                )
+            )
             stale_finalized = await repository.finalize_success(
                 session_id=session_id,
                 command_id=first_command_id,
@@ -159,14 +169,24 @@ async def test_postgres_reclaims_one_expired_attempt_and_fences_stale_finalizati
                 revision=1,
                 event_sequence=1,
                 event_payload={"result": _success_result()},
+                outbox_topic="room.events.v1",
             )
             assert stale_finalized is False
-            await db.commit()
+            await db.rollback()
 
             receipt = await repository.get_receipt(session_id, first_command_id)
             assert receipt is not None
             assert receipt.status == "processing"
             assert receipt.attempt_count == 2
+            room = (
+                await db.execute(
+                    select(
+                        game_sessions.c.state,
+                        game_sessions.c.revision,
+                        game_sessions.c.event_head_sequence,
+                    ).where(game_sessions.c.id == session_id)
+                )
+            ).one()
             events = (
                 await db.execute(
                     select(session_events.c.sequence).where(
@@ -174,7 +194,67 @@ async def test_postgres_reclaims_one_expired_attempt_and_fences_stale_finalizati
                     )
                 )
             ).all()
+            outbox_rows = (
+                await db.execute(
+                    select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
+                )
+            ).all()
+            assert room == ({}, 0, 0)
             assert events == []
+            assert outbox_rows == []
+
+            await db.execute(
+                update(game_sessions)
+                .where(game_sessions.c.id == session_id)
+                .values(
+                    state={"winning_attempt": 2},
+                    revision=1,
+                    event_head_sequence=1,
+                )
+            )
+            winner_finalized = await repository.finalize_success(
+                session_id=session_id,
+                command_id=first_command_id,
+                attempt_count=2,
+                result=_success_result(),
+                revision=1,
+                event_sequence=1,
+                event_payload={"result": _success_result()},
+                outbox_topic="room.events.v1",
+            )
+            assert winner_finalized is True
+            await db.commit()
+
+            winner_receipt = await repository.get_receipt(session_id, first_command_id)
+            assert winner_receipt is not None
+            assert winner_receipt.status == "succeeded"
+            winner_room = (
+                await db.execute(
+                    select(
+                        game_sessions.c.state,
+                        game_sessions.c.revision,
+                        game_sessions.c.event_head_sequence,
+                    ).where(game_sessions.c.id == session_id)
+                )
+            ).one()
+            winner_events = (
+                await db.execute(
+                    select(session_events.c.id, session_events.c.sequence).where(
+                        session_events.c.session_id == session_id
+                    )
+                )
+            ).all()
+            winner_outbox = (
+                await db.execute(
+                    select(room_outbox.c.room_event_id).where(
+                        room_outbox.c.session_id == session_id
+                    )
+                )
+            ).all()
+            assert winner_room == ({"winning_attempt": 2}, 1, 1)
+            assert len(winner_events) == 1
+            assert winner_events[0].sequence == 1
+            assert winner_outbox == [(winner_events[0].id,)]
     finally:
         await _remove_script(engine, script_id)
         await engine.dispose()
