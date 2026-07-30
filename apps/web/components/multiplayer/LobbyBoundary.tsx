@@ -15,6 +15,7 @@ import {
   currentMultiplayerRoomKey,
   roomSnapshotKey,
 } from "@/lib/multiplayer/room-client";
+import type { CurrentMultiplayerRoom } from "@/lib/multiplayer/types";
 import { ClosedRoomCommandRecovery } from "./ClosedRoomCommandRecovery";
 import { IncompleteRoomControl } from "./IncompleteRoomControl";
 import { LobbyShell } from "./LobbyShell";
@@ -44,10 +45,12 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
   });
 
   useEffect(() => {
-    if (snapshot.data?.status === "closed" || snapshot.data?.status === "completed") {
+    if (snapshot.data?.status !== "closed" && snapshot.data?.status !== "completed") return;
+    const currentRoom = queryClient.getQueryData<CurrentMultiplayerRoom>(currentMultiplayerRoomKey);
+    if (currentRoom?.session_id === sessionId) {
       queryClient.setQueryData(currentMultiplayerRoomKey, null);
     }
-  }, [queryClient, snapshot.data?.status]);
+  }, [queryClient, sessionId, snapshot.data?.status]);
 
   if (snapshot.isPending) {
     return (

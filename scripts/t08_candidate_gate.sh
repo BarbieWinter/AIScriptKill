@@ -179,7 +179,7 @@ make lint
 make typecheck-api
 
 log "Running the complete backend and database suite"
-uv run --frozen pytest engine/tests/ -q
+T08_CANDIDATE_GATE=1 uv run --frozen pytest engine/tests/ -q
 
 log "Running route-mocked browser journeys"
 CI=1 npm --prefix apps/web run test:e2e

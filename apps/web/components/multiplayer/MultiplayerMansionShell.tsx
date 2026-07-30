@@ -1002,7 +1002,21 @@ export function MultiplayerMansionShell({
       snapshot.self_member_id,
     );
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== storageKey || event.newValue === null) return;
+      if (event.key !== storageKey) return;
+      if (event.newValue === null) {
+        commandOwnerGenerationRef.current += 1;
+        commandRecoveryControllerRef.current?.abort();
+        commandRecoveryControllerRef.current = null;
+        commandOperationRef.current = null;
+        activeCommandRecordRef.current = null;
+        acceptedCommandRef.current = null;
+        acceptedSnapshotControllerRef.current?.abort();
+        acceptedSnapshotControllerRef.current = null;
+        postCommandSuccessRef.current = null;
+        commandLockRef.current = false;
+        setCommandRecovery({ status: "idle" });
+        return;
+      }
       const record = readPersistedRoomCommand(snapshot.session_id, snapshot.self_member_id);
       if (!record) return;
       const activeRecord = activeCommandRecordRef.current;

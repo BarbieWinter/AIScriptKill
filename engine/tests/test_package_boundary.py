@@ -627,6 +627,8 @@ def test_load_package_directory_rejects_symlink_before_copying_host_file(tmp_pat
         link.symlink_to(outside)
     except OSError as error:
         if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            if os.environ.get("T08_CANDIDATE_GATE") == "1":
+                pytest.fail("Windows symlink privilege is required for the T08 candidate gate")
             pytest.skip("Windows symlink privilege is unavailable")
         raise
 
