@@ -4,12 +4,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CircleStop, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { readPersistedRoomCommand } from "@/lib/multiplayer/command-recovery";
 import {
   multiplayerErrorCode,
   multiplayerErrorMessage,
 } from "@/lib/multiplayer/error-messages";
 import {
   currentMultiplayerRoomKey,
+  MultiplayerClientError,
   roomSnapshotKey,
   type MultiplayerRoomClient,
 } from "@/lib/multiplayer/room-client";
@@ -35,15 +37,27 @@ export function IncompleteRoomControl({ client, snapshot }: IncompleteRoomContro
   const canEnd = snapshot.status === "lobby"
     ? snapshot.capabilities.can_end_incomplete
     : snapshot.status === "active" && snapshot.can_end_incomplete;
+  const memberId = snapshot.status === "lobby"
+    ? snapshot.self.member_id
+    : snapshot.self_member_id;
   const actionLabel = snapshot.status === "lobby" ? "关闭房间" : "放弃本局";
   const confirmationTitle = snapshot.status === "lobby" ? "关闭这个房间？" : "放弃这局游戏？";
 
   const closeRoom = useMutation({
-    mutationFn: () => client.sendCommand(snapshot.session_id, {
-      expected_revision: snapshot.revision,
-      type: "room.end_incomplete",
-      payload: { reason: null },
-    }),
+    mutationFn: () => {
+      if (readPersistedRoomCommand(snapshot.session_id, memberId)) {
+        throw new MultiplayerClientError(
+          409,
+          "COMMAND_IN_PROGRESS",
+          "上一条命令仍在恢复，请先等待其终态。",
+        );
+      }
+      return client.sendCommand(snapshot.session_id, {
+        expected_revision: snapshot.revision,
+        type: "room.end_incomplete",
+        payload: { reason: null },
+      });
+    },
     onSuccess: async () => {
       setConfirming(false);
       queryClient.setQueryData(currentMultiplayerRoomKey, null);

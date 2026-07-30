@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Check,
@@ -23,6 +23,19 @@ import { CompletedReview } from "@/components/multiplayer/CompletedReview";
 import { Sheet } from "@/components/ui/Sheet";
 import type { DemoSessionHotspot } from "@/lib/demo-data";
 import {
+  claimPersistedRoomCommand,
+  clearPersistedRoomCommand,
+  createPersistedRoomCommand,
+  pendingRoomCommandStorageKey,
+  persistedRoomCommandId,
+  readPersistedRoomCommand,
+  resumePersistedRoomCommand,
+  submitPersistedRoomCommand,
+  withCommandRecoveryRequestDeadline,
+  type PersistedRoomCommand,
+  type RoomCommandTerminal,
+} from "@/lib/multiplayer/command-recovery";
+import {
   multiplayerErrorMessage,
   shouldRetryMultiplayer,
 } from "@/lib/multiplayer/error-messages";
@@ -31,14 +44,17 @@ import {
   multiplayerReviewKey,
   MultiplayerClientError,
   roomSnapshotKey,
+  selectNewerRoomSnapshot,
   type MultiplayerRoomClient,
 } from "@/lib/multiplayer/room-client";
 import type {
+  AcceptedCommandResponse,
   GameplayHint,
   GameplayMaterial,
   GameplaySettlement,
   GameplaySnapshotV1,
   RoomCommandInput,
+  RoomSnapshotV1,
 } from "@/lib/multiplayer/types";
 import { createUuid } from "@/lib/uuid";
 
@@ -50,6 +66,28 @@ const phaseLabel = {
 } as const;
 
 type ScenePanel = "chapters" | "materials" | "hints" | "discussion" | "settlement" | "review" | null;
+type CommandRecoveryView =
+  | { status: "idle" }
+  | { status: "processing"; commandId: string; error: unknown | null }
+  | { status: "accepted"; commandId: string; error: unknown | null }
+  | { status: "rejected"; commandId: string; error: unknown }
+  | { status: "error"; commandId: string; error: unknown };
+type AcceptedCommandRecovery = {
+  record: PersistedRoomCommand;
+  response: AcceptedCommandResponse;
+  ownerGeneration: number;
+  focusTarget?: HTMLElement | null;
+};
+
+function snapshotIncludesAcceptedCommand(
+  snapshot: RoomSnapshotV1,
+  response: AcceptedCommandResponse,
+) {
+  if (snapshot.revision < response.revision) return false;
+  if (response.event_sequence === 0) return true;
+  return "event_head_sequence" in snapshot
+    && snapshot.event_head_sequence >= response.event_sequence;
+}
 
 function isScenePanelAvailable(
   panel: ScenePanel,
@@ -421,12 +459,47 @@ export function MultiplayerMansionShell({
 }) {
   const queryClient = useQueryClient();
   const [panel, setPanel] = useState<ScenePanel>(null);
-  const [postCommandPending, setPostCommandPending] = useState(false);
-  const [postCommandError, setPostCommandError] = useState<unknown>(null);
+  const [commandRecovery, setCommandRecovery] = useState<CommandRecoveryView>({ status: "idle" });
   const panelContextRef = useRef<string | null>(null);
   const panelFallbackRef = useRef<HTMLElement>(null);
   const commandLockRef = useRef(false);
+  const commandOperationRef = useRef<Promise<void> | null>(null);
+  const commandRecoveryControllerRef = useRef<AbortController | null>(null);
+  const runPersistedCommandRef = useRef<(
+    record: PersistedRoomCommand,
+    submitFirst: boolean,
+    focusTarget?: HTMLElement | null,
+  ) => void>(() => undefined);
+  const activeCommandRecordRef = useRef<PersistedRoomCommand | null>(null);
+  const acceptedCommandRef = useRef<AcceptedCommandRecovery | null>(null);
+  const acceptedSnapshotControllerRef = useRef<AbortController | null>(null);
   const postCommandSuccessRef = useRef<(() => void) | null>(null);
+  const snapshotRef = useRef<RoomSnapshotV1>(snapshot);
+  snapshotRef.current = snapshot;
+  const commandIdentity = `${snapshot.session_id}:${snapshot.self_member_id}`;
+  const commandIdentityRef = useRef(commandIdentity);
+  commandIdentityRef.current = commandIdentity;
+  const commandOwnerGenerationRef = useRef(0);
+
+  useEffect(() => {
+    const ownerGeneration = commandOwnerGenerationRef.current + 1;
+    commandOwnerGenerationRef.current = ownerGeneration;
+    return () => {
+      if (commandOwnerGenerationRef.current === ownerGeneration) {
+        commandOwnerGenerationRef.current += 1;
+        commandRecoveryControllerRef.current?.abort();
+        commandRecoveryControllerRef.current = null;
+        commandOperationRef.current = null;
+        activeCommandRecordRef.current = null;
+        acceptedCommandRef.current = null;
+        acceptedSnapshotControllerRef.current?.abort();
+        acceptedSnapshotControllerRef.current = null;
+        postCommandSuccessRef.current = null;
+        commandLockRef.current = false;
+      }
+    };
+  }, [commandIdentity]);
+
   const hintCommandsAvailable = snapshot.status === "active"
     && snapshot.phase === "discuss"
     && snapshot.hints.length > 0;
@@ -468,15 +541,6 @@ export function MultiplayerMansionShell({
     ),
     [queryClient, snapshot.session_id],
   );
-  const command = useMutation({
-    mutationFn: (input: RoomCommandInput) => client.sendCommand(snapshot.session_id, input),
-    onError: (error) => {
-      if (error instanceof MultiplayerClientError && error.code === "REVISION_MISMATCH") {
-        void refreshSnapshot();
-      }
-      toast.error(multiplayerErrorMessage(error));
-    },
-  });
   const review = useQuery({
     queryKey: multiplayerReviewKey(snapshot.session_id, snapshot.self_member_id),
     queryFn: async ({ signal }) => {
@@ -697,42 +761,347 @@ export function MultiplayerMansionShell({
     window.requestAnimationFrame(() => panelFallbackRef.current?.focus());
   }, [activePanel, panel]);
 
-  const commandError = command.error ?? postCommandError;
-  const commandPending = command.isPending || postCommandPending || postCommandError !== null;
-  const sendCommand = (input: RoomCommandInput, onSuccess?: () => void) => {
-    if (commandLockRef.current || postCommandError !== null) return;
-    commandLockRef.current = true;
+  const commandOwnerIsCurrent = useCallback((
+    record: PersistedRoomCommand,
+    ownerGeneration: number,
+  ) => commandOwnerGenerationRef.current === ownerGeneration
+    && commandIdentityRef.current === `${record.session_id}:${record.member_id}`, []);
+
+  const finalizeAcceptedCommand = useCallback(async (accepted: AcceptedCommandRecovery) => {
+    if (!commandOwnerIsCurrent(accepted.record, accepted.ownerGeneration)) return;
+    const current = acceptedCommandRef.current;
+    if (
+      !current
+      || current.ownerGeneration !== accepted.ownerGeneration
+      || current.record.serialized_envelope !== accepted.record.serialized_envelope
+    ) return;
+
+    const cleared = await clearPersistedRoomCommand(accepted.record);
+    if (!commandOwnerIsCurrent(accepted.record, accepted.ownerGeneration)) return;
+    const remaining = readPersistedRoomCommand(
+      accepted.record.session_id,
+      accepted.record.member_id,
+    );
+    if (!cleared && remaining?.serialized_envelope === accepted.record.serialized_envelope) {
+      setCommandRecovery({
+        status: "accepted",
+        commandId: accepted.response.command_id,
+        error: new MultiplayerClientError(
+          409,
+          "COMMAND_STORAGE_BUSY",
+          "命令已接受，但浏览器存储仍在同步，请稍后重试。",
+        ),
+      });
+      return;
+    }
+
+    acceptedCommandRef.current = null;
+    acceptedSnapshotControllerRef.current?.abort();
+    acceptedSnapshotControllerRef.current = null;
+    if (
+      activeCommandRecordRef.current?.serialized_envelope
+      === accepted.record.serialized_envelope
+    ) {
+      activeCommandRecordRef.current = null;
+    }
+    const acceptedCallback = remaining?.serialized_envelope === accepted.record.serialized_envelope
+      || remaining === null
+      ? postCommandSuccessRef.current
+      : null;
     postCommandSuccessRef.current = null;
-    setPostCommandPending(true);
-    setPostCommandError(null);
-    command.reset();
-    let accepted = false;
-    void command.mutateAsync(input).then(async () => {
-      accepted = true;
-      postCommandSuccessRef.current = onSuccess ?? null;
-      await refreshSnapshot(true);
-      command.reset();
-      const acceptedCallback = postCommandSuccessRef.current;
-      postCommandSuccessRef.current = null;
-      acceptedCallback?.();
-    }).catch((error: unknown) => {
-      if (!accepted) return;
-      setPostCommandError(error);
+    setCommandRecovery({ status: "idle" });
+    acceptedCallback?.();
+    if (accepted.focusTarget) {
+      window.requestAnimationFrame(() => {
+        const target = accepted.focusTarget?.isConnected
+          ? accepted.focusTarget
+          : panelFallbackRef.current;
+        target?.focus();
+      });
+    }
+  }, [commandOwnerIsCurrent]);
+
+  const syncAcceptedCommand = useCallback(async (
+    record: PersistedRoomCommand,
+    response: AcceptedCommandResponse,
+    ownerGeneration: number,
+    focusTarget?: HTMLElement | null,
+  ) => {
+    if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+    const previous = acceptedCommandRef.current;
+    const accepted: AcceptedCommandRecovery = {
+      record,
+      response,
+      ownerGeneration,
+      focusTarget: focusTarget ?? (
+        previous?.record.serialized_envelope === record.serialized_envelope
+          ? previous.focusTarget
+          : null
+      ),
+    };
+    acceptedCommandRef.current = accepted;
+    setCommandRecovery({ status: "accepted", commandId: response.command_id, error: null });
+    acceptedSnapshotControllerRef.current?.abort();
+    const snapshotController = new AbortController();
+    acceptedSnapshotControllerRef.current = snapshotController;
+
+    try {
+      await queryClient.cancelQueries({
+        queryKey: roomSnapshotKey(record.session_id),
+        exact: true,
+      });
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      const authoritativeSnapshot = await withCommandRecoveryRequestDeadline(
+        (requestSignal) => client.getSnapshot(record.session_id, requestSignal),
+        snapshotController.signal,
+      );
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      if (
+        acceptedCommandRef.current?.record.serialized_envelope
+        !== record.serialized_envelope
+      ) return;
+      if (!snapshotIncludesAcceptedCommand(authoritativeSnapshot, response)) {
+        throw new MultiplayerClientError(
+          409,
+          "COMMAND_SNAPSHOT_STALE",
+          "权威房间状态尚未包含已接受命令。",
+          {
+            command_id: response.command_id,
+            required_revision: String(response.revision),
+            required_event_sequence: String(response.event_sequence),
+          },
+        );
+      }
+      queryClient.setQueryData<RoomSnapshotV1>(
+        roomSnapshotKey(record.session_id),
+        (current) => selectNewerRoomSnapshot(current, authoritativeSnapshot),
+      );
+      await finalizeAcceptedCommand(accepted);
+    } catch (error) {
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      const current = acceptedCommandRef.current;
+      if (
+        !current
+        || current.record.serialized_envelope !== record.serialized_envelope
+      ) return;
+      if (snapshotIncludesAcceptedCommand(snapshotRef.current, response)) {
+        void finalizeAcceptedCommand(current);
+        return;
+      }
+      setCommandRecovery({ status: "accepted", commandId: response.command_id, error });
       toast.error(multiplayerErrorMessage(error));
-    }).finally(() => {
-      commandLockRef.current = false;
-      setPostCommandPending(false);
+    } finally {
+      if (acceptedSnapshotControllerRef.current === snapshotController) {
+        acceptedSnapshotControllerRef.current = null;
+      }
+    }
+  }, [client, commandOwnerIsCurrent, finalizeAcceptedCommand, queryClient]);
+
+  useEffect(() => {
+    const accepted = acceptedCommandRef.current;
+    if (!accepted || !snapshotIncludesAcceptedCommand(snapshot, accepted.response)) return;
+    void finalizeAcceptedCommand(accepted);
+  }, [finalizeAcceptedCommand, snapshot]);
+
+  const handleCommandTerminal = useCallback(async (
+    record: PersistedRoomCommand,
+    terminal: RoomCommandTerminal,
+    ownerGeneration: number,
+    focusTarget?: HTMLElement | null,
+  ) => {
+    if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+    const commandId = terminal.response?.command_id ?? persistedRoomCommandId(record);
+    if (terminal.status === "accepted") {
+      await syncAcceptedCommand(record, terminal.response, ownerGeneration, focusTarget);
+      return;
+    }
+
+    const cleared = await clearPersistedRoomCommand(record);
+    if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+    const remaining = readPersistedRoomCommand(record.session_id, record.member_id);
+    acceptedCommandRef.current = null;
+    acceptedSnapshotControllerRef.current?.abort();
+    acceptedSnapshotControllerRef.current = null;
+    if (activeCommandRecordRef.current?.serialized_envelope === record.serialized_envelope) {
+      activeCommandRecordRef.current = null;
+    }
+    postCommandSuccessRef.current = null;
+    setCommandRecovery({ status: "rejected", commandId, error: terminal.error });
+    if (terminal.error.code === "REVISION_MISMATCH") void refreshSnapshot();
+    if (!cleared && remaining?.serialized_envelope === record.serialized_envelope) {
+      toast.error("命令已拒绝，但浏览器存储仍在同步，请稍后刷新恢复。");
+    } else {
+      toast.error(multiplayerErrorMessage(terminal.error));
+    }
+  }, [commandOwnerIsCurrent, refreshSnapshot, syncAcceptedCommand]);
+
+  const runPersistedCommand = useCallback((
+    record: PersistedRoomCommand,
+    submitFirst: boolean,
+    focusTarget?: HTMLElement | null,
+  ) => {
+    if (commandOperationRef.current) return;
+    const ownerGeneration = commandOwnerGenerationRef.current;
+    const recoveryController = new AbortController();
+    commandRecoveryControllerRef.current = recoveryController;
+    const commandId = persistedRoomCommandId(record);
+    activeCommandRecordRef.current = record;
+    commandLockRef.current = true;
+    setCommandRecovery({ status: "processing", commandId, error: null });
+    const onProcessing = (nextCommandId: string) => {
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      setCommandRecovery({ status: "processing", commandId: nextCommandId, error: null });
+    };
+    const operation = (submitFirst
+      ? submitPersistedRoomCommand(client, record, onProcessing, recoveryController.signal)
+      : resumePersistedRoomCommand(client, record, onProcessing, recoveryController.signal))
+      .then((terminal) => handleCommandTerminal(
+        record,
+        terminal,
+        ownerGeneration,
+        focusTarget,
+      ))
+      .catch((error: unknown) => {
+        if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+        setCommandRecovery({ status: "processing", commandId, error });
+        toast.error(multiplayerErrorMessage(error));
+      })
+      .finally(() => {
+        if (commandOperationRef.current !== operation) return;
+        commandOperationRef.current = null;
+        if (commandRecoveryControllerRef.current === recoveryController) {
+          commandRecoveryControllerRef.current = null;
+        }
+        commandLockRef.current = false;
+        const successor = readPersistedRoomCommand(record.session_id, record.member_id);
+        if (
+          successor
+          && successor.serialized_envelope !== record.serialized_envelope
+          && commandOwnerIsCurrent(record, ownerGeneration)
+        ) {
+          postCommandSuccessRef.current = null;
+          window.setTimeout(() => {
+            if (commandOwnerIsCurrent(record, ownerGeneration) && !commandOperationRef.current) {
+              runPersistedCommandRef.current(successor, false);
+            }
+          }, 0);
+        }
+      });
+    commandOperationRef.current = operation;
+  }, [client, commandOwnerIsCurrent, handleCommandTerminal]);
+  runPersistedCommandRef.current = runPersistedCommand;
+
+  useEffect(() => {
+    const record = readPersistedRoomCommand(snapshot.session_id, snapshot.self_member_id);
+    if (record) runPersistedCommand(record, false);
+  }, [runPersistedCommand, snapshot.self_member_id, snapshot.session_id]);
+
+  useEffect(() => {
+    const storageKey = pendingRoomCommandStorageKey(
+      snapshot.session_id,
+      snapshot.self_member_id,
+    );
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey || event.newValue === null) return;
+      const record = readPersistedRoomCommand(snapshot.session_id, snapshot.self_member_id);
+      if (!record) return;
+      const activeRecord = activeCommandRecordRef.current;
+      if (activeRecord?.serialized_envelope !== record.serialized_envelope) {
+        postCommandSuccessRef.current = null;
+      }
+      runPersistedCommand(record, false);
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [runPersistedCommand, snapshot.self_member_id, snapshot.session_id]);
+
+  const commandError = "error" in commandRecovery ? commandRecovery.error : null;
+  const commandPending = commandRecovery.status === "processing"
+    || commandRecovery.status === "accepted";
+  const sendCommand = (input: RoomCommandInput, onSuccess?: () => void) => {
+    if (commandLockRef.current || commandPending) return;
+    const ownerGeneration = commandOwnerGenerationRef.current;
+    const prepared = client.prepareCommand(input);
+    const record = createPersistedRoomCommand(
+      snapshot.session_id,
+      snapshot.self_member_id,
+      prepared,
+    );
+    commandLockRef.current = true;
+    const claimController = new AbortController();
+    commandRecoveryControllerRef.current?.abort();
+    commandRecoveryControllerRef.current = claimController;
+    postCommandSuccessRef.current = onSuccess ?? null;
+    setCommandRecovery({ status: "processing", commandId: prepared.command_id, error: null });
+    void claimPersistedRoomCommand(record, claimController.signal).then((claim) => {
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      if (commandRecoveryControllerRef.current === claimController) {
+        commandRecoveryControllerRef.current = null;
+      }
+      if (!claim.claimed && claim.record.serialized_envelope !== record.serialized_envelope) {
+        postCommandSuccessRef.current = null;
+      }
+      if (!commandOperationRef.current) commandLockRef.current = false;
+      runPersistedCommand(claim.record, claim.claimed);
+    }).catch((error: unknown) => {
+      if (!commandOwnerIsCurrent(record, ownerGeneration)) return;
+      if (commandRecoveryControllerRef.current === claimController) {
+        commandRecoveryControllerRef.current = null;
+      }
+      const existing = readPersistedRoomCommand(record.session_id, record.member_id);
+      if (!commandOperationRef.current) commandLockRef.current = false;
+      if (existing) {
+        if (existing.serialized_envelope !== record.serialized_envelope) {
+          postCommandSuccessRef.current = null;
+        }
+        runPersistedCommand(existing, false);
+        return;
+      }
+      postCommandSuccessRef.current = null;
+      setCommandRecovery({ status: "error", commandId: prepared.command_id, error });
+      toast.error(multiplayerErrorMessage(error));
     });
   };
   const recoverCommandError = () => {
     const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'));
     const focusTarget = dialogs.at(-1) ?? panelFallbackRef.current;
+    if (commandRecovery.status === "processing") {
+      const record = activeCommandRecordRef.current
+        ?? readPersistedRoomCommand(snapshot.session_id, snapshot.self_member_id);
+      if (record) {
+        runPersistedCommand(record, false, focusTarget);
+        return;
+      }
+    }
+    if (commandRecovery.status === "accepted") {
+      const record = activeCommandRecordRef.current
+        ?? readPersistedRoomCommand(snapshot.session_id, snapshot.self_member_id);
+      const accepted = acceptedCommandRef.current;
+      if (
+        record
+        && accepted
+        && accepted.record.serialized_envelope === record.serialized_envelope
+        && !commandOperationRef.current
+      ) {
+        const ownerGeneration = commandOwnerGenerationRef.current;
+        commandLockRef.current = true;
+        const operation = syncAcceptedCommand(
+          record,
+          accepted.response,
+          ownerGeneration,
+          focusTarget,
+        ).finally(() => {
+          if (commandOperationRef.current === operation) {
+            commandOperationRef.current = null;
+            commandLockRef.current = false;
+          }
+        });
+        commandOperationRef.current = operation;
+        return;
+      }
+    }
     void refreshSnapshot(true).then(() => {
-      command.reset();
-      setPostCommandError(null);
-      const acceptedCallback = postCommandSuccessRef.current;
-      postCommandSuccessRef.current = null;
-      acceptedCallback?.();
+      setCommandRecovery({ status: "idle" });
       window.requestAnimationFrame(() => {
         const target = focusTarget?.isConnected ? focusTarget : panelFallbackRef.current;
         target?.focus();
@@ -798,14 +1167,43 @@ export function MultiplayerMansionShell({
           ? "前往圆桌，在双方掌握的材料范围内提交判断。"
           : "回到圆桌查看阶段结论，并在允许时进入下一章。";
   const renderCommandError = (insideSheet: boolean) => {
-    if (commandError === null || commandError === undefined) return null;
+    if (commandRecovery.status === "idle") return null;
+    const hasError = commandError !== null && commandError !== undefined;
+    const statusText = commandRecovery.status === "processing"
+      ? hasError
+        ? `命令状态仍不确定：${multiplayerErrorMessage(commandError)}`
+        : "正在确认上一条命令，请勿重复操作。"
+      : commandRecovery.status === "accepted"
+        ? hasError
+          ? `命令已接受，但同步失败：${multiplayerErrorMessage(commandError)}`
+          : "命令已接受，正在同步最新房间状态。"
+        : commandRecovery.status === "rejected"
+          ? `命令已拒绝：${multiplayerErrorMessage(commandRecovery.error)}`
+          : `命令未提交：${multiplayerErrorMessage(commandRecovery.error)}`;
+    const statusClass = commandRecovery.status === "accepted"
+      ? "is-accepted"
+      : commandRecovery.status === "processing" && !hasError
+        ? "is-processing"
+        : "is-error";
+    const actionLabel = commandRecovery.status === "processing" ? "继续恢复" : "同步";
+    const actionable = hasError
+      || commandRecovery.status === "rejected"
+      || commandRecovery.status === "error";
     return (
       <div
-        role="alert"
-        className={insideSheet ? "multiplayer-scene-error multiplayer-sheet-error" : "multiplayer-scene-error"}
+        role={actionable ? "alert" : "status"}
+        data-testid="command-recovery-status"
+        className={`multiplayer-scene-error multiplayer-command-status ${statusClass}${insideSheet ? " multiplayer-sheet-error" : ""}`}
       >
-        <CircleAlert /><span>{multiplayerErrorMessage(commandError)}</span>
-        <button type="button" onClick={recoverCommandError}><RotateCcw />同步</button>
+        {commandRecovery.status === "processing" && !hasError
+          ? <LoaderCircle className="animate-spin" />
+          : commandRecovery.status === "accepted" && !hasError
+            ? <Check />
+            : <CircleAlert />}
+        <span>{statusText}</span>
+        {actionable && (
+          <button type="button" onClick={recoverCommandError}><RotateCcw />{actionLabel}</button>
+        )}
       </div>
     );
   };

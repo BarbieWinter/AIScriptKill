@@ -391,16 +391,15 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 - 命令使用 `command_id`、`expected_revision` 和持久回执支持服务端幂等回放与 stale attempt reclaim。
 - 状态、事件、命令回执和 outbox 表/批处理函数已有数据库验证。
 - 客户端每 2 秒拉取权威快照，并在同步中断时保留上一次成功状态，见 `LobbyBoundary.tsx:20`。
-- 客户端只会对 transport exception 用同一 UUID 自动重试一次；这不是跨刷新恢复 pending command。
+- active gameplay 客户端会在首发前原子抢占每成员唯一槽位并持久化完整命令 envelope；跨标签页与刷新后恢复同一 `command_id`，receipt 不存在或 processing lease 长期未终结时通过可过期 browser replay lease 原样补发，旧 owner 中断后可由新页面接管并触发服务端 stale reclaim。首发、receipt 查询、replay 与 accepted snapshot 同步都有有界请求期限，存储锁等待也有上限；单次超时继续保持不确定或 accepted 已知状态，不会生成替代 identity 或误判终态。accepted 会先取消旧 snapshot 轮询，并仅在权威快照的 revision 与 event head 覆盖回执边界后、在同一存储锁内清理；房间被另一位玩家关闭后，closed 页面仍会完成本地终态恢复，并响应其他标签页已经完成的终态清理。
 - 空间位置通过独立 HTTP `PUT /scene-presence` 上报，不参与 reducer 门槛。
 
 仍缺少：
 
 - 认证 WebSocket 参与者绑定和房间事件订阅。
-- 客户端 pending command/receipt 恢复，以及不确定 HTTP 5xx 后避免生成新 UUID 重复意图的策略。
 - 客户端按事件序列 replay / gap detection / resync；当前 `room.resync` 忽略 `last_event_sequence`，只是 no-op。
 - 多人 `/events` 的可用鉴权路径；当前路由最终只允许 legacy single session。
-- 浏览器层面的断网、关闭标签页、重新进入后恢复验收。
+- 浏览器层面的真实断网和关闭标签页后重新进入验收；route-mocked 刷新、5xx、processing/accepted/rejected receipt 已覆盖。
 - presence 与“玩家是否能继续玩法”的明确分离测试。
 
 现有 `engine/api/websocket/handler.py:52` 仍只是未认证 `session.ping → session.pong` 心跳端点。虽然 contracts 中存在 WebSocket、snapshot 和 resync 类型，但不能把契约存在算作运行时完成。outbox 也尚未形成实时闭环：gameplay command 当前显式不写 outbox，batch dispatcher 没有具体 transport adapter、常驻 worker 或生产启动入口。
@@ -427,7 +426,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | outbox 实时投递 | 基础表/设计存在 | 表、事务写入与 batch dispatcher 存在；gameplay 不写 topic，且无 adapter/worker | **部分完成** |
 | 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段禁用请求/确认并保留已公开内容只读 | **已完成（候选基线）** |
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
-| 断线后浏览器恢复 | 有快照/重试设计 | HTTP 轮询可重新取得快照，但无 pending command、receipt 或专项浏览器恢复 | **部分完成** |
+| 断线后浏览器恢复 | 有快照/重试设计 | pending envelope、receipt-first 恢复、跨标签页单 identity、可回收 lease 下的字节等价补发、accepted 快照边界和 closed 页面收尾已有专项浏览器覆盖；真实断网/关闭标签页重开仍待验收 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
 | 认证实时事件流 | contracts 存在 | 运行时仍只有 ping/pong；前端继续轮询 | **仅设计** |
 | 未完成房间退出/释放 | 无 | 房主可关闭 lobby 或放弃 active 房间；双方获得最小 closed 快照，receipt/event/outbox 与邀请撤销、reservation 释放原子持久化 | **已完成** |
@@ -583,7 +582,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 
 ### 12.4 下一步必须建设
 
-1. 增加断线、5xx 不确定结果、重开页面、pending command/receipt 恢复和继续全员门槛的浏览器验收。
+1. 补真实断网、关闭标签页重开和继续全员门槛的浏览器验收；5xx 不确定结果、刷新恢复和 pending command/receipt 已完成。
 2. 让 gameplay 写入 outbox，补生产 dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
 3. 将 active 房间的累计讨论历史改为增量或有界投影。
 4. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
@@ -606,7 +605,8 @@ R1  纠正空间与实际 UI 边界（已完成）
  │  - [x] 固定 YAML 提示 UI 合入实际 shell，并遵守讨论/判断边界
  ▼
 R2  恢复与实时同步
- │  - pending command / 5xx / reconnect 浏览器验收
+ │  - [x] pending command / 5xx / reload 浏览器验收
+ │  - reconnect / tab reopen 真实网络验收
  │  - gameplay outbox → worker → authenticated room events
  │  - snapshot + cursor replay + gap resync
  │  - bounded active discussion projection
@@ -646,11 +646,11 @@ R5  旧方向物理清理
 |---|---|---|
 | `uv run --frozen pytest` | **569 passed** | 已连接本地迁移数据库运行全部显式数据库门禁；未执行会重置本地 Supabase 的 T08 候选脚本 |
 | T04 package / gameplay 聚焦测试 | **78 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房缺失历史字段的无条件材料恢复与写回、V2 精确历史校验及跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
-| T06 incomplete-room closure 聚焦验收 | **3 database + 2 browser passed** | 覆盖 lobby 关闭、active 放弃、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
+| T06 incomplete-room closure 聚焦验收 | **3 database + 6 browser passed** | 覆盖 lobby 关闭、active 放弃、待恢复命令阻止关闭、closed 页面完成 accepted/rejected 本地命令终态恢复、accepted 快照同步失败不降级、跨标签页终态清理、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
 | `make test-durable-commands` | **25 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
 | `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
 | 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **25 passed** | 命令恢复、事件 gap、大厅启动、活跃游戏私有投影、未完成房间关闭及双方缓存释放、位置上报退避与终止错误熔断、固定材料/提示/讨论入口、完成态讨论记录、无结算 reveal 推进、嵌套 Sheet、热点等价、原生 radio Tab 顺序、命令接受后的快照刷新锁与连续消息、外部同步恢复、逻辑触发器替换、390×844 触摸操作，以及同步、讨论、判断与复盘恢复浏览器契约 |
+| route-mocked Playwright | **58 passed** | 覆盖跨刷新命令恢复、跨标签页单 identity、receipt 缺失或 processing 过期后的 lease 协调字节等价补发与中断接管、首发/receipt/replay 挂起后的有界恢复、Web Lock 等待上限、accepted snapshot 同步超时、processing replay 4xx 不误判终态、processing/accepted/rejected 可见终态、accepted revision/event head 门槛与旧轮询取消、closed 页面 accepted 同步失败与跨标签页清理、事件 gap、大厅启动、未完成房间关闭门禁、活跃游戏私有投影、位置上报生命周期、固定材料/提示/讨论入口、完成态与复盘、390×844 触摸操作 |
 | 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
 | `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
 | `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
@@ -664,7 +664,7 @@ R5  旧方向物理清理
 - 不支持宣称 AI DM 已实现。
 - 不支持宣称 WebSocket 多人运行时已实现。
 - 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖浏览器断线恢复、5xx 不确定命令结果、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本。
+- 不覆盖真实浏览器断网与关闭标签页重开、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本；route-mocked 5xx 不确定命令和刷新恢复已覆盖。
 - `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
 - 不支持宣称旧搜证方向已从代码中清理完成。
 - 旧冻结包继续按宽容规则读取；当前及后续阶段推进会用显式历史版本标记在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入版本化精确历史的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。

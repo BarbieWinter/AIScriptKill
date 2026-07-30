@@ -35,12 +35,12 @@ export function MultiplayerEntry() {
       router.push(`/play/${encodeURIComponent(room.session_id)}/lobby`);
     },
     onError: (error) => {
-      if (
-        error instanceof MultiplayerClientError &&
-        error.code === "UNFINISHED_ROOM_EXISTS" &&
-        error.details.session_id
-      ) {
-        router.push(`/play/${encodeURIComponent(error.details.session_id)}/lobby`);
+      const unfinishedSessionId = error instanceof MultiplayerClientError
+        && typeof error.details.session_id === "string"
+        ? error.details.session_id
+        : null;
+      if (error instanceof MultiplayerClientError && error.code === "UNFINISHED_ROOM_EXISTS" && unfinishedSessionId) {
+        router.push(`/play/${encodeURIComponent(unfinishedSessionId)}/lobby`);
       }
     },
   });

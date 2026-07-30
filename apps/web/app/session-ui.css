@@ -73,6 +73,17 @@
 }
 .multiplayer-scene-error svg { width: 14px; height: 14px; flex: none; }
 .multiplayer-scene-error button { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #fecaca; }
+.multiplayer-command-status.is-processing {
+  border-color: rgba(147, 197, 253, .25);
+  color: #dbeafe;
+  background: rgba(20, 42, 55, .94);
+}
+.multiplayer-command-status.is-accepted {
+  border-color: rgba(134, 239, 172, .25);
+  color: #dcfce7;
+  background: rgba(20, 55, 37, .94);
+}
+.multiplayer-command-status.is-accepted button { color: #bbf7d0; }
 .multiplayer-sheet-error {
   position: sticky;
   left: auto;

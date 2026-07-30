@@ -1,7 +1,7 @@
 import { expect, test, type Browser, type BrowserContext, type Page, type Route } from "@playwright/test";
 
 type Identity = "host" | "guest";
-type InitialStatus = "lobby" | "active";
+type InitialStatus = "lobby" | "active" | "closed";
 
 const sessionId = "88888888-8888-4888-8888-888888888888";
 const members = {
@@ -56,6 +56,7 @@ function createClosureApi(initialStatus: InitialStatus) {
   let eventHeadSequence = 3;
   let commandCount = 0;
   let currentRoomFailureCount = 0;
+  const commandReceipts = new Map<string, unknown>();
 
   const snapshotFor = (identity: Identity) => {
     const self = members[identity];
@@ -178,6 +179,17 @@ function createClosureApi(initialStatus: InitialStatus) {
         }
         return json(route, { session_id: sessionId, status, mode: "multiplayer_v1" });
       }
+      if (
+        pathname.startsWith(`/api/v1/sessions/${sessionId}/commands/`)
+        && method === "GET"
+      ) {
+        const commandId = decodeURIComponent(pathname.split("/").at(-1) ?? "");
+        const receipt = commandReceipts.get(commandId);
+        if (!receipt) {
+          return json(route, { error: { code: "COMMAND_NOT_FOUND", message: "Receipt missing", details: {} } }, 404);
+        }
+        return json(route, receipt);
+      }
       if (pathname === `/api/v1/sessions/${sessionId}/snapshot` && method === "GET") {
         return json(route, snapshotFor(identity));
       }
@@ -186,6 +198,16 @@ function createClosureApi(initialStatus: InitialStatus) {
       }
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
         const body = request.postDataJSON();
+        const existingReceipt = commandReceipts.get(body.command_id) as { status?: string } | undefined;
+        if (existingReceipt?.status === "processing") {
+          return json(route, {
+            error: {
+              code: "COMMAND_IN_PROGRESS",
+              message: "Command is still processing",
+              details: {},
+            },
+          }, 409);
+        }
         expect(identity).toBe("host");
         expect(body).toMatchObject({
           expected_revision: 4,
@@ -213,6 +235,66 @@ function createClosureApi(initialStatus: InitialStatus) {
 
   return {
     install,
+    setProcessingReceipt(commandId: string) {
+      commandReceipts.set(commandId, {
+        command_id: commandId,
+        status: "processing",
+        revision,
+        event_sequence_from: null,
+        event_sequence_to: null,
+        result: null,
+        error_code: null,
+        error_details: {},
+      });
+    },
+    setAcceptedReceipt(commandId: string) {
+      const acceptedRevision = revision + 1;
+      const acceptedEventSequence = eventHeadSequence + 1;
+      commandReceipts.set(commandId, {
+        command_id: commandId,
+        status: "succeeded",
+        revision: acceptedRevision,
+        event_sequence_from: acceptedEventSequence,
+        event_sequence_to: acceptedEventSequence,
+        result: {
+          command_id: commandId,
+          status: "accepted",
+          revision: acceptedRevision,
+          event_sequence: acceptedEventSequence,
+          result: { event_ids: [] },
+          error: null,
+          replayed: false,
+        },
+        error_code: null,
+        error_details: {},
+      });
+    },
+    setRejectedReceipt(commandId: string) {
+      commandReceipts.set(commandId, {
+        command_id: commandId,
+        status: "rejected",
+        revision,
+        event_sequence_from: null,
+        event_sequence_to: null,
+        result: null,
+        error_code: "ROOM_CLOSED",
+        error_details: {
+          command_result: {
+            command_id: commandId,
+            status: "rejected",
+            revision,
+            event_sequence: 0,
+            result: null,
+            error: {
+              code: "ROOM_CLOSED",
+              message: "多人房间已经关闭",
+              details: { closed_by: { role: "host", automatic: true } },
+            },
+            replayed: false,
+          },
+        },
+      });
+    },
     commandCount: () => commandCount,
     currentRoomFailureCount: () => currentRoomFailureCount,
   };
@@ -227,8 +309,168 @@ async function createPlayerPage(
   const token = await installAnonymousAuth(context, identity);
   const page = await context.newPage();
   await api.install(page, identity, token);
-  return { context, page };
+  return { context, page, token };
 }
+
+test("host cannot abandon an active room while a gameplay command is unresolved", async ({ browser }) => {
+  const api = createClosureApi("active");
+  const host = await createPlayerPage(browser, api, "host");
+  const commandId = "99999999-9999-4999-8999-999999999999";
+  api.setProcessingReceipt(commandId);
+  const serializedEnvelope = JSON.stringify({
+    command_id: commandId,
+    expected_revision: 4,
+    type: "stage.confirm_read",
+    payload: { stage_id: "investigation" },
+  });
+  await host.context.addInitScript(({ key, value }) => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, {
+    key: `mp3:pending-room-command:v1:${sessionId}:${members.host.member_id}`,
+    value: {
+      version: 1,
+      session_id: sessionId,
+      member_id: members.host.member_id,
+      replay_lease: null,
+      serialized_envelope: serializedEnvelope,
+    },
+  });
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    const abandonButton = host.page.getByRole("button", { name: "放弃本局", exact: true });
+    await expect(abandonButton).toBeVisible();
+    await abandonButton.click();
+    await host.page.getByRole("button", { name: "确认放弃本局" }).click();
+
+    const dialog = host.page.getByRole("dialog");
+    await expect(dialog.getByRole("alert")).toContainText("上一条命令仍在恢复");
+    await expect(dialog.getByRole("alert")).toContainText("COMMAND_IN_PROGRESS");
+    expect(api.commandCount()).toBe(0);
+    await expect(host.page.getByRole("heading", { name: "房间已关闭" })).toHaveCount(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("a guest pending command reaches terminal recovery after the host closes the room", async ({ browser }) => {
+  const api = createClosureApi("closed");
+  const guest = await createPlayerPage(browser, api, "guest");
+  const commandId = "77777777-7777-4777-8777-777777777777";
+  const storageKey = `mp3:pending-room-command:v1:${sessionId}:${members.guest.member_id}`;
+  const serializedEnvelope = JSON.stringify({
+    command_id: commandId,
+    expected_revision: 4,
+    type: "stage.confirm_read",
+    payload: { stage_id: "investigation" },
+  });
+  api.setRejectedReceipt(commandId);
+  await guest.context.addInitScript(({ key, value }) => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, {
+    key: storageKey,
+    value: {
+      version: 1,
+      session_id: sessionId,
+      member_id: members.guest.member_id,
+      replay_lease: null,
+      serialized_envelope: serializedEnvelope,
+    },
+  });
+
+  try {
+    await guest.page.goto(`/play/${sessionId}/lobby`);
+    await expect(guest.page.getByRole("heading", { name: "房间已关闭" })).toBeVisible();
+    const recoveryStatus = guest.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("命令已拒绝", { timeout: 8_000 });
+    await expect(recoveryStatus).toContainText("多人房间已经关闭");
+    await expect.poll(() => guest.page.evaluate(
+      (key) => window.localStorage.getItem(key),
+      storageKey,
+    )).toBeNull();
+    await expect(recoveryStatus.getByRole("button", { name: "重试" })).toHaveCount(0);
+    expect(api.commandCount()).toBe(0);
+  } finally {
+    await guest.context.close();
+  }
+});
+
+test("closed accepted recovery preserves acceptance when snapshot reconciliation fails", async ({ browser }) => {
+  const api = createClosureApi("closed");
+  const guest = await createPlayerPage(browser, api, "guest");
+  const commandId = "55555555-5555-4555-8555-555555555555";
+  const storageKey = `mp3:pending-room-command:v1:${sessionId}:${members.guest.member_id}`;
+  api.setAcceptedReceipt(commandId);
+  await guest.context.addInitScript(({ key, value }) => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, {
+    key: storageKey,
+    value: {
+      version: 1,
+      session_id: sessionId,
+      member_id: members.guest.member_id,
+      replay_lease: null,
+      serialized_envelope: JSON.stringify({
+        command_id: commandId,
+        expected_revision: 4,
+        type: "stage.confirm_read",
+        payload: { stage_id: "investigation" },
+      }),
+    },
+  });
+
+  try {
+    await guest.page.goto(`/play/${sessionId}/lobby`);
+    const recoveryStatus = guest.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("命令已接受，但终态同步失败", {
+      timeout: 8_000,
+    });
+    await expect(recoveryStatus).toContainText("权威终态尚未覆盖已接受命令");
+    expect(await guest.page.evaluate(
+      (key) => window.localStorage.getItem(key),
+      storageKey,
+    )).not.toBeNull();
+  } finally {
+    await guest.context.close();
+  }
+});
+
+test("closed recovery clears stale UI when another tab removes the terminal record", async ({ browser }) => {
+  const api = createClosureApi("closed");
+  const guest = await createPlayerPage(browser, api, "guest");
+  const peer = await guest.context.newPage();
+  await api.install(peer, "guest", guest.token);
+  const commandId = "66666666-6666-4666-8666-666666666666";
+  const storageKey = `mp3:pending-room-command:v1:${sessionId}:${members.guest.member_id}`;
+  const record = {
+    version: 1,
+    session_id: sessionId,
+    member_id: members.guest.member_id,
+    replay_lease: null,
+    serialized_envelope: JSON.stringify({
+      command_id: commandId,
+      expected_revision: 4,
+      type: "stage.confirm_read",
+      payload: { stage_id: "investigation" },
+    }),
+  };
+  api.setProcessingReceipt(commandId);
+
+  try {
+    await peer.goto("/multiplayer");
+    await peer.evaluate(({ key, value }) => {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    }, { key: storageKey, value: record });
+    await guest.page.goto(`/play/${sessionId}/lobby`);
+    const recoveryStatus = guest.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("正在确认上一条命令", { timeout: 8_000 });
+
+    await peer.evaluate((key) => window.localStorage.removeItem(key), storageKey);
+    await expect(recoveryStatus).toHaveCount(0, { timeout: 3_000 });
+  } finally {
+    await guest.context.close();
+  }
+});
 
 for (const initialStatus of ["lobby", "active"] as const) {
   test(`host can ${initialStatus === "lobby" ? "close a lobby" : "abandon an active room"} and both players see a non-review terminal state`, async ({ browser }) => {

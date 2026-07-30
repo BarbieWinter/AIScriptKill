@@ -250,13 +250,24 @@ export type RejectedCommandResponse = {
   error: {
     code: string;
     message: string;
-    details: Record<string, string>;
+    details: Record<string, unknown>;
   };
   replayed: boolean;
 };
 
 export type RoomCommandResponse = AcceptedCommandResponse | RejectedCommandResponse;
 export type LobbyCommandResponse = RoomCommandResponse;
+
+export type RoomCommandReceiptResponse = {
+  command_id: string;
+  status: "processing" | "succeeded" | "rejected" | "failed";
+  revision: number;
+  event_sequence_from: number | null;
+  event_sequence_to: number | null;
+  result: unknown;
+  error_code: string | null;
+  error_details: Record<string, unknown>;
+};
 
 export type CompletedReviewV1 = {
   review_version: 1;
@@ -303,6 +314,6 @@ export type MultiplayerApiErrorBody = {
   error?: {
     code?: string;
     message?: string;
-    details?: Record<string, string>;
+    details?: Record<string, unknown>;
   };
 };

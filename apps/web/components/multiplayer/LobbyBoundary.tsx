@@ -15,6 +15,7 @@ import {
   currentMultiplayerRoomKey,
   roomSnapshotKey,
 } from "@/lib/multiplayer/room-client";
+import { ClosedRoomCommandRecovery } from "./ClosedRoomCommandRecovery";
 import { IncompleteRoomControl } from "./IncompleteRoomControl";
 import { LobbyShell } from "./LobbyShell";
 import { MultiplayerMansionShell } from "./MultiplayerMansionShell";
@@ -114,6 +115,7 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
           <p className="mt-3 text-sm leading-6 text-[#aeb1ab]">
             {snapshot.data.package.title} 未完成结束，因此没有结局或复盘。当前身份已可创建或加入其他房间。
           </p>
+          <ClosedRoomCommandRecovery client={client} snapshot={snapshot.data} />
           <Link
             href="/multiplayer"
             className="mt-7 inline-flex rounded-lg bg-[#c6a867] px-5 py-2.5 text-sm font-semibold text-[#11120f] hover:bg-[#d2b879]"
