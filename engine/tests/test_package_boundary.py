@@ -1,3 +1,4 @@
+import os
 import stat
 from io import BytesIO
 from pathlib import Path
@@ -622,7 +623,12 @@ def test_load_package_directory_rejects_symlink_before_copying_host_file(tmp_pat
     outside.write_text("must not enter archive", encoding="utf-8")
     link = package_dir / "assets" / "host-secret.txt"
     link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(outside)
+    try:
+        link.symlink_to(outside)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
 
     # 当/则：目录校验在打开目标文件前拒绝该链接。
     with pytest.raises(PackageArchiveError) as exc_info:

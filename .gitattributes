@@ -1,0 +1,2 @@
+# Keep generated browser contracts byte-stable across operating systems.
+/apps/web/e2e/fixtures/*.json text eol=lf

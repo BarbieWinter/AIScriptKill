@@ -22,7 +22,8 @@ def write_package_directory(package_dir: Path, files: Mapping[str, PackageFileCo
         if isinstance(content, bytes):
             target.write_bytes(content)
         else:
-            target.write_text(content, encoding="utf-8")
+            with target.open("w", encoding="utf-8", newline="") as output:
+                output.write(content)
 
 
 def minimal_package_files() -> dict[str, str]:

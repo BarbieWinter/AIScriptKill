@@ -99,6 +99,7 @@ def _read_chapter(
             f"{path} 的 frontmatter 不能为空",
         )
     content = "".join(lines[closing_index + 1 :])
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
     if content.strip() == "":
         raise PackageArchiveError(
             "PACKAGE_CHARACTER_CHAPTER_BODY_REQUIRED",

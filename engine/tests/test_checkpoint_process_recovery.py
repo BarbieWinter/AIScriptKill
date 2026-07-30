@@ -53,7 +53,10 @@ async def test_stategraph_recovers_after_worker_is_killed() -> None:
         # 当：接收器仍阻塞在阶段退出节点时，不运行关闭钩子并直接终止进程。
         writer.kill()
         return_code = await writer.wait()
-        assert return_code == -signal.SIGKILL
+        if os.name == "nt":
+            assert return_code != 0
+        else:
+            assert return_code == -signal.SIGKILL
         writer = None
         restored = await _run_worker("restore", database_url, script_id, session_id)
 
