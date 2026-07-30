@@ -64,6 +64,25 @@ async function closePanel(page: Page) {
   await page.getByRole("button", { name: "关闭" }).click();
 }
 
+async function verifyPublicMaterialWithoutMovement(page: Page) {
+  const scene = page.locator(".mansion-demo");
+  const initialPosition = await Promise.all([
+    scene.getAttribute("data-player-x"),
+    scene.getAttribute("data-player-y"),
+  ]);
+
+  await page.getByRole("button", { name: "打开公开档案" }).click();
+  await expect(page.getByRole("heading", { name: "公开档案" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "arrival-photo" })).toBeVisible();
+  await expect(page.getByText("已公开image素材（640x360）", { exact: true })).toBeVisible();
+  await closePanel(page);
+
+  expect(await Promise.all([
+    scene.getAttribute("data-player-x"),
+    scene.getAttribute("data-player-y"),
+  ])).toEqual(initialPosition);
+}
+
 async function confirmRead(page: Page) {
   await page.getByRole("button", { name: "我已读完" }).click();
 }
@@ -133,6 +152,10 @@ test("two real anonymous identities complete the M3 candidate game and review", 
 
     await waitForPhase(host.page, "核对口供", "阅读角色信息");
     await waitForPhase(guest.page, "核对口供", "阅读角色信息");
+    await Promise.all([
+      verifyPublicMaterialWithoutMovement(host.page),
+      verifyPublicMaterialWithoutMovement(guest.page),
+    ]);
 
     const hostLocal = host.page.locator('[data-character-id="self-investigator"]');
     const guestLocal = guest.page.locator('[data-character-id="self-insider"]');

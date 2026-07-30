@@ -150,8 +150,9 @@ lease/attempt 恢复；同一 `command_id` 绑定稳定 request hash 和 session
 ### 双人候选发布门禁
 
 `make test-t08-candidate` 是严格双人候选的本地收敛入口。它会清空并迁移本地
-Supabase（不运行旧 seed），先拒绝候选提交或工作树中的冲突标记与空白错误，再对同一
-checkout 执行静态分析、生产构建、完整后端与数据库测试和 route-mocked 浏览器测试，
+Supabase（不运行旧 seed），先拒绝任何 staged、unstaged 或 untracked 工作树变更，以及
+候选提交中的冲突标记与空白错误，再对同一 clean checkout 执行静态分析、生产构建、
+完整后端与数据库测试和 route-mocked 浏览器测试，
 再启动 FastAPI 与 production Next，通过真实管理员 JWT
 调用 package 导入 API，最后运行双匿名身份 Live 通关。候选差异默认以本地 `main` 的
 merge-base 为基线；非标准基线必须显式设置 `T08_CANDIDATE_BASE_REF`。

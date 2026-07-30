@@ -644,7 +644,8 @@ R5  旧方向物理清理
 
 | 验证 | 结果 | 说明 |
 |---|---|---|
-| `uv run --frozen pytest` | **569 passed** | 已连接本地迁移数据库运行全部显式数据库门禁；未执行会重置本地 Supabase 的 T08 候选脚本 |
+| `make test-t08-candidate` | **通过** | 同一 clean checkout 从两次空白 Supabase reset 完成迁移、完整静态/后端/数据库/route-mocked/build 门禁、真实管理 API 发布和双匿名身份 Live 通关 |
+| `uv run --frozen pytest engine/tests/ -q` | **577 passed** | T08 候选环境连接本地迁移数据库运行全部显式数据库门禁，包含 8 个候选工作树洁净度与总门禁防绕过回归用例 |
 | T04 package / gameplay 聚焦测试 | **78 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房缺失历史字段的无条件材料恢复与写回、V2 精确历史校验及跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
 | T06 incomplete-room closure 聚焦验收 | **3 database + 6 browser passed** | 覆盖 lobby 关闭、active 放弃、待恢复命令阻止关闭、closed 页面完成 accepted/rejected 本地命令终态恢复、accepted 快照同步失败不降级、跨标签页终态清理、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
 | `make test-durable-commands` | **25 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |

@@ -23,21 +23,6 @@ fail() {
   exit 1
 }
 
-check_candidate_tree() {
-  log "Checking candidate repository cleanliness"
-  local base_commit
-  base_commit="$(git merge-base HEAD "$CANDIDATE_BASE_REF")" \
-    || fail "cannot resolve candidate base ref: $CANDIDATE_BASE_REF"
-  git diff --check "$base_commit"
-  git diff --cached --check
-
-  local conflict_markers
-  if conflict_markers="$(git grep --untracked -nE '^(<<<<<<< |=======|>>>>>>> )' -- .)"; then
-    printf '%s\n' "$conflict_markers" >&2
-    fail "candidate tree contains unresolved conflict markers"
-  fi
-}
-
 cleanup() {
   local exit_code=$?
 
@@ -167,12 +152,15 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 cd "$ROOT_DIR"
 
-for command_name in curl git jq npm supabase uv zip; do
+require_command git
+T08_CANDIDATE_BASE_REF="$CANDIDATE_BASE_REF" \
+  "$ROOT_DIR/scripts/t08_candidate_tree_check.sh"
+
+for command_name in curl jq npm supabase uv zip; do
   require_command "$command_name"
 done
 require_service_stopped "$API_BASE_URL/health/db" "FastAPI"
 require_service_stopped "$WEB_BASE_URL/multiplayer" "Next.js"
-check_candidate_tree
 
 log "Provisioning a blank migrated Supabase database"
 supabase status >/dev/null 2>&1 || supabase start -x vector,logflare
