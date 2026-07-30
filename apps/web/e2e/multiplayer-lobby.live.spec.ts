@@ -1,4 +1,12 @@
-import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type StorageState,
+} from "@playwright/test";
 
 const API_BASE_URL = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8000";
 const SCRIPT_ID = "mp1-two-player";
@@ -32,8 +40,8 @@ async function requireLivePrerequisites(request: APIRequestContext) {
   }
 }
 
-async function createLivePlayer(browser: Browser) {
-  const context = await browser.newContext();
+async function createLivePlayer(browser: Browser, storageState?: StorageState) {
+  const context = await browser.newContext({ storageState });
   const page = await context.newPage();
   const applicationWebSockets: string[] = [];
   page.on("websocket", (socket) => {
@@ -103,7 +111,7 @@ test.beforeAll(async ({ request }) => {
 test("two real anonymous identities complete the M3 candidate game and review", async ({ browser }) => {
   test.setTimeout(240_000);
   const host = await createLivePlayer(browser);
-  const guest = await createLivePlayer(browser);
+  let guest = await createLivePlayer(browser);
 
   try {
     await host.page.goto("/multiplayer");
@@ -121,6 +129,16 @@ test("two real anonymous identities complete the M3 candidate game and review", 
     await expect(guest.page).toHaveURL(/\/play\/[0-9a-f-]+\/lobby$/i);
     await expect(guest.page.getByRole("heading", { name: "房间大厅" })).toBeVisible();
     await expect(host.page.getByTestId("player-slot-2")).toContainText("玩家 2", {
+      timeout: 10_000,
+    });
+
+    const guestStorageState = await guest.context.storageState();
+    await guest.context.close();
+    guest = await createLivePlayer(browser, guestStorageState);
+    await guest.page.goto(inviteUrl!);
+    await expect(guest.page).toHaveURL(/\/play\/[0-9a-f-]+\/lobby$/i);
+    await expect(guest.page.getByRole("heading", { name: "房间大厅" })).toBeVisible();
+    await expect(guest.page.getByTestId("player-slot-1")).toContainText("调查员", {
       timeout: 10_000,
     });
 

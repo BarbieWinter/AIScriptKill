@@ -47,7 +47,7 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (snapshot.data?.status !== "closed" && snapshot.data?.status !== "completed") return;
     const currentRoom = queryClient.getQueryData<CurrentMultiplayerRoom>(currentMultiplayerRoomKey);
-    if (currentRoom?.session_id === sessionId) {
+    if (currentRoom === undefined || currentRoom === null || currentRoom.session_id === sessionId) {
       queryClient.setQueryData(currentMultiplayerRoomKey, null);
     }
   }, [queryClient, sessionId, snapshot.data?.status]);
