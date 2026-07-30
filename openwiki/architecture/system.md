@@ -100,7 +100,7 @@ anonymous JWT
   -> lobby or gameplay snapshot
   -> revision + durable receipt coordinator
   -> deterministic reducer
-  -> GameStateV2 + ordered public event
+  -> GameStateV2 + ordered public event + transactional outbox intent
   -> participant-safe snapshot / completed review
 ```
 
@@ -117,6 +117,7 @@ revision 和 event sequence。秘密结算在全部提交前只返回提交成�
 - 只追加公开讨论、结束确认/撤销和秘密投票统一揭晓。
 - 显式同步推进、共同最终判断、authored ending 和 completed-only review。
 - durable receipt 重放、revision 冲突刷新、完成时 reservation 释放。
+- event-producing gameplay/termination 命令在同一事务提交公开 event 与同 identity outbox；拒绝、no-op 与 replay 不追加消息。
 
 明确推迟：
 

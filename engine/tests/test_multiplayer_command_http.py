@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from collections.abc import AsyncGenerator
 from dataclasses import replace
@@ -10,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, ReadError, Request, Response
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -40,11 +42,20 @@ from engine.db.tables import (
     session_command_receipts,
     session_events,
 )
+from engine.repositories.session_command_repository import SessionCommandRepository
 from engine.services import multiplayer_room_service
 from engine.services.room_outbox import RoomOutboxMessage, publish_room_outbox_batch
 
 DATABASE_URL_ENV = "AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL"
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "script-packages" / "mp1-two-player"
+
+
+class DropResponseAfterCommitTransport(ASGITransport):
+    async def handle_async_request(self, request: Request) -> Response:
+        response = await super().handle_async_request(request)
+        await response.aread()
+        await response.aclose()
+        raise ReadError("response lost after application commit", request=request)
 
 
 @pytest.mark.skipif(
@@ -240,6 +251,25 @@ async def test_stale_room_command_replays_one_durable_terminal_rejection(
         assert replay.status_code == 200, replay.text
         assert receipt_response.status_code == 200, receipt_response.text
         first_result = first.json()
+        async with factory() as db:
+            room_artifacts = (
+                await db.execute(
+                    select(
+                        game_sessions.c.revision,
+                        game_sessions.c.event_head_sequence,
+                    ).where(game_sessions.c.id == session_id)
+                )
+            ).one()
+            events = (
+                await db.execute(
+                    select(session_events.c.id).where(session_events.c.session_id == session_id)
+                )
+            ).all()
+            outbox = (
+                await db.execute(
+                    select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
+                )
+            ).all()
         assert first_result == {
             "command_id": str(command_id),
             "status": "rejected",
@@ -272,6 +302,9 @@ async def test_stale_room_command_replays_one_durable_terminal_rejection(
         lobby = snapshot_response.json()
         assert lobby["revision"] == 0
         assert lobby["self"]["character_id"] is None
+        assert room_artifacts == (0, 0)
+        assert events == []
+        assert outbox == []
     finally:
         await _remove_script(engine, script_id)
         await engine.dispose()
@@ -324,6 +357,25 @@ async def test_invalid_room_command_replays_one_durable_business_rejection(
         assert first.status_code == 200, first.text
         assert replay.status_code == 200, replay.text
         first_result = first.json()
+        async with factory() as db:
+            room_artifacts = (
+                await db.execute(
+                    select(
+                        game_sessions.c.revision,
+                        game_sessions.c.event_head_sequence,
+                    ).where(game_sessions.c.id == session_id)
+                )
+            ).one()
+            events = (
+                await db.execute(
+                    select(session_events.c.id).where(session_events.c.session_id == session_id)
+                )
+            ).all()
+            outbox = (
+                await db.execute(
+                    select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
+                )
+            ).all()
         assert first_result == {
             "command_id": str(command_id),
             "status": "rejected",
@@ -342,6 +394,9 @@ async def test_invalid_room_command_replays_one_durable_business_rejection(
         lobby = snapshot_response.json()
         assert lobby["revision"] == 0
         assert lobby["self"]["character_id"] is None
+        assert room_artifacts == (0, 0)
+        assert events == []
+        assert outbox == []
     finally:
         await _remove_script(engine, script_id)
         await engine.dispose()
@@ -436,7 +491,7 @@ async def test_noop_room_command_writes_receipt_without_event_or_revision(
     os.getenv(DATABASE_URL_ENV) is None,
     reason=f"requires {DATABASE_URL_ENV} pointing to a disposable migrated PostgreSQL database",
 )
-async def test_losing_state_and_event_write_rolls_back_receipt_and_projection(
+async def test_staged_terminal_bundle_rolls_back_before_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(multiplayer_room_service, "require_multiplayer_enabled", lambda: None)
@@ -469,22 +524,50 @@ async def test_losing_state_and_event_write_rolls_back_receipt_and_projection(
 
     original = multiplayer_room_service.SessionCommandRepository.finalize_success
 
-    async def lose_attempt(*_args: object, **_kwargs: object) -> bool:
-        return False
+    async def fail_after_staging(
+        repository: SessionCommandRepository,
+        *,
+        session_id: UUID,
+        command_id: UUID,
+        result: dict[str, object],
+        revision: int,
+        event_sequence: int | None,
+        event_payload: dict[str, object] | None = None,
+        event_type: str = "command_succeeded",
+        attempt_count: int | None = None,
+        checkpoint_id: str | None = None,
+        state_sha256: str | None = None,
+        outbox_topic: str | None = None,
+    ) -> bool:
+        finalized = await original(
+            repository,
+            session_id=session_id,
+            command_id=command_id,
+            result=result,
+            revision=revision,
+            event_sequence=event_sequence,
+            event_payload=event_payload,
+            event_type=event_type,
+            attempt_count=attempt_count,
+            checkpoint_id=checkpoint_id,
+            state_sha256=state_sha256,
+            outbox_topic=outbox_topic,
+        )
+        assert finalized is True
+        raise RuntimeError("failure after terminal bundle staging")
 
     monkeypatch.setattr(
         multiplayer_room_service.SessionCommandRepository,
         "finalize_success",
-        lose_attempt,
+        fail_after_staging,
     )
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://testserver",
         ) as client:
-            response = await client.post(f"/api/v1/sessions/{session_id}/commands", json=command)
-        assert response.status_code == 409, response.text
-        assert response.json()["error"]["code"] == "COMMAND_ATTEMPT_FENCED"
+            with pytest.raises(RuntimeError, match="failure after terminal bundle staging"):
+                await client.post(f"/api/v1/sessions/{session_id}/commands", json=command)
         monkeypatch.setattr(
             multiplayer_room_service.SessionCommandRepository,
             "finalize_success",
@@ -503,8 +586,8 @@ async def test_losing_state_and_event_write_rolls_back_receipt_and_projection(
                 await db.execute(
                     select(
                         session_command_receipts.c.status,
-                        session_command_receipts.c.lease_expires_at
-                        <= session_command_receipts.c.updated_at,
+                        session_command_receipts.c.event_sequence_from,
+                        session_command_receipts.c.event_sequence_to,
                     ).where(
                         session_command_receipts.c.session_id == session_id,
                         session_command_receipts.c.command_id == command_id,
@@ -516,6 +599,11 @@ async def test_losing_state_and_event_write_rolls_back_receipt_and_projection(
                     select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
                 )
             ).one_or_none()
+            events = (
+                await db.execute(
+                    select(session_events.c.id).where(session_events.c.session_id == session_id)
+                )
+            ).all()
             assignment = (
                 await db.execute(
                     select(room_character_assignments.c.character_id).where(
@@ -524,20 +612,10 @@ async def test_losing_state_and_event_write_rolls_back_receipt_and_projection(
                 )
             ).one_or_none()
         assert room == (0, 0)
-        assert receipt == ("processing", True)
+        assert receipt == ("processing", None, None)
+        assert events == []
         assert outbox is None
         assert assignment is None
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://testserver",
-        ) as client:
-            recovered = await client.post(
-                f"/api/v1/sessions/{session_id}/commands",
-                json=command,
-            )
-        assert recovered.status_code == 200, recovered.text
-        assert recovered.json()["status"] == "accepted"
-        assert recovered.json()["revision"] == 1
     finally:
         await _remove_script(engine, script_id)
         await engine.dispose()
@@ -860,6 +938,28 @@ async def test_cross_room_command_id_collision_is_rejected_without_receipt_discl
         assert hidden.status_code == 404, hidden.text
         assert hidden.json()["error"]["code"] == "COMMAND_NOT_FOUND"
         async with factory() as db:
+            first_events = (
+                await db.execute(
+                    select(session_events.c.id).where(
+                        session_events.c.session_id == first_session_id
+                    )
+                )
+            ).all()
+            first_outbox = (
+                await db.execute(
+                    select(room_outbox.c.room_event_id).where(
+                        room_outbox.c.session_id == first_session_id
+                    )
+                )
+            ).all()
+            second_room = (
+                await db.execute(
+                    select(
+                        game_sessions.c.revision,
+                        game_sessions.c.event_head_sequence,
+                    ).where(game_sessions.c.id == second_session_id)
+                )
+            ).one()
             second_receipts = (
                 await db.execute(
                     select(session_command_receipts.c.id).where(
@@ -874,6 +974,11 @@ async def test_cross_room_command_id_collision_is_rejected_without_receipt_discl
                     )
                 )
             ).all()
+            second_outbox = (
+                await db.execute(
+                    select(room_outbox.c.id).where(room_outbox.c.session_id == second_session_id)
+                )
+            ).all()
             second_assignments = (
                 await db.execute(
                     select(room_character_assignments.c.character_id).where(
@@ -881,8 +986,12 @@ async def test_cross_room_command_id_collision_is_rejected_without_receipt_discl
                     )
                 )
             ).all()
+        assert len(first_events) == 1
+        assert first_outbox == first_events
+        assert second_room == (0, 0)
         assert second_receipts == []
         assert second_events == []
+        assert second_outbox == []
         assert second_assignments == []
     finally:
         await _remove_script(engine, first_script_id)
@@ -989,13 +1098,13 @@ async def test_room_outbox_retries_delivery_with_stable_event_id(
 
     class FlakyPublisher:
         def __init__(self) -> None:
-            self.event_ids: list[UUID] = []
+            self.messages: list[RoomOutboxMessage] = []
 
         async def publish(self, message: RoomOutboxMessage) -> None:
             if message.session_id != session_id:
                 raise RuntimeError("unrelated pending room event")
-            self.event_ids.append(message.event_id)
-            if len(self.event_ids) == 1:
+            self.messages.append(message)
+            if len(self.messages) == 1:
                 raise RuntimeError("broker unavailable")
 
     publisher = FlakyPublisher()
@@ -1008,7 +1117,7 @@ async def test_room_outbox_retries_delivery_with_stable_event_id(
         assert response.status_code == 200, response.text
 
         async with factory() as db:
-            await publish_room_outbox_batch(db, publisher, limit=1000)
+            first = await publish_room_outbox_batch(db, publisher, limit=1000)
             await db.commit()
 
         async with engine.begin() as connection:
@@ -1030,11 +1139,126 @@ async def test_room_outbox_retries_delivery_with_stable_event_id(
                 .mappings()
                 .one()
             )
-        assert second >= 1
-        assert publisher.event_ids == [row["room_event_id"], row["room_event_id"]]
+        assert first == 0
+        assert second == 1
+        assert len(publisher.messages) == 2
+        assert publisher.messages[0] == publisher.messages[1]
+        assert publisher.messages[0].event_id == row["room_event_id"]
+        assert publisher.messages[0].topic == "room.events.v1"
+        assert publisher.messages[0].payload == {"command_type": "room.assign_character"}
         assert row["attempts"] == 2
         assert row["published_at"] is not None
         assert row["last_error"] is None
+    finally:
+        await _remove_script(engine, script_id)
+        await engine.dispose()
+
+
+@pytest.mark.skipif(
+    os.getenv(DATABASE_URL_ENV) is None,
+    reason=f"requires {DATABASE_URL_ENV} pointing to a disposable migrated PostgreSQL database",
+)
+async def test_room_outbox_concurrent_claims_are_disjoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(multiplayer_room_service, "require_multiplayer_enabled", lambda: None)
+    engine = _database_engine(_required_database_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    script_id = f"room-outbox-concurrent-{uuid4().hex}"
+    package = load_package_directory(PACKAGE_ROOT, publish=True)
+    package = replace(package, package=replace(package.package, id=script_id))
+    snapshot = encode_runtime_package_snapshot(package)
+    session_id = uuid4()
+    principal_id = uuid4()
+    await _seed_lobby(
+        engine,
+        script_id=script_id,
+        session_id=session_id,
+        principal_id=principal_id,
+        member_id=uuid4(),
+        package=package,
+        snapshot_payload=dict(snapshot.payload),
+        snapshot_sha256=snapshot.sha256,
+    )
+    app = _test_app(factory, principal_id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            assign = await client.post(
+                f"/api/v1/sessions/{session_id}/commands",
+                json={
+                    "command_id": str(uuid4()),
+                    "expected_revision": 0,
+                    "type": "room.assign_character",
+                    "payload": {"character_id": "investigator"},
+                },
+            )
+            ready = await client.post(
+                f"/api/v1/sessions/{session_id}/commands",
+                json={
+                    "command_id": str(uuid4()),
+                    "expected_revision": 1,
+                    "type": "room.ready",
+                    "payload": {"ready": True},
+                },
+            )
+        assert assign.status_code == 200, assign.text
+        assert ready.status_code == 200, ready.text
+
+        class ConcurrentPublisher:
+            def __init__(self) -> None:
+                self.messages: list[RoomOutboxMessage] = []
+                self.claims_ready = asyncio.Event()
+
+            async def publish(self, message: RoomOutboxMessage) -> None:
+                if message.session_id != session_id:
+                    raise RuntimeError("unrelated pending room event")
+                self.messages.append(message)
+                if len(self.messages) == 2:
+                    self.claims_ready.set()
+                await asyncio.wait_for(self.claims_ready.wait(), timeout=2)
+
+        publisher = ConcurrentPublisher()
+
+        async def claim_one() -> int:
+            async with factory() as db:
+                published = await publish_room_outbox_batch(
+                    db,
+                    publisher,
+                    limit=1,
+                    publish_timeout_seconds=3,
+                )
+                await db.commit()
+                return published
+
+        claim_counts = await asyncio.wait_for(
+            asyncio.gather(claim_one(), claim_one()),
+            timeout=5,
+        )
+
+        async with factory() as db:
+            rows = (
+                (
+                    await db.execute(
+                        select(room_outbox)
+                        .where(room_outbox.c.session_id == session_id)
+                        .order_by(room_outbox.c.id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert claim_counts == [1, 1]
+        assert len(publisher.messages) == 2
+        assert {message.event_id for message in publisher.messages} == {
+            row["room_event_id"] for row in rows
+        }
+        assert all(row["attempts"] == 1 for row in rows)
+        assert all(row["published_at"] is not None for row in rows)
+        assert all(row["last_error"] is None for row in rows)
     finally:
         await _remove_script(engine, script_id)
         await engine.dispose()
@@ -1095,6 +1319,7 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
     revision = 0
     sequence = 0
     command_ids: list[UUID] = []
+    no_event_command_ids: list[UUID] = []
     secret_vote_command_ids: list[UUID] = []
 
     async def send_command(
@@ -1174,23 +1399,104 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 "stage.confirm_read",
                 {"stage_id": "investigation"},
             )
+            noop_command_id = uuid4()
+            noop_command = {
+                "command_id": str(noop_command_id),
+                "expected_revision": revision,
+                "type": "stage.confirm_read",
+                "payload": {"stage_id": "investigation"},
+            }
+            noop_first = await host.post(
+                f"/api/v1/sessions/{session_id}/commands",
+                json=noop_command,
+            )
+            noop_replay = await host.post(
+                f"/api/v1/sessions/{session_id}/commands",
+                json=noop_command,
+            )
+            assert noop_first.status_code == 200, noop_first.text
+            noop_result = {
+                "command_id": str(noop_command_id),
+                "status": "accepted",
+                "revision": revision,
+                "event_sequence": 0,
+                "result": {"event_ids": []},
+                "error": None,
+                "replayed": False,
+            }
+            assert noop_first.json() == noop_result
+            assert noop_replay.status_code == 200, noop_replay.text
+            assert noop_replay.json() == {**noop_result, "replayed": True}
+            no_event_command_ids.append(noop_command_id)
+
             await send_command(
                 guest,
                 "stage.confirm_read",
                 {"stage_id": "investigation"},
             )
+            await send_command(
+                host,
+                "hint.request",
+                {"hint_id": "timeline", "level": 1},
+            )
+            await send_command(
+                guest,
+                "hint.confirm",
+                {"hint_id": "timeline", "level": 1},
+            )
             message_id = uuid4()
+            chat_command_id = uuid4()
             chat_payload: dict[str, object] = {
                 "stage_id": "investigation",
                 "message_id": str(message_id),
                 "text": "门锁没有损坏。",
             }
-            chat_body, chat_command_id = await send_command(
-                host,
-                "discussion.send_message",
-                chat_payload,
-                changes_revision=False,
-            )
+            async with AsyncClient(
+                transport=DropResponseAfterCommitTransport(
+                    app=_test_app(factory, host_principal_id)
+                ),
+                base_url="http://testserver",
+            ) as lossy_host:
+                with pytest.raises(ReadError, match="response lost after application commit"):
+                    await lossy_host.post(
+                        f"/api/v1/sessions/{session_id}/commands",
+                        json={
+                            "command_id": str(chat_command_id),
+                            "expected_revision": revision,
+                            "type": "discussion.send_message",
+                            "payload": chat_payload,
+                        },
+                    )
+            async with factory() as db:
+                committed_chat_event = (
+                    await db.execute(
+                        select(
+                            session_events.c.id,
+                            session_events.c.sequence,
+                            session_events.c.revision,
+                        ).where(
+                            session_events.c.session_id == session_id,
+                            session_events.c.command_id == chat_command_id,
+                        )
+                    )
+                ).one()
+                committed_chat_outbox = (
+                    await db.execute(
+                        select(
+                            room_outbox.c.room_event_id,
+                            room_outbox.c.topic,
+                        ).where(
+                            room_outbox.c.session_id == session_id,
+                            room_outbox.c.room_event_id == committed_chat_event.id,
+                        )
+                    )
+                ).one()
+            assert committed_chat_event.sequence == sequence + 1
+            assert committed_chat_event.revision == revision
+            assert committed_chat_outbox == (committed_chat_event.id, "room.events.v1")
+            committed_chat_event_id = committed_chat_event.id
+            sequence += 1
+            command_ids.append(chat_command_id)
             replay = await host.post(
                 f"/api/v1/sessions/{session_id}/commands",
                 json={
@@ -1201,7 +1507,15 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 },
             )
             assert replay.status_code == 200, replay.text
-            assert replay.json() == {**chat_body, "replayed": True}
+            assert replay.json() == {
+                "command_id": str(chat_command_id),
+                "status": "accepted",
+                "revision": revision,
+                "event_sequence": sequence,
+                "result": {"event_ids": []},
+                "error": None,
+                "replayed": True,
+            }
 
             guest_discussion_response = await guest.get(f"/api/v1/sessions/{session_id}/snapshot")
             assert guest_discussion_response.status_code == 200
@@ -1218,6 +1532,16 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 }
             ]
 
+            await send_command(
+                host,
+                "discussion.confirm_close",
+                {"stage_id": "investigation"},
+            )
+            await send_command(
+                host,
+                "discussion.revoke_close",
+                {"stage_id": "investigation"},
+            )
             await send_command(
                 host,
                 "discussion.confirm_close",
@@ -1329,7 +1653,19 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 assert current_response.status_code == 200
                 assert current_response.json() is None
 
+        class CapturingPublisher:
+            def __init__(self) -> None:
+                self.messages: list[RoomOutboxMessage] = []
+
+            async def publish(self, message: RoomOutboxMessage) -> None:
+                if message.session_id != session_id:
+                    raise RuntimeError("unrelated pending room event")
+                self.messages.append(message)
+
+        publisher = CapturingPublisher()
         async with factory() as db:
+            published = await publish_room_outbox_batch(db, publisher, limit=1000)
+            await db.commit()
             room = (
                 await db.execute(
                     select(
@@ -1356,6 +1692,8 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                     select(
                         session_command_receipts.c.command_id,
                         session_command_receipts.c.status,
+                        session_command_receipts.c.event_sequence_from,
+                        session_command_receipts.c.event_sequence_to,
                     ).where(session_command_receipts.c.session_id == session_id)
                 )
             ).all()
@@ -1367,20 +1705,102 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 )
             ).all()
             outbox = (
-                await db.execute(
-                    select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
+                (
+                    await db.execute(
+                        select(room_outbox).where(room_outbox.c.session_id == session_id)
+                    )
                 )
-            ).all()
+                .mappings()
+                .all()
+            )
 
         assert room[0:3] == ("completed", revision, sequence)
         assert room.closed_at is not None
         assert [event["sequence"] for event in events] == list(range(1, sequence + 1))
         assert len(events) == len(command_ids)
-        assert len(receipts) == len(command_ids)
-        assert {receipt.command_id for receipt in receipts} == set(command_ids)
+        expected_receipt_ids = set(command_ids) | set(no_event_command_ids)
+        assert len(receipts) == len(expected_receipt_ids)
+        assert {receipt.command_id for receipt in receipts} == expected_receipt_ids
         assert {receipt.status for receipt in receipts} == {"succeeded"}
+        noop_receipt = next(
+            receipt for receipt in receipts if receipt.command_id == noop_command_id
+        )
+        assert noop_receipt.event_sequence_from is None
+        assert noop_receipt.event_sequence_to is None
         assert reservations == []
-        assert len(outbox) == 5
+        assert len(outbox) == len(events)
+        assert {row["room_event_id"] for row in outbox} == {event["id"] for event in events}
+        assert published == sequence
+        assert {row["topic"] for row in outbox} == {"room.events.v1"}
+        assert all(row["published_at"] is not None for row in outbox)
+
+        event_by_id = {event["id"]: event for event in events}
+        replayed_chat_event = next(
+            event for event in events if event["command_id"] == chat_command_id
+        )
+        assert replayed_chat_event["id"] == committed_chat_event_id
+        assert sum(event["command_id"] == chat_command_id for event in events) == 1
+        assert sum(row["room_event_id"] == committed_chat_event_id for row in outbox) == 1
+        allowed_payload_keys = {
+            "lobby.command_succeeded": {"command_type"},
+            "discussion.message": {
+                "message_id",
+                "stage_id",
+                "member_id",
+                "character_id",
+                "text",
+            },
+            "gameplay.command_succeeded": {
+                "command_type",
+                "stage_id",
+                "actor_member_id",
+            },
+        }
+        assert {message.event_id for message in publisher.messages} == set(event_by_id)
+        for message in publisher.messages:
+            event = event_by_id[message.event_id]
+            assert message.topic == "room.events.v1"
+            assert message.sequence == event["sequence"]
+            assert message.revision == event["revision"]
+            assert message.event_type == event["event_type"]
+            assert message.event_version == event["event_version"]
+            assert message.payload == event["payload"]
+            assert set(message.payload) == allowed_payload_keys[message.event_type]
+
+        serialized_payloads = json.dumps(
+            [message.payload for message in publisher.messages],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for private_fact in (
+            '"option_id"',
+            '"own_option_id"',
+            '"private_by_member"',
+            '"private_state"',
+            '"revealed_ballots"',
+            "investigator-account",
+            "insider-account",
+            "dm_guide",
+        ):
+            assert private_fact not in serialized_payloads
+
+        gameplay_command_types = {
+            cast(dict[str, object], event["payload"])["command_type"]
+            for event in events
+            if event["event_type"] == "gameplay.command_succeeded"
+        }
+        assert gameplay_command_types == {
+            "stage.confirm_read",
+            "stage.advance",
+            "discussion.confirm_close",
+            "discussion.revoke_close",
+            "settlement.submit",
+            "settlement.confirm_shared_choice",
+            "hint.request",
+            "hint.confirm",
+        }
+        assert sum(event["event_type"] == "discussion.message" for event in events) == 1
+
         secret_events = [
             event for event in events if event["command_id"] in secret_vote_command_ids
         ]

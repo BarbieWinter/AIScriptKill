@@ -260,7 +260,12 @@ async def test_host_durably_closes_incomplete_room_and_releases_both_identities(
             )
             outbox = (
                 await db.execute(
-                    select(room_outbox.c.id).where(room_outbox.c.session_id == session_id)
+                    select(
+                        room_outbox.c.room_event_id,
+                        room_outbox.c.topic,
+                        room_outbox.c.attempts,
+                        room_outbox.c.published_at,
+                    ).where(room_outbox.c.session_id == session_id)
                 )
             ).all()
 
@@ -280,7 +285,7 @@ async def test_host_durably_closes_incomplete_room_and_releases_both_identities(
             "previous_status": initial_status,
             "reason": "host ended incomplete room",
         }
-        assert len(outbox) == 1
+        assert outbox == [(events[0]["id"], "room.events.v1", 0, None)]
         assert {receipt["command_id"] for receipt in receipts} >= {
             guest_command_id,
             close_command_id,

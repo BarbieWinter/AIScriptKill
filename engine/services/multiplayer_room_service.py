@@ -633,7 +633,6 @@ async def execute_room_command(
             event_required = mutation.event_required
             event_type = mutation.event_type
             event_payload = mutation.event_payload
-            outbox_topic = None
             next_sequence = (
                 context.room.event_head_sequence + 1
                 if event_required

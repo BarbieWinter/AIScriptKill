@@ -189,6 +189,7 @@ async def test_stale_success_finalizer_cannot_publish_an_event() -> None:
         revision=1,
         event_sequence=1,
         event_payload={"result": _result().model_dump(mode="json")},
+        outbox_topic="room.events.v1",
     )
 
     assert finalized is False
