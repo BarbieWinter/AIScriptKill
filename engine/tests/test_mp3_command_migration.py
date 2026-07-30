@@ -48,6 +48,12 @@ OUTBOX_INTEGRITY_MIGRATION = (
     / "migrations"
     / "20260720050000_mp3_outbox_session_event_integrity.sql"
 )
+OUTBOX_RELAY_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260730010000_room_event_relay_leases.sql"
+)
 MP3_BASE_TABLE_NAMES = {"session_command_receipts", "session_events"}
 MP3_TABLE_NAMES = {
     *MP3_BASE_TABLE_NAMES,
@@ -123,11 +129,22 @@ def test_session_events_have_ordering_command_and_positive_cursor_constraints() 
 
 def test_room_outbox_has_event_topic_deduplication_and_retry_state() -> None:
     assert ("room_event_id", "topic") in _unique_columns(room_outbox)
-    assert {"attempts", "available_at", "published_at", "last_error"} <= {
-        column.name for column in room_outbox.columns
-    }
+    assert {
+        "attempts",
+        "available_at",
+        "published_at",
+        "last_error",
+        "lease_token",
+        "lease_owner",
+        "lease_expires_at",
+        "poisoned_at",
+        "poison_reason",
+    } <= {column.name for column in room_outbox.columns}
     checks = _checks(room_outbox)
     assert "attempts >= 0" in str(checks["room_outbox_attempts_check"])
+    assert "lease_token IS NULL" in str(checks["room_outbox_lease_check"])
+    assert "poisoned_at IS NULL" in str(checks["room_outbox_poison_check"])
+    assert "published_at IS NULL" in str(checks["room_outbox_terminal_state_check"])
 
     sql = " ".join(OUTBOX_MIGRATION.read_text(encoding="utf-8").lower().split())
     assert "create table public.room_outbox" in sql
@@ -135,9 +152,16 @@ def test_room_outbox_has_event_topic_deduplication_and_retry_state() -> None:
     integrity_sql = " ".join(OUTBOX_INTEGRITY_MIGRATION.read_text(encoding="utf-8").lower().split())
     assert "foreign key (session_id, room_event_id)" in integrity_sql
     assert "references public.session_events(session_id, id)" in integrity_sql
-    assert "where published_at is null" in sql
-    assert "revoke all privileges on table public.room_outbox from anon, authenticated" in sql
-    assert "grant all privileges on table public.room_outbox to service_role" in sql
+    relay_sql = " ".join(OUTBOX_RELAY_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert "add column lease_token uuid" in relay_sql
+    assert "add column lease_owner text" in relay_sql
+    assert "add column lease_expires_at timestamptz" in relay_sql
+    assert "add column poisoned_at timestamptz" in relay_sql
+    assert "add column poison_reason text" in relay_sql
+    assert "where published_at is null and poisoned_at is null" in relay_sql
+    assert "lease_expires_at" in relay_sql
+    assert "revoke all privileges on table public.room_outbox from anon, authenticated" in relay_sql
+    assert "grant all privileges on table public.room_outbox to service_role" in relay_sql
 
 
 def test_mp3_migration_has_checkpoint_marker_and_service_role_only_boundary() -> None:

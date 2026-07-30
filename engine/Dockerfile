@@ -11,5 +11,5 @@ COPY pyproject.toml uv.lock .python-version ./
 COPY engine ./engine
 RUN uv sync --frozen --no-dev
 
-EXPOSE 8000
+EXPOSE 8000 8001
 CMD ["uv", "run", "uvicorn", "engine.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "65536", "--ws-max-queue", "4"]

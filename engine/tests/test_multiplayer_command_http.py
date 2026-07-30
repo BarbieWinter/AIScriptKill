@@ -1116,20 +1116,33 @@ async def test_room_outbox_retries_delivery_with_stable_event_id(
             response = await client.post(f"/api/v1/sessions/{session_id}/commands", json=command)
         assert response.status_code == 200, response.text
 
-        async with factory() as db:
-            first = await publish_room_outbox_batch(db, publisher, limit=1000)
-            await db.commit()
+        async with engine.begin() as connection:
+            await connection.execute(
+                update(room_outbox)
+                .where(room_outbox.c.session_id == session_id)
+                .values(available_at=datetime(1900, 1, 1, tzinfo=UTC))
+            )
+        first = await publish_room_outbox_batch(
+            factory,
+            publisher,
+            worker_id="room-outbox-retry-first",
+            limit=1,
+        )
 
         async with engine.begin() as connection:
             await connection.execute(
                 update(room_outbox)
                 .where(room_outbox.c.session_id == session_id)
-                .values(available_at=datetime.now(UTC))
+                .values(available_at=datetime(1900, 1, 1, tzinfo=UTC))
             )
 
+        second = await publish_room_outbox_batch(
+            factory,
+            publisher,
+            worker_id="room-outbox-retry-second",
+            limit=1,
+        )
         async with factory() as db:
-            second = await publish_room_outbox_batch(db, publisher, limit=1000)
-            await db.commit()
             row = (
                 (
                     await db.execute(
@@ -1139,8 +1152,10 @@ async def test_room_outbox_retries_delivery_with_stable_event_id(
                 .mappings()
                 .one()
             )
-        assert first == 0
-        assert second == 1
+        assert first.published == 0
+        assert first.failed == 1
+        assert second.published == 1
+        assert second.failed == 0
         assert len(publisher.messages) == 2
         assert publisher.messages[0] == publisher.messages[1]
         assert publisher.messages[0].event_id == row["room_event_id"]
@@ -1208,6 +1223,13 @@ async def test_room_outbox_concurrent_claims_are_disjoint(
         assert assign.status_code == 200, assign.text
         assert ready.status_code == 200, ready.text
 
+        async with engine.begin() as connection:
+            await connection.execute(
+                update(room_outbox)
+                .where(room_outbox.c.session_id == session_id)
+                .values(available_at=datetime(1900, 1, 1, tzinfo=UTC))
+            )
+
         class ConcurrentPublisher:
             def __init__(self) -> None:
                 self.messages: list[RoomOutboxMessage] = []
@@ -1223,19 +1245,21 @@ async def test_room_outbox_concurrent_claims_are_disjoint(
 
         publisher = ConcurrentPublisher()
 
-        async def claim_one() -> int:
-            async with factory() as db:
-                published = await publish_room_outbox_batch(
-                    db,
-                    publisher,
-                    limit=1,
-                    publish_timeout_seconds=3,
-                )
-                await db.commit()
-                return published
+        async def claim_one(worker_id: str) -> int:
+            result = await publish_room_outbox_batch(
+                factory,
+                publisher,
+                worker_id=worker_id,
+                limit=1,
+                publish_timeout_seconds=3,
+            )
+            return result.published
 
         claim_counts = await asyncio.wait_for(
-            asyncio.gather(claim_one(), claim_one()),
+            asyncio.gather(
+                claim_one("room-outbox-concurrent-one"),
+                claim_one("room-outbox-concurrent-two"),
+            ),
             timeout=5,
         )
 
@@ -1653,6 +1677,13 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 assert current_response.status_code == 200
                 assert current_response.json() is None
 
+        async with engine.begin() as connection:
+            await connection.execute(
+                update(room_outbox)
+                .where(room_outbox.c.session_id == session_id)
+                .values(available_at=datetime(1900, 1, 1, tzinfo=UTC))
+            )
+
         class CapturingPublisher:
             def __init__(self) -> None:
                 self.messages: list[RoomOutboxMessage] = []
@@ -1663,9 +1694,13 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
                 self.messages.append(message)
 
         publisher = CapturingPublisher()
+        batch = await publish_room_outbox_batch(
+            factory,
+            publisher,
+            worker_id="gameplay-completion-outbox",
+            limit=sequence,
+        )
         async with factory() as db:
-            published = await publish_room_outbox_batch(db, publisher, limit=1000)
-            await db.commit()
             room = (
                 await db.execute(
                     select(
@@ -1730,7 +1765,7 @@ async def test_two_players_complete_gameplay_through_durable_http_commands(
         assert reservations == []
         assert len(outbox) == len(events)
         assert {row["room_event_id"] for row in outbox} == {event["id"] for event in events}
-        assert published == sequence
+        assert batch.published == sequence
         assert {row["topic"] for row in outbox} == {"room.events.v1"}
         assert all(row["published_at"] is not None for row in outbox)
 

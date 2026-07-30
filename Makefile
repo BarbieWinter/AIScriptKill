@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web test test-coverage test-database-privileges test-checkpoint-recovery test-durable-commands test-mp2-contract test-mp2-live test-t08-candidate lint lint-api lint-web typecheck-api format install verify-dev-tools db-start db-stop db-reset db-migrate clean help
+.PHONY: dev dev-api dev-relay dev-web test test-coverage test-database-privileges test-checkpoint-recovery test-durable-commands test-room-event-relay test-mp2-contract test-mp2-live test-t08-candidate lint lint-api lint-web typecheck-api format install verify-dev-tools db-start db-stop db-reset db-migrate clean help
 
 # 通用开发目标默认保留前端 Mock；需要真实 API 时可显式执行
 # `NEXT_PUBLIC_USE_MOCK=false make dev`（或 `make dev-web`）。
@@ -27,6 +27,10 @@ dev-api:
 	@echo "Starting engine (FastAPI)..."
 	uv run uvicorn engine.api.main:app --reload --port 8000 --ws-max-size 65536 --ws-max-queue 4
 
+dev-relay:
+	@echo "Starting room event relay..."
+	ROOM_EVENTS_V1=true DATABASE_POOLER_URL= uv run uvicorn engine.relay.main:app --reload --port 8001
+
 dev-web:
 	@echo "Starting frontend (Next.js)..."
 	@$(call run_web,npm --prefix apps/web run dev)
@@ -50,7 +54,12 @@ test-durable-commands:
 	AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL="$${AISCRIPTKILL_MULTIPLAYER_COMMAND_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_MP3_RECOVERY_DB_URL="$${AISCRIPTKILL_MP3_RECOVERY_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
 	AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL="$${AISCRIPTKILL_DATABASE_PRIVILEGE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
-	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_multiplayer_room_closure_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_database_access_boundary.py -v
+	AISCRIPTKILL_ROOM_EVENT_RELAY_DB_URL="$${AISCRIPTKILL_ROOM_EVENT_RELAY_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" \
+	uv run --frozen pytest engine/tests/test_multiplayer_command_http.py engine/tests/test_multiplayer_room_closure_http.py engine/tests/test_mp3_stale_recovery_persistence.py engine/tests/test_room_event_relay.py engine/tests/test_database_access_boundary.py -v
+
+test-room-event-relay:
+	@supabase status >/dev/null 2>&1 || { echo "ROOM EVENT RELAY GATE BLOCKED: local Supabase is not running."; exit 1; }
+	AISCRIPTKILL_ROOM_EVENT_RELAY_DB_URL="$${AISCRIPTKILL_ROOM_EVENT_RELAY_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}" uv run --frozen pytest engine/tests/test_room_event_relay.py -v
 
 test-mp2-contract:
 	uv run --frozen pytest engine/tests/test_multiplayer_gameplay_contract_fixture.py -q
@@ -75,7 +84,7 @@ lint-api:
 	uv run --frozen ruff format --check engine
 
 typecheck-api:
-	uv run --frozen basedpyright engine/__init__.py engine/agents engine/api engine/core engine/db engine/media engine/rag engine/repositories engine/services
+	uv run --frozen basedpyright engine/__init__.py engine/agents engine/api engine/core engine/db engine/media engine/rag engine/relay engine/repositories engine/services
 
 lint-web:
 	npm --prefix apps/web run lint
@@ -126,11 +135,13 @@ help:
 	@echo "make install     安装所有依赖"
 	@echo "make dev         启动后端和前端（前端默认 Mock；可用 NEXT_PUBLIC_USE_MOCK=false 覆盖）"
 	@echo "make dev-api     只启动后端"
+	@echo "make dev-relay   启动独立房间事件 Relay"
 	@echo "make dev-web     只启动前端（默认 Mock；可用 NEXT_PUBLIC_USE_MOCK=false 覆盖）"
 	@echo "make test        运行测试"
 	@echo "make test-database-privileges 使用本地 PostgreSQL 验证浏览器角色权限"
 	@echo "make test-checkpoint-recovery 使用本地 PostgreSQL 验证进程强杀恢复"
 	@echo "make test-durable-commands 使用已迁移的本地 PostgreSQL 验证持久命令、恢复、outbox 与权限"
+	@echo "make test-room-event-relay 使用本地 PostgreSQL 验证独立 Relay、租约与通知适配器"
 	@echo "make test-mp2-contract 运行 route-mocked MP-2 浏览器契约测试"
 	@echo "make test-mp2-live 针对已启动的真实 Supabase/FastAPI/Next 栈运行双身份完整通关测试"
 	@echo "make test-t08-candidate 从空白数据库运行完整双人候选发布门禁"
