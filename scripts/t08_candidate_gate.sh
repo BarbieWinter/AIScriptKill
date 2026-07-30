@@ -126,6 +126,14 @@ create_admin_access_token() {
   jq -er '.access_token' <<<"$token_response"
 }
 
+zip_output_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 publish_canonical_package() {
   local archive="$WORK_DIR/mp1-two-player.zip"
   local response_file="$WORK_DIR/package-import.json"
@@ -134,7 +142,7 @@ publish_canonical_package() {
 
   (
     cd "$ROOT_DIR/script-packages"
-    zip -qr -D "$archive" mp1-two-player
+    zip -qr -D "$(zip_output_path "$archive")" mp1-two-player
   )
   http_status="$(curl --silent --show-error \
     --output "$response_file" \
