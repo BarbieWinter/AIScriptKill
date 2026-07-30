@@ -39,9 +39,18 @@ def _candidate_repository(tmp_path: Path) -> Path:
     return repository
 
 
+def _shell_script_command(script: Path) -> list[str]:
+    if os.name != "nt":
+        return [str(script)]
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.fail("Git Bash is required to run candidate shell scripts on Windows")
+    return [bash, str(script)]
+
+
 def _run_candidate_check(repository: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(repository / "scripts" / CANDIDATE_TREE_CHECK.name)],
+        _shell_script_command(repository / "scripts" / CANDIDATE_TREE_CHECK.name),
         cwd=repository,
         env={
             **os.environ,
@@ -66,7 +75,7 @@ def _run_candidate_gate(
         executable.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
         executable.chmod(0o755)
     return subprocess.run(
-        [str(repository / "scripts" / CANDIDATE_GATE.name)],
+        _shell_script_command(repository / "scripts" / CANDIDATE_GATE.name),
         cwd=repository,
         env={
             **os.environ,
