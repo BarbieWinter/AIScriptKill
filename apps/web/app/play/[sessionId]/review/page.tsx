@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -15,9 +15,9 @@ import {
   multiplayerErrorMessage,
   shouldRetryMultiplayer,
 } from "@/lib/multiplayer/error-messages";
+import { isCompletedReview } from "@/lib/multiplayer/review-validation";
 import {
   createMultiplayerRoomClient,
-  MultiplayerClientError,
   multiplayerReviewKey,
 } from "@/lib/multiplayer/room-client";
 import type { CompletedReviewV1 } from "@/lib/multiplayer/types";
@@ -26,63 +26,111 @@ type ReviewData =
   | { kind: "multiplayer"; data: CompletedReviewV1 }
   | { kind: "legacy"; data: Review };
 
-function isCompletedReview(value: unknown): value is CompletedReviewV1 {
-  if (!value || typeof value !== "object") return false;
-  const review = value as Partial<CompletedReviewV1>;
-  return typeof review.ending?.name === "string"
-    && typeof review.truth?.case_summary === "string"
-    && Array.isArray(review.chapters);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isLegacyReview(value: unknown): value is Review {
-  if (!value || typeof value !== "object") return false;
-  const review = value as Partial<Review>;
-  return typeof review.score === "number"
-    && typeof review.rating === "string"
-    && typeof review.truth_summary === "string";
+  if (!isRecord(value) || !isRecord(value.breakdown)) return false;
+  const breakdown = value.breakdown;
+  return typeof value.session_id === "string"
+    && typeof value.script_id === "string"
+    && typeof value.score === "number"
+    && typeof value.max_score === "number"
+    && typeof value.rating === "string"
+    && typeof value.duration_minutes === "number"
+    && typeof breakdown.suspect_correct === "boolean"
+    && typeof breakdown.motive_correct === "boolean"
+    && typeof breakdown.key_evidence_hit_rate === "string"
+    && typeof breakdown.wrong_accusations === "number"
+    && typeof breakdown.total_clues_found === "number"
+    && typeof breakdown.total_clues_available === "number"
+    && typeof breakdown.clue_coverage === "string"
+    && typeof breakdown.hints_used === "number"
+    && Array.isArray(value.missed_key_clues)
+    && value.missed_key_clues.every((clue) => (
+      isRecord(clue)
+      && typeof clue.id === "string"
+      && typeof clue.name === "string"
+      && typeof clue.description === "string"
+    ))
+    && isStringArray(value.optimal_path)
+    && isStringArray(value.player_path)
+    && typeof value.truth_summary === "string";
 }
 
 const uuidSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function reviewPageKey(sessionId: string) {
+  return ["review-page", sessionId] as const;
+}
+
+async function loadLegacyReview(sessionId: string, signal?: AbortSignal): Promise<ReviewData> {
+  const payload = await api.getReview(sessionId, signal) as unknown;
+  if (!isLegacyReview(payload)) throw new Error("旧版复盘数据格式无效。");
+  return { kind: "legacy", data: payload };
+}
 
 export default function ReviewPage() {
   const params = useParams<{ sessionId: string }>();
   const sessionId = params.sessionId;
   const client = useMemo(() => createMultiplayerRoomClient(), []);
+  const queryClient = useQueryClient();
   const review = useQuery<ReviewData>({
-    queryKey: multiplayerReviewKey(sessionId),
+    queryKey: reviewPageKey(sessionId),
     queryFn: async ({ signal }) => {
       if (isMockMode() && !uuidSessionId.test(sessionId)) {
-        return { kind: "legacy", data: await api.getReview(sessionId) };
+        return loadLegacyReview(sessionId, signal);
       }
 
       try {
-        const payload = await client.getReview(sessionId, signal) as unknown;
-        if (isCompletedReview(payload)) return { kind: "multiplayer", data: payload };
-        if (isLegacyReview(payload)) return { kind: "legacy", data: payload };
-        throw new Error("复盘数据格式无效。");
+        return await loadLegacyReview(sessionId, signal);
       } catch (error) {
-        if (error instanceof MultiplayerClientError && [401, 403, 404].includes(error.status)) {
-          return { kind: "legacy", data: await api.getReview(sessionId) };
-        }
-        throw error;
+        if (signal.aborted) throw error;
       }
+
+      const payload = await client.getReview(sessionId, signal) as unknown;
+      if (isCompletedReview(payload)) {
+        queryClient.setQueryData(
+          multiplayerReviewKey(sessionId, payload.member_id),
+          payload,
+        );
+        return { kind: "multiplayer", data: payload };
+      }
+      if (isLegacyReview(payload)) return { kind: "legacy", data: payload };
+      throw new Error("复盘数据格式无效。");
     },
     retry: shouldRetryMultiplayer,
+    staleTime: Infinity,
+    gcTime: 0,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+  const returnDestination = review.data
+    ? review.data.kind === "legacy"
+      ? { href: "/library", label: "返回剧本库" }
+      : { href: `/play/${sessionId}/lobby`, label: "返回终局" }
+    : null;
 
   return (
     <main className="min-h-screen bg-[#080a0c] text-[#e8e2d5]">
       <header className="border-b border-white/8 bg-[#0d100f]">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-5 py-4">
-          <Link
-            href={`/play/${sessionId}/lobby`}
-            className="inline-flex items-center gap-2 text-sm text-[#a8aba5] hover:text-white"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            返回终局
-          </Link>
+          <div className="min-w-[7rem]">
+            {returnDestination && (
+              <Link
+                href={returnDestination.href}
+                className="inline-flex items-center gap-2 text-sm text-[#a8aba5] hover:text-white"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                {returnDestination.label}
+              </Link>
+            )}
+          </div>
           <p className="text-sm font-semibold">案件复盘</p>
           <button
             type="button"

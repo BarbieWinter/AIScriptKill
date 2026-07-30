@@ -8,10 +8,12 @@ import {
   type Route,
 } from "@playwright/test";
 
+import { selectNewerRoomSnapshot } from "@/lib/multiplayer/room-client";
 import type {
   CompletedReviewV1,
   GameplayDiscussionMessage,
   GameplaySnapshotV1,
+  RoomCommandResponse,
 } from "@/lib/multiplayer/types";
 import gameplayContractJson from "./fixtures/multiplayer-gameplay-contract.json";
 
@@ -23,7 +25,52 @@ type ScenePresence = {
   moving: boolean;
 };
 type PresencePayload = ScenePresence & Record<string, unknown>;
-type SnapshotHold = { promise: Promise<void>; release: () => void };
+type SnapshotHold = {
+  promise: Promise<void>;
+  release: () => void;
+  captureResponse?: boolean;
+  consumeOnStart?: boolean;
+  onResponse?: () => void;
+};
+type RequestHold = {
+  promise: Promise<void>;
+  release: () => void;
+  started: Promise<void>;
+  onStart: () => void;
+};
+type CommandEnvelope = {
+  command_id: string;
+  expected_revision: number;
+  type: string;
+  payload: Record<string, unknown>;
+};
+type RecordedCommand = CommandEnvelope & {
+  identity: Identity;
+  serialized: string;
+};
+type StoredReceipt = {
+  processingReadsRemaining: number;
+  terminal: {
+    command_id: string;
+    status: "succeeded" | "rejected";
+    revision: number;
+    event_sequence_from: number | null;
+    event_sequence_to: number | null;
+    result: RoomCommandResponse | null;
+    error_code: string | null;
+    error_details: Record<string, unknown>;
+  };
+};
+type NextCommandRecovery =
+  | { kind: "accepted"; processingReads: number }
+  | { kind: "missing" }
+  | { kind: "processing" }
+  | { kind: "rejected"; code: string; message: string; processingReads: number };
+type NextCommandHttpFailure = {
+  status: number;
+  code: string;
+  message: string;
+};
 type ContractTransition = {
   from: string;
   to: string;
@@ -59,6 +106,12 @@ const members = {
     characterName: "知情人",
   },
 } as const;
+const pendingCommandStorageKey = (
+  identity: Identity,
+) => `mp3:pending-room-command:v1:${sessionId}:${members[identity].memberId}`;
+const pendingCommandStorageLockName = (
+  identity: Identity,
+) => `mp3:pending-room-command-lock:v1:${sessionId}:${members[identity].memberId}`;
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -124,9 +177,22 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
   let settlementVisible = true;
   let holdNextPresence = false;
   let releaseHeldPresence: (() => void) | null = null;
+  let nextCommandRecovery: NextCommandRecovery | null = null;
+  let nextCommandHttpFailure: NextCommandHttpFailure | null = null;
+  let nextProcessingReplayHttpFailure: NextCommandHttpFailure | null = null;
+  let commandRequestHold: (RequestHold & { requestNumber: number }) | null = null;
+  let nextReceiptRequestHold: RequestHold | null = null;
+  let receiptResolutionPaused = false;
+  const commandReceipts = new Map<string, StoredReceipt>();
+  const stalledProcessingCommands = new Set<string>();
+  const receiptRequests: string[] = [];
   const snapshotFailures: Record<Identity, number> = { host: 0, guest: 0 };
+  const frozenSnapshots: Record<Identity, GameplaySnapshotV1 | null> = { host: null, guest: null };
   const snapshotRequests: Record<Identity, number> = { host: 0, guest: 0 };
   const reviewFailures: Record<Identity, number> = { host: 0, guest: 0 };
+  const reviewCaseSummaryOverrides = new Map<Identity, string | null>();
+  const reviewPayloadOverrides = new Map<Identity, unknown>();
+  const presenceFailures: Record<Identity, number | null> = { host: null, guest: null };
   const activeSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
   const nextCommandSnapshotHolds: Record<Identity, SnapshotHold | null> = { host: null, guest: null };
   let eventHeadSequence = gameplayContract.states[initialState].host.event_head_sequence;
@@ -140,7 +206,9 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
   const presenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
   const appliedPresenceBodies: Array<{ identity: Identity; body: PresencePayload }> = [];
   let abortedPresenceRequests = 0;
-  const commandBodies: Array<{ identity: Identity; type: string; payload: Record<string, unknown> }> = [];
+  let abortedCommandRequests = 0;
+  let abortedReceiptRequests = 0;
+  const commandBodies: RecordedCommand[] = [];
   const reviewRequests: Identity[] = [];
 
   const snapshotFor = (identity: Identity) => {
@@ -164,9 +232,9 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     return snapshot;
   };
 
-  const rejectCommand = (route: Route, commandId: string, code: string, message: string) => {
+  const rejectedCommand = (commandId: string, code: string, message: string): RoomCommandResponse => {
     const snapshot = snapshotFor("host");
-    return json(route, {
+    return {
       command_id: commandId,
       status: "rejected",
       revision: snapshot.revision,
@@ -174,7 +242,57 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       result: null,
       error: { code, message, details: {} },
       replayed: false,
-    });
+    };
+  };
+
+  const rejectCommand = (route: Route, commandId: string, code: string, message: string) => (
+    json(route, rejectedCommand(commandId, code, message))
+  );
+
+  const terminalReceipt = (
+    result: RoomCommandResponse,
+    processingReadsRemaining: number,
+  ): StoredReceipt => result.status === "accepted" ? {
+    processingReadsRemaining,
+    terminal: {
+      command_id: result.command_id,
+      status: "succeeded",
+      revision: result.revision,
+      event_sequence_from: result.event_sequence || null,
+      event_sequence_to: result.event_sequence || null,
+      result,
+      error_code: null,
+      error_details: {},
+    },
+  } : {
+    processingReadsRemaining,
+    terminal: {
+      command_id: result.command_id,
+      status: "rejected",
+      revision: result.revision,
+      event_sequence_from: null,
+      event_sequence_to: null,
+      result: null,
+      error_code: result.error.code,
+      error_details: { command_result: result },
+    },
+  };
+
+  const deliverCommand = (
+    route: Route,
+    result: RoomCommandResponse,
+    recovery: NextCommandRecovery | null,
+  ) => {
+    if (recovery?.kind === "accepted") {
+      nextCommandRecovery = null;
+      commandReceipts.set(
+        result.command_id,
+        terminalReceipt(result, recovery.processingReads),
+      );
+      return route.abort("connectionreset");
+    }
+    commandReceipts.set(result.command_id, terminalReceipt(result, 0));
+    return json(route, result);
   };
 
   const activateNextSnapshotHold = (identity: Identity) => {
@@ -196,7 +314,13 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       if (pathname === `/api/v1/sessions/${sessionId}/snapshot` && method === "GET") {
         snapshotRequests[identity] += 1;
         const hold = activeSnapshotHolds[identity];
+        const capturedResponse = hold?.captureResponse
+          ? clone(frozenSnapshots[identity] ?? snapshotFor(identity))
+          : null;
         if (hold) {
+          if (hold.consumeOnStart && activeSnapshotHolds[identity] === hold) {
+            activeSnapshotHolds[identity] = null;
+          }
           await hold.promise;
           if (activeSnapshotHolds[identity] === hold) activeSnapshotHolds[identity] = null;
         }
@@ -204,7 +328,11 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
           snapshotFailures[identity] -= 1;
           return json(route, { error: { code: "TEMPORARY_FAILURE", message: "Temporary snapshot failure", details: {} } }, 500);
         }
-        return json(route, snapshotFor(identity));
+        if (capturedResponse) {
+          hold?.onResponse?.();
+          return json(route, capturedResponse);
+        }
+        return json(route, frozenSnapshots[identity] ?? snapshotFor(identity));
       }
       if (pathname === "/api/v1/sessions/current" && method === "GET") {
         const snapshot = snapshotFor(identity);
@@ -221,7 +349,14 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
           reviewFailures[identity] -= 1;
           return json(route, { error: { code: "TEMPORARY_FAILURE", message: "Temporary review failure", details: {} } }, 500);
         }
-        return json(route, gameplayContract.reviews[identity]);
+        if (reviewPayloadOverrides.has(identity)) {
+          return json(route, reviewPayloadOverrides.get(identity));
+        }
+        const completedReview = clone(gameplayContract.reviews[identity]);
+        if (reviewCaseSummaryOverrides.has(identity)) {
+          completedReview.truth.case_summary = reviewCaseSummaryOverrides.get(identity) ?? null;
+        }
+        return json(route, completedReview);
       }
       if (pathname === `/api/v1/sessions/${sessionId}/scene-presence` && method === "PUT") {
         const body = request.postDataJSON() as PresencePayload;
@@ -229,6 +364,13 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
         expect(body).not.toHaveProperty("member_id");
         expect(body).not.toHaveProperty("character_id");
         presenceBodies.push({ identity, body });
+        if (presenceFailures[identity] !== null) {
+          return json(
+            route,
+            { error: { code: "PRESENCE_REJECTED", message: "Presence rejected", details: {} } },
+            presenceFailures[identity],
+          );
+        }
         const wasHeld = holdNextPresence;
         if (wasHeld) {
           holdNextPresence = false;
@@ -246,15 +388,147 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
         appliedPresenceBodies.push({ identity, body });
         return;
       }
+      if (
+        pathname.startsWith(`/api/v1/sessions/${sessionId}/commands/`)
+        && method === "GET"
+      ) {
+        const commandId = decodeURIComponent(pathname.split("/").at(-1) ?? "");
+        receiptRequests.push(commandId);
+        const receiptHold = nextReceiptRequestHold;
+        if (receiptHold) {
+          nextReceiptRequestHold = null;
+          receiptHold.onStart();
+          await receiptHold.promise;
+          if (request.failure()) {
+            abortedReceiptRequests += 1;
+            return;
+          }
+        }
+        if (receiptResolutionPaused) {
+          return json(route, {
+            error: {
+              code: "TEMPORARY_FAILURE",
+              message: "Receipt lookup paused",
+              details: {},
+            },
+          }, 503);
+        }
+        if (stalledProcessingCommands.has(commandId)) {
+          return json(route, {
+            command_id: commandId,
+            status: "processing",
+            revision: snapshotFor(identity).revision,
+            event_sequence_from: null,
+            event_sequence_to: null,
+            result: null,
+            error_code: null,
+            error_details: {},
+          });
+        }
+        const stored = commandReceipts.get(commandId);
+        if (!stored) {
+          return json(route, {
+            error: {
+              code: "COMMAND_NOT_FOUND",
+              message: "Receipt missing",
+              details: {},
+            },
+          }, 404);
+        }
+        if (stored.processingReadsRemaining > 0) {
+          stored.processingReadsRemaining -= 1;
+          return json(route, {
+            command_id: commandId,
+            status: "processing",
+            revision: stored.terminal.revision,
+            event_sequence_from: null,
+            event_sequence_to: null,
+            result: null,
+            error_code: null,
+            error_details: {},
+          });
+        }
+        return json(route, stored.terminal);
+      }
       if (pathname === `/api/v1/sessions/${sessionId}/commands` && method === "POST") {
-        const body = request.postDataJSON() as {
-          command_id: string;
-          expected_revision: number;
-          type: string;
-          payload: Record<string, unknown>;
-        };
+        const body = request.postDataJSON() as CommandEnvelope;
         expect(body.command_id).toMatch(/^[0-9a-f-]{36}$/i);
-        commandBodies.push({ identity, type: body.type, payload: body.payload });
+        commandBodies.push({
+          identity,
+          ...body,
+          serialized: request.postData() ?? "",
+        });
+        const requestHold = commandRequestHold?.requestNumber === commandBodies.length
+          ? commandRequestHold
+          : null;
+        if (requestHold) {
+          commandRequestHold = null;
+          requestHold.onStart();
+          await requestHold.promise;
+          if (request.failure()) {
+            abortedCommandRequests += 1;
+            return;
+          }
+        }
+        const existingReceipt = commandReceipts.get(body.command_id);
+        if (existingReceipt) {
+          if (existingReceipt.processingReadsRemaining > 0) {
+            return json(route, {
+              error: {
+                code: "COMMAND_IN_PROGRESS",
+                message: "Command is still processing",
+                details: {},
+              },
+            }, 409);
+          }
+          const replayedResult: RoomCommandResponse | null = existingReceipt.terminal.status === "succeeded"
+            ? existingReceipt.terminal.result
+            : (existingReceipt.terminal.error_details.command_result as RoomCommandResponse | undefined) ?? null;
+          if (replayedResult) return json(route, { ...replayedResult, replayed: true });
+        }
+        const httpFailure = nextCommandHttpFailure;
+        if (httpFailure) {
+          nextCommandHttpFailure = null;
+          return json(route, {
+            error: {
+              code: httpFailure.code,
+              message: httpFailure.message,
+              details: {},
+            },
+          }, httpFailure.status);
+        }
+        const recovery = nextCommandRecovery;
+        if (stalledProcessingCommands.has(body.command_id)) {
+          const replayFailure = nextProcessingReplayHttpFailure;
+          if (replayFailure) {
+            nextProcessingReplayHttpFailure = null;
+            return json(route, {
+              error: {
+                code: replayFailure.code,
+                message: replayFailure.message,
+                details: {},
+              },
+            }, replayFailure.status);
+          }
+          stalledProcessingCommands.delete(body.command_id);
+        } else if (recovery?.kind === "processing") {
+          nextCommandRecovery = null;
+          stalledProcessingCommands.add(body.command_id);
+          return route.abort("connectionreset");
+        }
+        if (recovery?.kind === "missing") {
+          nextCommandRecovery = null;
+          return route.abort("connectionreset");
+        }
+        if (recovery?.kind === "rejected") {
+          nextCommandRecovery = null;
+          const result = rejectedCommand(body.command_id, recovery.code, recovery.message);
+          commandReceipts.set(
+            body.command_id,
+            terminalReceipt(result, recovery.processingReads),
+          );
+          return route.abort("connectionreset");
+        }
         const current = snapshotFor(identity);
         if (revisionFailures > 0) {
           revisionFailures -= 1;
@@ -297,7 +571,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
           } satisfies GameplayDiscussionMessage);
           if (transition) stateKey = transition.to;
           activateNextSnapshotHold(identity);
-          return json(route, {
+          return deliverCommand(route, {
             command_id: body.command_id,
             status: "accepted",
             revision: transition?.revision ?? current.revision,
@@ -305,7 +579,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
             result: { event_ids: [] },
             error: null,
             replayed: false,
-          });
+          }, recovery);
         }
 
         const transition = gameplayContract.transitions.find((candidate) => (
@@ -323,7 +597,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
           : eventHeadSequence + 1;
         if (receiptEventSequence > 0) eventHeadSequence = receiptEventSequence;
         activateNextSnapshotHold(identity);
-        return json(route, {
+        return deliverCommand(route, {
           command_id: body.command_id,
           status: "accepted",
           revision: transition.revision,
@@ -331,7 +605,7 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
           result: { event_ids: [] },
           error: null,
           replayed: false,
-        });
+        }, recovery);
       }
       return json(route, { error: { code: "NOT_FOUND", message: pathname, details: {} } }, 404);
     });
@@ -345,14 +619,39 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
     restoreSnapshots(identity: Identity) {
       snapshotFailures[identity] = 0;
     },
+    freezeSnapshots(identity: Identity) {
+      frozenSnapshots[identity] = snapshotFor(identity);
+    },
+    restoreFrozenSnapshots(identity: Identity) {
+      frozenSnapshots[identity] = null;
+    },
     failNextMessage() {
       messageFailures = 1;
+    },
+    failNextCommandHttp(
+      status = 422,
+      code = "COMMAND_INVALID",
+      message = "Command was not committed",
+    ) {
+      nextCommandHttpFailure = { status, code, message };
     },
     rejectNextRevision() {
       revisionFailures = 1;
     },
     failNextReviews(identity: Identity, count = 3) {
       reviewFailures[identity] = count;
+    },
+    setReviewCaseSummary(identity: Identity, summary: string | null) {
+      reviewCaseSummaryOverrides.set(identity, summary);
+    },
+    setReviewPayload(identity: Identity, payload: unknown) {
+      reviewPayloadOverrides.set(identity, payload);
+    },
+    failPresence(identity: Identity, status = 500) {
+      presenceFailures[identity] = status;
+    },
+    restorePresence(identity: Identity) {
+      presenceFailures[identity] = null;
     },
     hidePublicMaterials() {
       publicMaterialsVisible = false;
@@ -371,6 +670,85 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       nextCommandSnapshotHolds[identity] = { promise, release };
       return release;
     },
+    holdNextSnapshot(identity: Identity) {
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      activeSnapshotHolds[identity] = { promise, release };
+      return release;
+    },
+    holdNextCapturedSnapshot(identity: Identity) {
+      let release: () => void = () => undefined;
+      let onResponse: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const responseAttempted = new Promise<void>((resolve) => {
+        onResponse = resolve;
+      });
+      activeSnapshotHolds[identity] = {
+        promise,
+        release,
+        captureResponse: true,
+        consumeOnStart: true,
+        onResponse,
+      };
+      return { release, responseAttempted };
+    },
+    pauseReceiptResolution() {
+      receiptResolutionPaused = true;
+    },
+    resumeReceiptResolution() {
+      receiptResolutionPaused = false;
+    },
+    loseNextAcceptedCommandResponse(processingReads = 0) {
+      nextCommandRecovery = { kind: "accepted", processingReads };
+    },
+    loseNextCommandBeforeCommit() {
+      nextCommandRecovery = { kind: "missing" };
+    },
+    loseNextCommandInProcessing() {
+      nextCommandRecovery = { kind: "processing" };
+    },
+    failNextProcessingReplayHttp(
+      status = 403,
+      code = "REPLAY_FORBIDDEN",
+      message = "Replay request was rejected",
+    ) {
+      nextProcessingReplayHttpFailure = { status, code, message };
+    },
+    holdCommandRequest(requestNumber = 1) {
+      let release: () => void = () => undefined;
+      let onStart: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        onStart = resolve;
+      });
+      commandRequestHold = { requestNumber, promise, release, started, onStart };
+      return { release, started };
+    },
+    holdNextReceiptRequest() {
+      let release: () => void = () => undefined;
+      let onStart: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        onStart = resolve;
+      });
+      nextReceiptRequestHold = { promise, release, started, onStart };
+      return { release, started };
+    },
+    loseNextRejectedCommandResponse(
+      code = "REVISION_MISMATCH",
+      message = "Refresh snapshot",
+      processingReads = 0,
+    ) {
+      nextCommandRecovery = { kind: "rejected", code, message, processingReads };
+    },
     setState(nextState: string) {
       stateKey = nextState;
     },
@@ -381,9 +759,12 @@ function createGameplayApi(initialState = gameplayContract.initial_state) {
       releaseHeldPresence?.();
     },
     commandBodies,
+    receiptRequests,
     presenceBodies,
     appliedPresenceBodies,
     getAbortedPresenceRequests: () => abortedPresenceRequests,
+    getAbortedCommandRequests: () => abortedCommandRequests,
+    getAbortedReceiptRequests: () => abortedReceiptRequests,
     reviewRequests,
     snapshotRequests,
   };
@@ -403,7 +784,7 @@ async function createPlayerPage(
     if (!socket.url().includes("/_next/")) webSockets.push(socket.url());
   });
   await api.install(page, identity, token);
-  return { context, page, webSockets, getSignupRequests };
+  return { context, page, token, webSockets, getSignupRequests };
 }
 
 async function expectScenePhase(page: Page, stageName: string, phaseName: string) {
@@ -414,6 +795,24 @@ async function expectScenePhase(page: Page, stageName: string, phaseName: string
     `当前阶段 · ${stageName} · ${phaseName}`,
     { exact: true },
   )).toBeVisible({ timeout: 8_000 });
+}
+
+async function readPendingCommand(page: Page, identity: Identity) {
+  const raw = await page.evaluate(
+    (key) => window.localStorage.getItem(key),
+    pendingCommandStorageKey(identity),
+  );
+  return raw === null ? null : JSON.parse(raw) as {
+    version?: number;
+    session_id?: string;
+    member_id?: string;
+    replay_lease?: {
+      owner_id?: string;
+      expires_at_ms?: number;
+    } | null;
+    replay_attempted?: boolean;
+    serialized_envelope?: string;
+  };
 }
 
 async function openChaptersAndConfirm(page: Page) {
@@ -442,6 +841,83 @@ async function revealAllHints(host: Page, guest: Page) {
   await host.getByRole("button", { name: "关闭" }).click();
   await guest.getByRole("button", { name: "关闭" }).click();
 }
+
+test("failed scene presence uses bounded backoff while movement continues", async ({ browser }) => {
+  const api = createGameplayApi();
+  api.failPresence("host");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    api.presenceBodies.length = 0;
+    const scene = host.page.locator(".mansion-demo");
+    const initialX = Number(await scene.getAttribute("data-player-x"));
+
+    await scene.click({ position: { x: 20, y: 20 } });
+    await host.page.keyboard.down("KeyD");
+    await host.page.waitForTimeout(2_200);
+    await host.page.keyboard.up("KeyD");
+    await expect.poll(async () => Number(await scene.getAttribute("data-player-x"))).toBeGreaterThan(initialX);
+
+    const attempts = api.presenceBodies.filter(({ identity }) => identity === "host").length;
+    expect(attempts).toBeGreaterThanOrEqual(1);
+    expect(attempts).toBeLessThanOrEqual(4);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("scene presence recovers after a transient authentication rejection", async ({ browser }) => {
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    api.failPresence("host", 401);
+    api.presenceBodies.length = 0;
+    api.appliedPresenceBodies.length = 0;
+    const scene = host.page.locator(".mansion-demo");
+
+    await scene.click({ position: { x: 20, y: 20 } });
+    await host.page.keyboard.down("KeyD");
+    await expect.poll(() => api.presenceBodies.filter(({ identity }) => identity === "host").length)
+      .toBeGreaterThanOrEqual(1);
+    api.restorePresence("host");
+    await expect.poll(() => (
+      api.appliedPresenceBodies.filter(({ identity }) => identity === "host").length
+    )).toBeGreaterThanOrEqual(1);
+    await host.page.keyboard.up("KeyD");
+  } finally {
+    await host.page.keyboard.up("KeyD").catch(() => undefined);
+    await host.context.close();
+  }
+});
+
+
+test("terminal scene presence rejection disables further movement reports", async ({ browser }) => {
+  const api = createGameplayApi();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    api.failPresence("host", 403);
+    api.presenceBodies.length = 0;
+    const scene = host.page.locator(".mansion-demo");
+
+    await scene.click({ position: { x: 20, y: 20 } });
+    await host.page.keyboard.down("KeyD");
+    await host.page.waitForTimeout(2_200);
+    await host.page.keyboard.up("KeyD");
+
+    await expect.poll(() => api.presenceBodies.filter(({ identity }) => identity === "host").length)
+      .toBe(1);
+  } finally {
+    await host.context.close();
+  }
+});
 
 test("private chapters and public materials remain participant-safe in the movable scene", async ({ browser }) => {
   test.setTimeout(60_000);
@@ -661,6 +1137,793 @@ test("cached gameplay snapshot recovers after polling interruption", async ({ br
     await expect(syncWarning).toHaveCount(0, { timeout: 8_000 });
     await expectScenePhase(host.page, "核对口供", "公开讨论");
   } finally {
+    await host.context.close();
+  }
+});
+
+test("a held browser storage lock fails boundedly before any command is sent", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  const host = await createPlayerPage(browser, api, "host");
+  const peer = await host.context.newPage();
+  await api.install(peer, "host", host.token);
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      peer.goto("/multiplayer"),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await peer.evaluate(async (lockName) => {
+      const scopedWindow = window as Window & {
+        releasePendingCommandLock?: () => void;
+      };
+      let markAcquired: () => void = () => undefined;
+      const acquired = new Promise<void>((resolve) => {
+        markAcquired = resolve;
+      });
+      void navigator.locks.request(lockName, async () => {
+        markAcquired();
+        await new Promise<void>((resolve) => {
+          scopedWindow.releasePendingCommandLock = resolve;
+        });
+      });
+      await acquired;
+    }, pendingCommandStorageLockName("host"));
+
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("命令未提交", { timeout: 3_000 });
+    await expect(recoveryStatus).toContainText("另一标签页正在恢复上一条命令");
+    expect(api.commandBodies).toHaveLength(0);
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    await peer.evaluate(() => {
+      const scopedWindow = window as Window & {
+        releasePendingCommandLock?: () => void;
+      };
+      scopedWindow.releasePendingCommandLock?.();
+      delete scopedWindow.releasePendingCommandLock;
+    }).catch(() => undefined);
+    await host.context.close();
+  }
+});
+
+test("two tabs keep one persisted command identity while the first response is uncertain", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  api.pauseReceiptResolution();
+  api.loseNextAcceptedCommandResponse();
+  const host = await createPlayerPage(browser, api, "host");
+  const peer = await host.context.newPage();
+  await api.install(peer, "host", host.token);
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      peer.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await Promise.all([
+      expectScenePhase(host.page, "核对口供", "阅读角色信息"),
+      expectScenePhase(peer, "核对口供", "阅读角色信息"),
+    ]);
+    await Promise.all([
+      host.page.getByRole("button", { name: "角色章" }).click(),
+      peer.getByRole("button", { name: "角色章" }).click(),
+    ]);
+
+    const hostConfirm = host.page.getByRole("button", { name: "我已读完" });
+    const peerConfirm = peer.getByRole("button", { name: "我已读完" });
+    await Promise.all([
+      hostConfirm.evaluate((element) => (element as HTMLButtonElement).click()),
+      peerConfirm.evaluate((element) => (element as HTMLButtonElement).click()),
+    ]);
+
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+    const submitted = api.commandBodies[0];
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      submitted.serialized,
+    );
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "正在确认上一条命令",
+    );
+    await expect(peer.getByTestId("command-recovery-status")).toContainText(
+      "正在确认上一条命令",
+    );
+    await host.page.waitForTimeout(500);
+    expect(api.commandBodies).toHaveLength(1);
+
+    api.resumeReceiptResolution();
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await expect(peer.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+    expect(api.commandBodies).toHaveLength(1);
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("two tabs wait out an abandoned lease and share one byte-identical replay", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  const host = await createPlayerPage(browser, api, "host");
+  const command: CommandEnvelope = {
+    command_id: "77777777-7777-4777-8777-777777777777",
+    expected_revision: gameplayContract.states.investigation_read.host.revision,
+    type: "stage.confirm_read",
+    payload: { stage_id: gameplayContract.states.investigation_read.host.stage_id },
+  };
+  const serializedEnvelope = JSON.stringify(command);
+  await host.context.addInitScript(({ key, value }) => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, {
+    key: pendingCommandStorageKey("host"),
+    value: {
+      version: 1,
+      session_id: sessionId,
+      member_id: members.host.memberId,
+      replay_lease: {
+        owner_id: "closed-tab",
+        expires_at_ms: Date.now() + 750,
+      },
+      serialized_envelope: serializedEnvelope,
+    },
+  });
+  const peer = await host.context.newPage();
+  await api.install(peer, "host", host.token);
+  const releaseSnapshot = api.holdSnapshotsAfterNextCommand("host");
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      peer.goto(`/play/${sessionId}/lobby`),
+    ]);
+    await Promise.all([
+      expectScenePhase(host.page, "核对口供", "阅读角色信息"),
+      expectScenePhase(peer, "核对口供", "阅读角色信息"),
+    ]);
+
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+    expect(api.commandBodies[0]).toMatchObject(command);
+    expect(api.commandBodies[0].serialized).toBe(serializedEnvelope);
+    const replayLease = (await readPendingCommand(host.page, "host"))?.replay_lease;
+    expect(replayLease?.owner_id).not.toBe("closed-tab");
+    expect(replayLease?.expires_at_ms ?? 0).toBeGreaterThan(Date.now());
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "命令已接受",
+      { timeout: 8_000 },
+    );
+    await expect(peer.getByTestId("command-recovery-status")).toContainText(
+      "命令已接受",
+      { timeout: 8_000 },
+    );
+    await host.page.waitForTimeout(500);
+    expect(api.commandBodies).toHaveLength(1);
+
+    releaseSnapshot();
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await expect(peer.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+    expect(api.commandBodies).toHaveLength(1);
+  } finally {
+    releaseSnapshot();
+    await host.context.close();
+  }
+});
+
+test("accepted snapshot synchronization times out without clearing persistence", async ({ browser }) => {
+  test.setTimeout(20_000);
+  const api = createGameplayApi("investigation_read");
+  const releaseSnapshot = api.holdSnapshotsAfterNextCommand("host");
+  const host = await createPlayerPage(browser, api, "host");
+  let released = false;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("命令已接受");
+    await expect(recoveryStatus).toContainText("同步失败", { timeout: 8_000 });
+    expect(await readPendingCommand(host.page, "host")).not.toBeNull();
+
+    releaseSnapshot();
+    released = true;
+    await expect(recoveryStatus).toHaveCount(0, { timeout: 8_000 });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    if (!released) releaseSnapshot();
+    await host.context.close();
+  }
+});
+
+test("accepted command waits for snapshot revision and event bounds before cleanup", async ({ browser }) => {
+  const api = createGameplayApi("investigation_discuss");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    const dialog = host.page.getByRole("dialog", { name: "双人公开讨论" });
+    const messageInput = dialog.getByRole("textbox", { name: "讨论消息" });
+    const message = "等待事件游标同步后再清理。";
+    api.freezeSnapshots("host");
+
+    await messageInput.fill(message);
+    await dialog.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "命令已接受",
+      { timeout: 8_000 },
+    );
+    await expect(messageInput).toHaveValue(message);
+    expect(await readPendingCommand(host.page, "host")).not.toBeNull();
+
+    api.restoreFrozenSnapshots("host");
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await expect(messageInput).toHaveValue("");
+    await expect(dialog.getByText(message, { exact: true })).toBeVisible();
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.restoreFrozenSnapshots("host");
+    await host.context.close();
+  }
+});
+
+test("accepted snapshot reconciliation never regresses a newer polled snapshot", () => {
+  const acceptedSnapshot = clone(gameplayContract.states.investigation_message.host);
+  const newerPolledSnapshot = clone(gameplayContract.states.investigation_two_messages.host);
+
+  expect(acceptedSnapshot.revision).toBe(newerPolledSnapshot.revision);
+  expect(acceptedSnapshot.event_head_sequence).toBeLessThan(
+    newerPolledSnapshot.event_head_sequence,
+  );
+  expect(selectNewerRoomSnapshot(newerPolledSnapshot, acceptedSnapshot)).toBe(
+    newerPolledSnapshot,
+  );
+  expect(selectNewerRoomSnapshot(acceptedSnapshot, newerPolledSnapshot)).toBe(
+    newerPolledSnapshot,
+  );
+});
+
+test("accepted reconciliation ignores an older in-flight polled snapshot", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  const host = await createPlayerPage(browser, api, "host");
+  let releaseStaleSnapshot: (() => void) | null = null;
+  let abortedSnapshotRequests = 0;
+  host.page.on("requestfailed", (request) => {
+    if (
+      request.method() === "GET"
+      && new URL(request.url()).pathname === `/api/v1/sessions/${sessionId}/snapshot`
+    ) {
+      abortedSnapshotRequests += 1;
+    }
+  });
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+
+    const requestsBeforeHold = api.snapshotRequests.host;
+    const heldSnapshot = api.holdNextCapturedSnapshot("host");
+    releaseStaleSnapshot = heldSnapshot.release;
+    await expect.poll(() => api.snapshotRequests.host, { timeout: 5_000 }).toBeGreaterThan(
+      requestsBeforeHold,
+    );
+
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await expect(host.page.getByText("1/2 已读", { exact: true })).toBeVisible();
+    await expect.poll(() => abortedSnapshotRequests).toBeGreaterThan(0);
+
+    releaseStaleSnapshot();
+    releaseStaleSnapshot = null;
+    await heldSnapshot.responseAttempted;
+    await host.page.waitForTimeout(1_200);
+    await expect(host.page.getByText("1/2 已读", { exact: true })).toBeVisible();
+    await expect(host.page.getByRole("button", { name: "已读，等待同伴" })).toBeDisabled();
+  } finally {
+    releaseStaleSnapshot?.();
+    await host.context.close();
+  }
+});
+
+test("definite command HTTP rejection clears persistence and is not shown as processing", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    api.failNextCommandHttp();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("命令已拒绝", { timeout: 8_000 });
+    await expect(recoveryStatus).toContainText("Command was not committed");
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+    expect(api.commandBodies).toHaveLength(1);
+    await expect(host.page.getByRole("button", { name: "我已读完" })).toBeEnabled();
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("unknown HTTP 409 remains uncertain and replays the same envelope", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  api.pauseReceiptResolution();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    api.failNextCommandHttp(409, "UNKNOWN_ERROR", "Conflict response was not verifiable");
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+    const first = api.commandBodies[0];
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "正在确认上一条命令",
+    );
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      first.serialized,
+    );
+    await host.page.waitForTimeout(500);
+    expect(api.commandBodies).toHaveLength(1);
+
+    api.resumeReceiptResolution();
+    await expect.poll(() => api.commandBodies.length).toBe(2);
+    expect(api.commandBodies[1].serialized).toBe(first.serialized);
+    expect(api.commandBodies[1].command_id).toBe(first.command_id);
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("stale processing receipt replays the exact persisted envelope after reload", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  api.pauseReceiptResolution();
+  api.loseNextCommandInProcessing();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    const first = api.commandBodies[0];
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      first.serialized,
+    );
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("正在确认上一条命令");
+    api.resumeReceiptResolution();
+
+    await expect.poll(() => api.commandBodies.length, { timeout: 8_000 }).toBe(2);
+    expect(api.commandBodies[1].serialized).toBe(first.serialized);
+    expect(api.commandBodies[1].command_id).toBe(first.command_id);
+    expect(api.commandBodies[1].expected_revision).toBe(first.expected_revision);
+    expect(api.commandBodies[1].payload).toEqual(first.payload);
+    await expect(recoveryStatus).toHaveCount(0, { timeout: 8_000 });
+    await expect(host.page.getByText("1/2 已读", { exact: true })).toBeVisible();
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("replay HTTP rejection cannot terminalize a known processing receipt", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  api.loseNextCommandInProcessing();
+  api.failNextProcessingReplayHttp();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect.poll(() => api.commandBodies.length, { timeout: 8_000 }).toBe(2);
+
+    const [first, replay] = api.commandBodies;
+    expect(replay.serialized).toBe(first.serialized);
+    expect(replay.command_id).toBe(first.command_id);
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await host.page.waitForTimeout(750);
+    await expect(recoveryStatus).toContainText("正在确认上一条命令");
+    await expect(recoveryStatus).not.toContainText("命令已拒绝");
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      first.serialized,
+    );
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("held initial command request times out and recovers with the same envelope", async ({ browser }) => {
+  test.setTimeout(20_000);
+  const api = createGameplayApi("investigation_read");
+  const heldRequest = api.holdCommandRequest();
+  const host = await createPlayerPage(browser, api, "host");
+  let released = false;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await heldRequest.started;
+    await expect.poll(() => api.commandBodies.length, { timeout: 8_000 }).toBe(2);
+
+    const [first, replay] = api.commandBodies;
+    expect(replay.serialized).toBe(first.serialized);
+    expect(replay.command_id).toBe(first.command_id);
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+
+    heldRequest.release();
+    released = true;
+    await expect.poll(api.getAbortedCommandRequests).toBeGreaterThan(0);
+  } finally {
+    if (!released) heldRequest.release();
+    await host.context.close();
+  }
+});
+
+test("held receipt request times out and recovery continues polling", async ({ browser }) => {
+  test.setTimeout(20_000);
+  const api = createGameplayApi("investigation_read");
+  api.loseNextCommandBeforeCommit();
+  const heldRequest = api.holdNextReceiptRequest();
+  const host = await createPlayerPage(browser, api, "host");
+  let released = false;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await heldRequest.started;
+    await expect.poll(() => api.receiptRequests.length, { timeout: 8_000 }).toBeGreaterThan(1);
+    await expect.poll(() => api.commandBodies.length, { timeout: 8_000 }).toBe(2);
+
+    const [first, replay] = api.commandBodies;
+    expect(replay.serialized).toBe(first.serialized);
+    expect(replay.command_id).toBe(first.command_id);
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+
+    heldRequest.release();
+    released = true;
+    await expect.poll(api.getAbortedReceiptRequests).toBeGreaterThan(0);
+  } finally {
+    if (!released) heldRequest.release();
+    await host.context.close();
+  }
+});
+
+test("held replay request times out and remains recoverable with the same envelope", async ({ browser }) => {
+  test.setTimeout(25_000);
+  const api = createGameplayApi("investigation_read");
+  api.loseNextCommandBeforeCommit();
+  const heldRequest = api.holdCommandRequest(2);
+  const host = await createPlayerPage(browser, api, "host");
+  let released = false;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await heldRequest.started;
+    await expect.poll(() => api.receiptRequests.length, { timeout: 8_000 }).toBeGreaterThan(1);
+
+    const [first, heldReplay] = api.commandBodies;
+    expect(heldReplay.serialized).toBe(first.serialized);
+    await host.page.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) throw new Error("pending command was not persisted");
+      const record = JSON.parse(raw);
+      record.replay_lease = {
+        owner_id: "expired-test-owner",
+        expires_at_ms: 0,
+      };
+      window.localStorage.setItem(key, JSON.stringify(record));
+    }, pendingCommandStorageKey("host"));
+
+    await expect.poll(() => api.commandBodies.length, { timeout: 8_000 }).toBe(3);
+    const recoveredReplay = api.commandBodies[2];
+    expect(recoveredReplay.serialized).toBe(first.serialized);
+    expect(recoveredReplay.command_id).toBe(first.command_id);
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+
+    heldRequest.release();
+    released = true;
+    await expect.poll(api.getAbortedCommandRequests).toBeGreaterThan(0);
+  } finally {
+    if (!released) heldRequest.release();
+    await host.context.close();
+  }
+});
+
+test("uncertain read confirmation survives reload and clears only after accepted snapshot sync", async ({ browser }) => {
+  const api = createGameplayApi("investigation_read");
+  api.pauseReceiptResolution();
+  api.loseNextAcceptedCommandResponse(1);
+  const host = await createPlayerPage(browser, api, "host");
+  let releaseSnapshot: (() => void) | null = null;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    await host.page.getByRole("button", { name: "角色章" }).click();
+    await host.page.getByRole("button", { name: "我已读完" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    const first = api.commandBodies[0];
+    const storedBeforeReload = await readPendingCommand(host.page, "host");
+    expect(storedBeforeReload).toMatchObject({
+      version: 1,
+      session_id: sessionId,
+      member_id: members.host.memberId,
+      serialized_envelope: first.serialized,
+    });
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "阅读角色信息");
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("正在确认上一条命令");
+    expect(await readPendingCommand(host.page, "host")).not.toBeNull();
+
+    releaseSnapshot = api.holdNextSnapshot("host");
+    api.resumeReceiptResolution();
+    await expect(recoveryStatus).toContainText("命令已接受", { timeout: 8_000 });
+    expect(await readPendingCommand(host.page, "host")).not.toBeNull();
+
+    releaseSnapshot();
+    releaseSnapshot = null;
+    await expect(recoveryStatus).toHaveCount(0, { timeout: 8_000 });
+    await expect(host.page.getByText("1/2 已读", { exact: true })).toBeVisible();
+    expect(api.commandBodies).toHaveLength(2);
+    expect(api.commandBodies[1].serialized).toBe(first.serialized);
+    expect(api.commandBodies[1].command_id).toBe(first.command_id);
+    expect(api.receiptRequests).toContain(first.command_id);
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.resumeReceiptResolution();
+    releaseSnapshot?.();
+    await host.context.close();
+  }
+});
+
+test("missing discussion receipt replays the exact persisted envelope after reload", async ({ browser }) => {
+  const api = createGameplayApi("investigation_discuss");
+  api.pauseReceiptResolution();
+  api.loseNextCommandBeforeCommit();
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    const message = "刷新后仍然只发送这一条。";
+    await host.page.getByRole("textbox", { name: "讨论消息", exact: true }).fill(message);
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    const first = api.commandBodies[0];
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      first.serialized,
+    );
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "正在确认上一条命令",
+    );
+    api.resumeReceiptResolution();
+
+    await expect.poll(() => api.commandBodies.length).toBe(2);
+    const replay = api.commandBodies[1];
+    expect(replay.serialized).toBe(first.serialized);
+    expect(replay.command_id).toBe(first.command_id);
+    expect(replay.expected_revision).toBe(first.expected_revision);
+    expect(replay.payload).toEqual(first.payload);
+    expect(replay.payload.message_id).toBe(first.payload.message_id);
+    expect(api.receiptRequests).toContain(first.command_id);
+
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    await expect(host.page.getByText(message, { exact: true })).toBeVisible();
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+    await host.page.waitForTimeout(500);
+    expect(api.commandBodies).toHaveLength(2);
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("same-envelope storage updates preserve the accepted discussion callback", async ({ browser }) => {
+  const api = createGameplayApi("investigation_discuss");
+  api.pauseReceiptResolution();
+  api.loseNextAcceptedCommandResponse();
+  const host = await createPlayerPage(browser, api, "host");
+  const peer = await host.context.newPage();
+  await api.install(peer, "host", host.token);
+
+  try {
+    await Promise.all([
+      host.page.goto(`/play/${sessionId}/lobby`),
+      peer.goto("/multiplayer"),
+    ]);
+    await expectScenePhase(host.page, "核对口供", "公开讨论");
+    await host.page.getByRole("button", { name: "打开讨论" }).click();
+    const messageInput = host.page.getByRole("textbox", { name: "讨论消息", exact: true });
+    const message = "同一封命令更新不能丢失发送成功回调。";
+    await messageInput.fill(message);
+    await host.page.getByRole("button", { name: "发送讨论消息" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    await peer.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) throw new Error("pending command was not persisted");
+      const record = JSON.parse(raw);
+      record.replay_lease = {
+        owner_id: "peer-observer",
+        expires_at_ms: Date.now() + 30_000,
+      };
+      window.localStorage.setItem(key, JSON.stringify(record));
+    }, pendingCommandStorageKey("host"));
+    await expect(host.page.getByTestId("command-recovery-status")).toContainText(
+      "正在确认上一条命令",
+    );
+
+    api.resumeReceiptResolution();
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    await expect(messageInput).toHaveValue("");
+    await expect(host.page.getByText(message, { exact: true })).toBeVisible();
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("recovery adopts a successor record written while the prior terminal resolves", async ({ browser }) => {
+  const api = createGameplayApi("choice_final_settle");
+  api.pauseReceiptResolution();
+  api.loseNextAcceptedCommandResponse();
+  const host = await createPlayerPage(browser, api, "host");
+  const initialSettlement = gameplayContract.states.choice_final_settle.host.settlement!;
+  const successorSnapshot = gameplayContract.states.choice_final_host_confirmed.host;
+  const successor: CommandEnvelope = {
+    command_id: "66666666-6666-4666-8666-666666666666",
+    expected_revision: successorSnapshot.revision,
+    type: "settlement.confirm_shared_choice",
+    payload: {
+      settlement_id: initialSettlement.settlement_id,
+      option_id: initialSettlement.options[1].id,
+    },
+  };
+  const serializedSuccessor = JSON.stringify(successor);
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "共同终判", "提交判断");
+    await host.page.getByRole("button", { name: "打开判断" }).click();
+    await host.page.getByText(initialSettlement.options[0].text, { exact: true }).click();
+    await host.page.getByRole("button", { name: "确认选择" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    await host.page.evaluate(({ key, record }) => {
+      window.localStorage.setItem(key, JSON.stringify(record));
+    }, {
+      key: pendingCommandStorageKey("host"),
+      record: {
+        version: 1,
+        session_id: sessionId,
+        member_id: members.host.memberId,
+        replay_lease: null,
+        serialized_envelope: serializedSuccessor,
+      },
+    });
+
+    api.resumeReceiptResolution();
+    await expect.poll(() => api.commandBodies.length).toBe(2);
+    expect(api.commandBodies[1]).toMatchObject(successor);
+    expect(api.commandBodies[1].serialized).toBe(serializedSuccessor);
+    await expect(host.page.getByTestId("command-recovery-status")).toHaveCount(0, {
+      timeout: 8_000,
+    });
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+  } finally {
+    api.resumeReceiptResolution();
+    await host.context.close();
+  }
+});
+
+test("rejected settlement receipt survives reload without rebasing the decision", async ({ browser }) => {
+  const api = createGameplayApi("investigation_settle");
+  api.pauseReceiptResolution();
+  api.loseNextRejectedCommandResponse();
+  const host = await createPlayerPage(browser, api, "host");
+  const settlement = gameplayContract.states.investigation_settle.host.settlement!;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expectScenePhase(host.page, "核对口供", "提交判断");
+    await host.page.getByRole("button", { name: "打开判断" }).click();
+    await host.page.getByText(settlement.options[0].text, { exact: true }).click();
+    await host.page.getByRole("button", { name: "确认选择" }).click();
+    await expect.poll(() => api.commandBodies.length).toBe(1);
+
+    const first = api.commandBodies[0];
+    expect((await readPendingCommand(host.page, "host"))?.serialized_envelope).toBe(
+      first.serialized,
+    );
+    api.setState("investigation_reveal");
+
+    await host.page.reload();
+    await expectScenePhase(host.page, "核对口供", "查看结果");
+    const recoveryStatus = host.page.getByTestId("command-recovery-status");
+    await expect(recoveryStatus).toContainText("正在确认上一条命令");
+    api.resumeReceiptResolution();
+
+    await expect(recoveryStatus).toContainText("命令已拒绝", { timeout: 8_000 });
+    await expect(recoveryStatus).toContainText("房间刚刚发生变化");
+    expect(first.expected_revision).toBe(
+      gameplayContract.states.investigation_settle.host.revision,
+    );
+    expect(first.payload).toEqual({
+      settlement_id: settlement.settlement_id,
+      option_id: settlement.options[0].id,
+    });
+    expect(api.receiptRequests).toContain(first.command_id);
+    expect(await readPendingCommand(host.page, "host")).toBeNull();
+    await host.page.waitForTimeout(750);
+    expect(api.commandBodies).toHaveLength(1);
+  } finally {
+    api.resumeReceiptResolution();
     await host.context.close();
   }
 });
@@ -944,6 +2207,114 @@ test("direct completed review cold-loads and refreshes without gameplay traffic"
     await expect.poll(() => api.reviewRequests.length).toBe(3);
     expect(api.snapshotRequests.host).toBe(0);
     expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+
+test("direct completed review accepts a nullable case summary", async ({ browser }) => {
+  const api = createGameplayApi("completed");
+  api.setReviewCaseSummary("host", null);
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/review`);
+    await expect(
+      host.page.getByRole("heading", { name: gameplayContract.reviews.host.ending.name }),
+    ).toBeVisible({ timeout: 8_000 });
+    await expect(host.page.getByText("无法读取复盘", { exact: true })).toHaveCount(0);
+    expect(api.reviewRequests).toEqual(["host"]);
+    expect(api.snapshotRequests.host).toBe(0);
+    expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+
+test("direct completed review rejects malformed payloads without crashing", async ({ browser }) => {
+  const api = createGameplayApi("completed");
+  api.setReviewPayload("host", {
+    review_version: 1,
+    session_id: sessionId,
+    member_id: members.host.memberId,
+    ending: { id: "ending", name: "缺损结局", outcome_text: "缺少真相时间线。" },
+    chapters: [],
+    truth: { case_summary: null },
+  });
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/review`);
+    await expect(host.page.getByRole("heading", { name: "无法读取复盘" })).toBeVisible({
+      timeout: 8_000,
+    });
+    await expect(host.page.getByText("复盘数据格式无效。", { exact: true })).toBeVisible();
+    await expect(host.page.getByRole("heading", { name: "缺损结局" })).toHaveCount(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+
+test("client-side review navigation preserves compatible caches and terminal silence", async ({ browser }) => {
+  const api = createGameplayApi("completed");
+  const host = await createPlayerPage(browser, api, "host");
+  const endingName = gameplayContract.reviews.host.ending.name;
+
+  try {
+    await host.page.goto(`/play/${sessionId}/review`);
+    await expect(host.page.getByRole("heading", { name: endingName })).toBeVisible({ timeout: 8_000 });
+    expect(api.reviewRequests).toEqual(["host"]);
+    expect(api.snapshotRequests.host).toBe(0);
+
+    await host.page.getByRole("link", { name: "返回终局" }).click();
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    expect(api.snapshotRequests.host).toBe(1);
+
+    api.failNextReviews("host", 1);
+    await host.page.getByRole("button", { name: "打开复盘" }).click();
+    const reviewDialog = host.page.getByRole("dialog", { name: "案件复盘" });
+    await expect(reviewDialog.getByRole("heading", { name: endingName })).toBeVisible();
+    expect(api.reviewRequests).toEqual(["host"]);
+
+    await reviewDialog.getByRole("link", { name: "返回多人入口" }).click();
+    await expect(host.page).toHaveURL(/\/multiplayer$/);
+    await host.page.goBack();
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await host.page.waitForTimeout(2_500);
+    expect(api.snapshotRequests.host).toBe(1);
+    expect(api.presenceBodies.filter(({ identity }) => identity === "host")).toHaveLength(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+
+test("completed lobby rejects malformed review payloads without crashing", async ({ browser }) => {
+  const api = createGameplayApi("completed");
+  api.setReviewPayload("host", {
+    review_version: 1,
+    session_id: sessionId,
+    member_id: members.host.memberId,
+    ending: { id: "ending", name: "缺损结局", outcome_text: "缺少真相时间线。" },
+    chapters: [],
+    truth: { case_summary: null },
+  });
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    await expect(host.page.getByText("当前阶段 · 游戏完成", { exact: true })).toBeVisible({
+      timeout: 8_000,
+    });
+    await host.page.getByRole("button", { name: "打开复盘" }).click();
+    const reviewDialog = host.page.getByRole("dialog", { name: "案件复盘" });
+    await expect(
+      reviewDialog.getByText("复盘数据格式无效。", { exact: true }),
+    ).toBeVisible({ timeout: 8_000 });
+    await expect(reviewDialog.getByRole("heading", { name: "缺损结局" })).toHaveCount(0);
   } finally {
     await host.context.close();
   }

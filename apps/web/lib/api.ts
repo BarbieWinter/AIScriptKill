@@ -52,7 +52,8 @@ class ApiError extends Error {
 async function request<T>(
   method: string,
   path: string,
-  body?: any
+  body?: any,
+  signal?: AbortSignal
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
   const options: RequestInit = {
@@ -60,6 +61,7 @@ async function request<T>(
     headers: {
       "Content-Type": "application/json",
     },
+    signal,
   };
 
   if (body) {
@@ -509,7 +511,8 @@ export const api = {
    * @returns 复盘评分数据
    */
   getReview: async (
-    sessionId: string
+    sessionId: string,
+    signal?: AbortSignal
   ): Promise<{
     session_id: string;
     script_id: string;
@@ -527,7 +530,7 @@ export const api = {
       const engine = getMockEngine();
       return engine.getReview();
     }
-    return request("GET", `/sessions/${sessionId}/review`);
+    return request("GET", `/sessions/${sessionId}/review`, undefined, signal);
   },
 
   // ══════════════════════════════════════════

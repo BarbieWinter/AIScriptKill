@@ -82,6 +82,7 @@ export type LobbySnapshotV1 = {
     can_assign_character: boolean;
     can_ready: boolean;
     can_start: boolean;
+    can_end_incomplete: boolean;
   };
   invites: LobbyInvite[];
 };
@@ -174,10 +175,23 @@ export type GameplaySnapshotV1 = {
   settlement: GameplaySettlement | null;
   hints: GameplayHint[];
   can_advance: boolean;
+  can_end_incomplete: boolean;
   ending_id: string | null;
 };
 
-export type RoomSnapshotV1 = LobbySnapshotV1 | GameplaySnapshotV1;
+export type ClosedRoomSnapshotV1 = {
+  session_id: string;
+  mode: "multiplayer_v1";
+  status: "closed";
+  revision: number;
+  event_head_sequence: number;
+  package: PackageSummary;
+  self_member_id: string;
+  closed_at: string;
+  review_available: false;
+};
+
+export type RoomSnapshotV1 = LobbySnapshotV1 | GameplaySnapshotV1 | ClosedRoomSnapshotV1;
 
 type CommandBase<TType extends string, TPayload> = {
   command_id: string;
@@ -193,6 +207,7 @@ export type RoomCommand =
   | CommandBase<"room.unassign_character", Record<string, never>>
   | CommandBase<"room.ready", { ready: boolean }>
   | CommandBase<"room.start", Record<string, never>>
+  | CommandBase<"room.end_incomplete", { reason: string | null }>
   | CommandBase<"stage.confirm_read", StagePayload>
   | CommandBase<"stage.advance", StagePayload>
   | CommandBase<"discussion.send_message", StagePayload & { message_id: string; text: string }>
@@ -213,7 +228,7 @@ export type RoomCommandInput = RoomCommand extends infer T
 export type PreparedRoomCommand = RoomCommand;
 export type LobbyCommandInput = Extract<
   RoomCommandInput,
-  { type: "room.assign_character" | "room.unassign_character" | "room.ready" | "room.start" }
+  { type: "room.assign_character" | "room.unassign_character" | "room.ready" | "room.start" | "room.end_incomplete" }
 >;
 
 export type AcceptedCommandResponse = {
@@ -235,13 +250,24 @@ export type RejectedCommandResponse = {
   error: {
     code: string;
     message: string;
-    details: Record<string, string>;
+    details: Record<string, unknown>;
   };
   replayed: boolean;
 };
 
 export type RoomCommandResponse = AcceptedCommandResponse | RejectedCommandResponse;
 export type LobbyCommandResponse = RoomCommandResponse;
+
+export type RoomCommandReceiptResponse = {
+  command_id: string;
+  status: "processing" | "succeeded" | "rejected" | "failed";
+  revision: number;
+  event_sequence_from: number | null;
+  event_sequence_to: number | null;
+  result: unknown;
+  error_code: string | null;
+  error_details: Record<string, unknown>;
+};
 
 export type CompletedReviewV1 = {
   review_version: 1;
@@ -271,16 +297,23 @@ export type CompletedReviewV1 = {
     stage_id: string;
     settlement_id: string;
     outcome_id: string;
-    reveal: "named_ballots" | "aggregate" | "outcome_only";
-    ballots?: Array<{ member_id: string; option_id: string }>;
-    option_counts?: Array<{ option_id: string; count: number }>;
-  };
+  } & (
+    | {
+        reveal: "named_ballots";
+        ballots: Array<{ member_id: string; option_id: string }>;
+      }
+    | {
+        reveal: "aggregate";
+        option_counts: Array<{ option_id: string; count: number }>;
+      }
+    | { reveal: "outcome_only" }
+  );
 };
 
 export type MultiplayerApiErrorBody = {
   error?: {
     code?: string;
     message?: string;
-    details?: Record<string, string>;
+    details?: Record<string, unknown>;
   };
 };

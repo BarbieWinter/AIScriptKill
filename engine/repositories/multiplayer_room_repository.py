@@ -279,6 +279,11 @@ class MultiplayerRoomRepository:
                         room_members.c.session_id == session_id,
                         room_members.c.principal_id == principal_id,
                         room_members.c.membership_status == "joined",
+                        game_sessions.c.id == room_members.c.session_id,
+                        game_sessions.c.mode == "multiplayer_v1",
+                        game_sessions.c.status == "active",
+                        room_required_members.c.session_id == room_members.c.session_id,
+                        room_required_members.c.member_id == room_members.c.id,
                     )
                     .values(
                         scene_x=x,
@@ -605,6 +610,23 @@ class MultiplayerRoomRepository:
             raise MultiplayerRoomStorageError("room.state_update")
         if status in ("completed", "closed"):
             await self.release_reservations(session_id)
+
+    async def close_incomplete_room(
+        self,
+        *,
+        session_id: UUID,
+        state: Mapping[str, object],
+        revision: int,
+        event_head_sequence: int,
+    ) -> None:
+        await self.replace_game_state(
+            session_id=session_id,
+            state=state,
+            revision=revision,
+            event_head_sequence=event_head_sequence,
+            status="closed",
+        )
+        await self.revoke_all_invites(session_id)
 
     async def release_reservations(self, session_id: UUID) -> None:
         await self.db.execute(

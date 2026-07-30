@@ -231,10 +231,14 @@ async def test_stale_room_command_replays_one_durable_terminal_rejection(
         ) as client:
             first = await client.post(f"/api/v1/sessions/{session_id}/commands", json=command)
             replay = await client.post(f"/api/v1/sessions/{session_id}/commands", json=command)
+            receipt_response = await client.get(
+                f"/api/v1/sessions/{session_id}/commands/{command_id}"
+            )
             snapshot_response = await client.get(f"/api/v1/sessions/{session_id}/snapshot")
 
         assert first.status_code == 200, first.text
         assert replay.status_code == 200, replay.text
+        assert receipt_response.status_code == 200, receipt_response.text
         first_result = first.json()
         assert first_result == {
             "command_id": str(command_id),
@@ -250,6 +254,20 @@ async def test_stale_room_command_replays_one_durable_terminal_rejection(
             "replayed": False,
         }
         assert replay.json() == {**first_result, "replayed": True}
+        assert receipt_response.json() == {
+            "command_id": str(command_id),
+            "status": "rejected",
+            "revision": 0,
+            "event_sequence_from": None,
+            "event_sequence_to": None,
+            "result": None,
+            "error_code": "REVISION_MISMATCH",
+            "error_details": {
+                "expected_revision": "1",
+                "actual_revision": "0",
+                "command_result": first_result,
+            },
+        }
         assert snapshot_response.status_code == 200
         lobby = snapshot_response.json()
         assert lobby["revision"] == 0

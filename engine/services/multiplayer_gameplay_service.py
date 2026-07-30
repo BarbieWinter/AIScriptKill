@@ -125,8 +125,27 @@ def apply_gameplay_command(
     state = decode_room_game_state(room)
     member_id = str(member.id)
     try:
-        definition = multiplayer_stage_contract(package, state.stage.stage_id)
-        _validate_stage_material_ids(definition, state.stage.revealed_material_ids)
+        reached_definitions = _reached_stage_definitions(package, state.stage.stage_id)
+        definition = reached_definitions[-1]
+        exact_history_available = state.prior_revealed_materials_version == 1
+        restored_material_ids = _restore_revealed_material_ids(
+            reached_definitions,
+            state.prior_revealed_material_ids,
+            state.stage.revealed_material_ids,
+            exact_history_available=exact_history_available,
+        )
+        if not exact_history_available:
+            current_ids = set(state.stage.revealed_material_ids)
+            state = state.model_copy(
+                update={
+                    "prior_revealed_material_ids": tuple(
+                        material_id
+                        for material_id in restored_material_ids
+                        if material_id not in current_ids
+                    ),
+                    "prior_revealed_materials_version": 1,
+                }
+            )
         if isinstance(command, SendDiscussionMessageCommand):
             _validate_discussion_message(state, member_id, command)
             player = state.players[member_id]
@@ -245,10 +264,7 @@ def project_gameplay_snapshot(
     if current_index < 0:
         raise conflict("ROOM_PACKAGE_INVALID", "固定剧本包缺少当前多人阶段")
     try:
-        reached_definitions = tuple(
-            multiplayer_stage_contract(package, stage.id)
-            for stage in ordered_stages[: current_index + 1]
-        )
+        reached_definitions = _reached_stage_definitions(package, participant.stage.stage_id)
     except PackageMultiplayerError as exc:
         raise conflict("ROOM_PACKAGE_INVALID", "固定剧本包的已到达阶段定义无效") from exc
 
@@ -350,12 +366,14 @@ def project_gameplay_snapshot(
                 reached_definitions,
                 state.prior_revealed_material_ids,
                 participant.stage.revealed_material_ids,
+                exact_history_available=state.prior_revealed_materials_version == 1,
             ),
         ),
         discussion_messages=_discussion_messages(event_rows, state),
         settlement=settlement,
         hints=hints,
         can_advance=can_advance,
+        can_end_incomplete=(room.status == "active" and member.room_role == "host"),
         ending_id=state.ending_id,
     )
 
@@ -368,9 +386,9 @@ def project_multiplayer_review(
 ) -> CompletedReviewV1:
     """Return completed-only review content from the immutable room package."""
 
-    state = decode_room_game_state(room)
     if room.status != "completed":
         raise conflict("REVIEW_NOT_AVAILABLE", "多人游戏完成后才能查看复盘")
+    state = decode_room_game_state(room)
     try:
         definition = multiplayer_stage_contract(package, state.stage.stage_id)
         return project_completed_review(
@@ -396,6 +414,22 @@ def _validate_discussion_message(
         raise InvalidStageTransitionError("discussion stage_id mismatch")
     if state.stage.phase is not StagePhase.DISCUSS:
         raise InvalidStageTransitionError("messages are allowed only during discussion")
+
+
+def _reached_stage_definitions(
+    package: ScriptPackageImport,
+    current_stage_id: str,
+) -> tuple[MultiplayerStageDefinition, ...]:
+    stages = multiplayer_stages_from_package(package)
+    current_index = next(
+        (index for index, stage in enumerate(stages) if stage.id == current_stage_id),
+        -1,
+    )
+    if current_index < 0:
+        raise PackageMultiplayerError(f"stage.{current_stage_id}")
+    return tuple(
+        multiplayer_stage_contract(package, stage.id) for stage in stages[: current_index + 1]
+    )
 
 
 def _next_stage_definition(
@@ -503,6 +537,8 @@ def _restore_revealed_material_ids(
     reached_definitions: tuple[MultiplayerStageDefinition, ...],
     persisted_prior_ids: tuple[str, ...],
     current_revealed_ids: tuple[str, ...],
+    *,
+    exact_history_available: bool,
 ) -> tuple[str, ...]:
     current_definition = reached_definitions[-1]
     _validate_stage_material_ids(current_definition, current_revealed_ids)
@@ -521,6 +557,20 @@ def _restore_revealed_material_ids(
     if persisted_prior_ids != expected_prior_ids:
         raise conflict("ROOM_STATE_INVALID", "房间历史公共素材顺序无效")
 
+    deterministic_prior_ids = {
+        material.id
+        for definition in reached_definitions[:-1]
+        for material in definition.public_materials
+        if material.reveal_at in {"stage_enter", "all_players_read", "settlement_done"}
+    }
+    if exact_history_available:
+        if not deterministic_prior_ids.issubset(persisted_prior_ids):
+            raise conflict("ROOM_STATE_INVALID", "房间缺少确定的历史公共素材")
+        restored_prior_ids = set(persisted_prior_ids)
+    else:
+        # Transitional rooms retain declared historical IDs but never infer outcome-only reveals.
+        restored_prior_ids = deterministic_prior_ids.union(persisted_prior_ids)
+
     authored_ids = tuple(
         dict.fromkeys(
             material.id
@@ -528,16 +578,7 @@ def _restore_revealed_material_ids(
             for material in definition.public_materials
         )
     )
-    deterministic_prior_ids = {
-        material.id
-        for definition in reached_definitions[:-1]
-        for material in definition.public_materials
-        if material.reveal_at in {"stage_enter", "all_players_read", "settlement_done"}
-    }
-    restored_ids = deterministic_prior_ids.union(
-        persisted_prior_ids,
-        current_revealed_ids,
-    )
+    restored_ids = restored_prior_ids.union(current_revealed_ids)
     return tuple(material_id for material_id in authored_ids if material_id in restored_ids)
 
 

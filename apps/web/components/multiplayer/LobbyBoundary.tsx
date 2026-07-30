@@ -1,9 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, DoorClosed, LoaderCircle, RotateCcw } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import {
   multiplayerErrorCode,
@@ -12,21 +12,42 @@ import {
 } from "@/lib/multiplayer/error-messages";
 import {
   createMultiplayerRoomClient,
+  currentMultiplayerRoomKey,
   roomSnapshotKey,
 } from "@/lib/multiplayer/room-client";
-import { MultiplayerMansionShell } from "./MultiplayerMansionShell";
+import { ClosedRoomCommandRecovery } from "./ClosedRoomCommandRecovery";
+import { IncompleteRoomControl } from "./IncompleteRoomControl";
 import { LobbyShell } from "./LobbyShell";
+import { MultiplayerMansionShell } from "./MultiplayerMansionShell";
 
 export function LobbyBoundary({ sessionId }: { sessionId: string }) {
   const client = useMemo(() => createMultiplayerRoomClient(), []);
+  const queryClient = useQueryClient();
   const snapshot = useQuery({
     queryKey: roomSnapshotKey(sessionId),
     queryFn: ({ signal }) => client.getSnapshot(sessionId, signal),
     retry: shouldRetryMultiplayer,
-    refetchInterval: (query) => query.state.data?.status === "completed" ? false : 2_000,
-    refetchOnWindowFocus: (query) => query.state.data?.status !== "completed",
-    refetchOnReconnect: (query) => query.state.data?.status !== "completed",
+    refetchInterval: (query) => (
+      query.state.data?.status === "closed" || query.state.data?.status === "completed"
+        ? false
+        : 2_000
+    ),
+    refetchOnWindowFocus: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
+    refetchOnReconnect: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
+    refetchOnMount: (query) => (
+      query.state.data?.status !== "closed" && query.state.data?.status !== "completed"
+    ),
   });
+
+  useEffect(() => {
+    if (snapshot.data?.status === "closed" || snapshot.data?.status === "completed") {
+      queryClient.setQueryData(currentMultiplayerRoomKey, null);
+    }
+  }, [queryClient, snapshot.data?.status]);
 
   if (snapshot.isPending) {
     return (
@@ -84,8 +105,36 @@ export function LobbyBoundary({ sessionId }: { sessionId: string }) {
     </div>
   ) : null;
 
-  if (snapshot.data.status === "lobby") {
-    return <>{syncWarning}<LobbyShell client={client} snapshot={snapshot.data} /></>;
+  if (snapshot.data.status === "closed") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#080a0c] px-5 text-[#e8e2d5]">
+        {syncWarning}
+        <section className="w-full max-w-lg text-center">
+          <DoorClosed className="mx-auto mb-5 h-9 w-9 text-[#c9ae76]" />
+          <h1 className="text-2xl font-semibold">房间已关闭</h1>
+          <p className="mt-3 text-sm leading-6 text-[#aeb1ab]">
+            {snapshot.data.package.title} 未完成结束，因此没有结局或复盘。当前身份已可创建或加入其他房间。
+          </p>
+          <ClosedRoomCommandRecovery client={client} snapshot={snapshot.data} />
+          <Link
+            href="/multiplayer"
+            className="mt-7 inline-flex rounded-lg bg-[#c6a867] px-5 py-2.5 text-sm font-semibold text-[#11120f] hover:bg-[#d2b879]"
+          >
+            返回多人入口
+          </Link>
+        </section>
+      </main>
+    );
   }
-  return <>{syncWarning}<MultiplayerMansionShell client={client} snapshot={snapshot.data} /></>;
+
+  const room = snapshot.data.status === "lobby"
+    ? <LobbyShell client={client} snapshot={snapshot.data} />
+    : <MultiplayerMansionShell client={client} snapshot={snapshot.data} />;
+  return (
+    <>
+      {syncWarning}
+      {room}
+      <IncompleteRoomControl client={client} snapshot={snapshot.data} />
+    </>
+  );
 }

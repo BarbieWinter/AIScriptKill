@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronLeft, RotateCcw, Share2, TrendingUp } from "lucide-react";
+import { AlertTriangle, Check, RotateCcw, Share2, TrendingUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import type { Review } from "@/lib/game/types";
@@ -16,23 +16,8 @@ export function LegacyReview({ review }: { review: Review }) {
         : "text-[#aeb1ab]";
 
   return (
-    <div className="min-h-screen bg-[var(--background)] pb-16 text-[var(--foreground)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
-          <button
-            type="button"
-            onClick={() => router.push("/library")}
-            className="flex items-center gap-2 text-sm text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            返回
-          </button>
-          <h1 className="text-sm font-bold">案件复盘</h1>
-          <div className="w-12" />
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="pb-16 text-[var(--foreground)]">
+      <div className="mx-auto max-w-3xl py-4">
         <section className="mb-6 border border-[var(--border)] p-8 text-center">
           <p className={`text-6xl font-bold ${ratingColor}`}>{review.score}</p>
           <p className={`mt-2 text-lg font-semibold ${ratingColor}`}>{review.rating} 级</p>

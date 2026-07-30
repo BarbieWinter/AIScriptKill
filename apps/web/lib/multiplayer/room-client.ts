@@ -9,6 +9,7 @@ import type {
   MultiplayerApiErrorBody,
   PreparedRoomCommand,
   RoomCommandInput,
+  RoomCommandReceiptResponse,
   RoomCommandResponse,
   RoomSnapshotV1,
   ScenePresenceInput,
@@ -20,10 +21,25 @@ export function roomSnapshotKey(sessionId: string) {
   return ["multiplayer", "room-snapshot", sessionId] as const;
 }
 
+export function selectNewerRoomSnapshot(
+  current: RoomSnapshotV1 | undefined,
+  candidate: RoomSnapshotV1,
+): RoomSnapshotV1 {
+  if (!current) return candidate;
+  if (candidate.revision !== current.revision) {
+    return candidate.revision > current.revision ? candidate : current;
+  }
+  const candidateEventHead = "event_head_sequence" in candidate ? candidate.event_head_sequence : -1;
+  const currentEventHead = "event_head_sequence" in current ? current.event_head_sequence : -1;
+  return candidateEventHead > currentEventHead ? candidate : current;
+}
+
 export const lobbySnapshotKey = roomSnapshotKey;
 
-export function multiplayerReviewKey(sessionId: string) {
-  return ["multiplayer", "review", sessionId] as const;
+export const currentMultiplayerRoomKey = ["multiplayer", "current-room"] as const;
+
+export function multiplayerReviewKey(sessionId: string, memberId: string) {
+  return ["multiplayer", "review", sessionId, memberId] as const;
 }
 
 export class MultiplayerClientError extends Error {
@@ -31,7 +47,7 @@ export class MultiplayerClientError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
-    public readonly details: Record<string, string> = {},
+    public readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "MultiplayerClientError";
@@ -43,6 +59,7 @@ type TokenProvider = () => Promise<string>;
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
+  serializedBody?: string;
   signal?: AbortSignal;
 };
 
@@ -62,12 +79,15 @@ export class MultiplayerRoomClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
     };
-    if (options.body !== undefined) headers["Content-Type"] = "application/json";
+    if (options.body !== undefined || options.serializedBody !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
 
     const response = await fetch(`${API_BASE}${path}`, {
       method: options.method ?? "GET",
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.serializedBody
+        ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       signal: options.signal,
     });
 
@@ -145,6 +165,29 @@ export class MultiplayerRoomClient {
 
   prepareCommand(command: RoomCommandInput): PreparedRoomCommand {
     return { ...command, command_id: createUuid() } as PreparedRoomCommand;
+  }
+
+  submitSerializedCommand(
+    sessionId: string,
+    serializedCommand: string,
+    signal?: AbortSignal,
+  ): Promise<RoomCommandResponse> {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/commands`, {
+      method: "POST",
+      serializedBody: serializedCommand,
+      signal,
+    });
+  }
+
+  getCommandReceipt(
+    sessionId: string,
+    commandId: string,
+    signal?: AbortSignal,
+  ): Promise<RoomCommandReceiptResponse> {
+    return this.request(
+      `/sessions/${encodeURIComponent(sessionId)}/commands/${encodeURIComponent(commandId)}`,
+      { signal },
+    );
   }
 
   async sendPreparedCommand(

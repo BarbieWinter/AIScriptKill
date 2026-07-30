@@ -186,6 +186,7 @@ function createMockRoomApi() {
             settlement: null,
             hints: [],
             can_advance: false,
+            can_end_incomplete: member.room_role === "host",
             ending_id: null,
           });
         }
@@ -207,6 +208,7 @@ function createMockRoomApi() {
             can_assign_character: status === "lobby",
             can_ready: status === "lobby" && member.character_id !== null,
             can_start: status === "lobby" && member.room_role === "host" && prerequisitesReady(),
+            can_end_incomplete: status === "lobby" && member.room_role === "host",
           },
           invites: member.room_role === "host" ? publicInvites() : [],
         });

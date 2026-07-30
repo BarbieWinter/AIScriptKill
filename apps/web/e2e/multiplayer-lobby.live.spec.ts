@@ -64,6 +64,25 @@ async function closePanel(page: Page) {
   await page.getByRole("button", { name: "关闭" }).click();
 }
 
+async function verifyPublicMaterialWithoutMovement(page: Page) {
+  const scene = page.locator(".mansion-demo");
+  const initialPosition = await Promise.all([
+    scene.getAttribute("data-player-x"),
+    scene.getAttribute("data-player-y"),
+  ]);
+
+  await page.getByRole("button", { name: "打开公开档案" }).click();
+  await expect(page.getByRole("heading", { name: "公开档案" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "arrival-photo" })).toBeVisible();
+  await expect(page.getByText("已公开image素材（640x360）", { exact: true })).toBeVisible();
+  await closePanel(page);
+
+  expect(await Promise.all([
+    scene.getAttribute("data-player-x"),
+    scene.getAttribute("data-player-y"),
+  ])).toEqual(initialPosition);
+}
+
 async function confirmRead(page: Page) {
   await page.getByRole("button", { name: "我已读完" }).click();
 }
@@ -133,6 +152,10 @@ test("two real anonymous identities complete the M3 candidate game and review", 
 
     await waitForPhase(host.page, "核对口供", "阅读角色信息");
     await waitForPhase(guest.page, "核对口供", "阅读角色信息");
+    await Promise.all([
+      verifyPublicMaterialWithoutMovement(host.page),
+      verifyPublicMaterialWithoutMovement(guest.page),
+    ]);
 
     const hostLocal = host.page.locator('[data-character-id="self-investigator"]');
     const guestLocal = guest.page.locator('[data-character-id="self-insider"]');
@@ -147,24 +170,32 @@ test("two real anonymous identities complete the M3 candidate game and review", 
 
     const hostScene = host.page.locator(".mansion-demo");
     const guestScene = guest.page.locator(".mansion-demo");
+    const hostLocalStartX = Number(await hostScene.getAttribute("data-player-x"));
+    const guestLocalStartY = Number(await guestScene.getAttribute("data-player-y"));
     const hostRemoteStartX = Number(await hostOnGuest.getAttribute("data-scene-x"));
     const guestRemoteStartY = Number(await guestOnHost.getAttribute("data-scene-y"));
+    await hostScene.click({ position: { x: 20, y: 20 } });
     await host.page.keyboard.down("KeyD");
     await host.page.waitForTimeout(650);
     await host.page.keyboard.up("KeyD");
     await expect.poll(
+      async () => Number(await hostScene.getAttribute("data-player-x")),
+    ).toBeGreaterThan(hostLocalStartX);
+    await expect.poll(
       async () => Number(await hostOnGuest.getAttribute("data-scene-x")),
       { timeout: 12_000 },
     ).toBeGreaterThan(hostRemoteStartX);
+    await guestScene.click({ position: { x: 20, y: 20 } });
     await guest.page.keyboard.down("KeyW");
     await guest.page.waitForTimeout(650);
     await guest.page.keyboard.up("KeyW");
     await expect.poll(
+      async () => Number(await guestScene.getAttribute("data-player-y")),
+    ).toBeLessThan(guestLocalStartY);
+    await expect.poll(
       async () => Number(await guestOnHost.getAttribute("data-scene-y")),
       { timeout: 12_000 },
     ).toBeLessThan(guestRemoteStartY);
-    await expect(hostScene).toHaveAttribute("data-player-x", /\d+/);
-    await expect(guestScene).toHaveAttribute("data-player-y", /\d+/);
 
     await openJournal(host.page);
     await openJournal(guest.page);
@@ -203,7 +234,7 @@ test("two real anonymous identities complete the M3 candidate game and review", 
       host.page.getByRole("heading", { name: "二十点二十分的金属声最可能来自哪种情况？" }),
     ).toBeVisible({ timeout: 10_000 });
 
-    await host.page.getByText("有人在二十点二十分强行进入值班室", { exact: true }).click();
+    await host.page.getByText("金属声本身不能证明破门，来源可能是值班室内已有的人或物", { exact: true }).click();
     await host.page.getByRole("button", { name: "确认选择" }).click();
     await expect(guest.page.getByText("1/2 位玩家已提交")).toBeVisible({ timeout: 10_000 });
     await guest.page.getByText("有人早已在室内，金属声来自钥匙掉落", { exact: true }).click();
@@ -211,8 +242,6 @@ test("two real anonymous identities complete the M3 candidate game and review", 
     await expect(host.page.getByTestId("revealed-ballots")).toBeVisible({ timeout: 10_000 });
 
     await host.page.getByRole("button", { name: "进入下一阶段" }).click();
-    await closePanel(host.page);
-    await closePanel(guest.page);
     await waitForPhase(host.page, "共同终判", "阅读角色信息");
     await waitForPhase(guest.page, "共同终判", "阅读角色信息");
     await openJournal(host.page);
