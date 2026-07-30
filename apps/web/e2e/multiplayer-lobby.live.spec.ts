@@ -170,24 +170,32 @@ test("two real anonymous identities complete the M3 candidate game and review", 
 
     const hostScene = host.page.locator(".mansion-demo");
     const guestScene = guest.page.locator(".mansion-demo");
+    const hostLocalStartX = Number(await hostScene.getAttribute("data-player-x"));
+    const guestLocalStartY = Number(await guestScene.getAttribute("data-player-y"));
     const hostRemoteStartX = Number(await hostOnGuest.getAttribute("data-scene-x"));
     const guestRemoteStartY = Number(await guestOnHost.getAttribute("data-scene-y"));
+    await hostScene.click({ position: { x: 20, y: 20 } });
     await host.page.keyboard.down("KeyD");
     await host.page.waitForTimeout(650);
     await host.page.keyboard.up("KeyD");
     await expect.poll(
+      async () => Number(await hostScene.getAttribute("data-player-x")),
+    ).toBeGreaterThan(hostLocalStartX);
+    await expect.poll(
       async () => Number(await hostOnGuest.getAttribute("data-scene-x")),
       { timeout: 12_000 },
     ).toBeGreaterThan(hostRemoteStartX);
+    await guestScene.click({ position: { x: 20, y: 20 } });
     await guest.page.keyboard.down("KeyW");
     await guest.page.waitForTimeout(650);
     await guest.page.keyboard.up("KeyW");
     await expect.poll(
+      async () => Number(await guestScene.getAttribute("data-player-y")),
+    ).toBeLessThan(guestLocalStartY);
+    await expect.poll(
       async () => Number(await guestOnHost.getAttribute("data-scene-y")),
       { timeout: 12_000 },
     ).toBeLessThan(guestRemoteStartY);
-    await expect(hostScene).toHaveAttribute("data-player-x", /\d+/);
-    await expect(guestScene).toHaveAttribute("data-player-y", /\d+/);
 
     await openJournal(host.page);
     await openJournal(guest.page);
