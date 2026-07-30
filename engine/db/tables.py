@@ -721,8 +721,13 @@ room_outbox = Table(
     Column("topic", Text, nullable=False),
     Column("attempts", Integer, nullable=False, server_default=text("0")),
     Column("available_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("lease_token", UUID(as_uuid=True)),
+    Column("lease_owner", Text),
+    Column("lease_expires_at", DateTime(timezone=True)),
     Column("published_at", DateTime(timezone=True)),
     Column("last_error", Text),
+    Column("poisoned_at", DateTime(timezone=True)),
+    Column("poison_reason", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     ForeignKeyConstraint(
@@ -734,12 +739,46 @@ room_outbox = Table(
     UniqueConstraint("room_event_id", "topic", name="uq_room_outbox_event_topic"),
     CheckConstraint("length(btrim(topic)) > 0", name="room_outbox_topic_check"),
     CheckConstraint("attempts >= 0", name="room_outbox_attempts_check"),
+    CheckConstraint(
+        "(lease_token IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL) OR "
+        "(lease_token IS NOT NULL AND lease_owner IS NOT NULL "
+        "AND length(btrim(lease_owner)) > 0 AND lease_expires_at IS NOT NULL)",
+        name="room_outbox_lease_check",
+    ),
+    CheckConstraint(
+        "(poisoned_at IS NULL AND poison_reason IS NULL) OR "
+        "(poisoned_at IS NOT NULL AND poison_reason IS NOT NULL "
+        "AND length(btrim(poison_reason)) > 0)",
+        name="room_outbox_poison_check",
+    ),
+    CheckConstraint(
+        "NOT (published_at IS NOT NULL AND poisoned_at IS NOT NULL) AND "
+        "(published_at IS NULL OR "
+        "(lease_token IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL)) AND "
+        "(poisoned_at IS NULL OR "
+        "(lease_token IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL))",
+        name="room_outbox_terminal_state_check",
+    ),
 )
 Index(
     "idx_room_outbox_pending",
     room_outbox.c.available_at,
     room_outbox.c.id,
-    postgresql_where=room_outbox.c.published_at.is_(None),
+    postgresql_where=text("published_at IS NULL AND poisoned_at IS NULL"),
+)
+Index(
+    "idx_room_outbox_lease_expiry",
+    room_outbox.c.lease_expires_at,
+    room_outbox.c.id,
+    postgresql_where=text(
+        "published_at IS NULL AND poisoned_at IS NULL AND lease_token IS NOT NULL"
+    ),
+)
+Index(
+    "idx_room_outbox_poisoned",
+    room_outbox.c.poisoned_at,
+    room_outbox.c.id,
+    postgresql_where=room_outbox.c.poisoned_at.is_not(None),
 )
 
 session_checkpoint_writes = Table(

@@ -81,7 +81,69 @@ class Settings(BaseSettings):
     room_events_v1: bool = Field(
         default=False,
         alias="ROOM_EVENTS_V1",
-        description="Reserved MP-0 room-event rollout flag; it does not enable an entry point.",
+        description="Enable the independently supervised room-event relay and stream runtime.",
+    )
+    room_event_relay_batch_size: int = Field(
+        default=100,
+        alias="ROOM_EVENT_RELAY_BATCH_SIZE",
+        ge=1,
+        le=1000,
+        description="Maximum outbox rows claimed by one relay cycle.",
+    )
+    room_event_relay_poll_seconds: float = Field(
+        default=0.5,
+        alias="ROOM_EVENT_RELAY_POLL_SECONDS",
+        ge=0.05,
+        le=60.0,
+        description="Idle delay between relay claim cycles.",
+    )
+    room_event_relay_lease_seconds: int = Field(
+        default=30,
+        alias="ROOM_EVENT_RELAY_LEASE_SECONDS",
+        ge=5,
+        le=600,
+        description="Exclusive delivery lease duration before restart recovery may reclaim a row.",
+    )
+    room_event_relay_publish_timeout_seconds: float = Field(
+        default=5.0,
+        alias="ROOM_EVENT_RELAY_PUBLISH_TIMEOUT_SECONDS",
+        ge=0.1,
+        le=120.0,
+        description="Maximum transport wait for one event before recording a failed attempt.",
+    )
+    room_event_relay_retry_base_seconds: int = Field(
+        default=1,
+        alias="ROOM_EVENT_RELAY_RETRY_BASE_SECONDS",
+        ge=1,
+        le=300,
+        description="Initial relay retry delay before exponential capped backoff.",
+    )
+    room_event_relay_retry_max_seconds: int = Field(
+        default=60,
+        alias="ROOM_EVENT_RELAY_RETRY_MAX_SECONDS",
+        ge=1,
+        le=3600,
+        description="Maximum relay retry delay.",
+    )
+    room_event_relay_max_attempts: int = Field(
+        default=5,
+        alias="ROOM_EVENT_RELAY_MAX_ATTEMPTS",
+        ge=1,
+        le=100,
+        description="Delivery attempts before an event enters poison quarantine.",
+    )
+    room_event_relay_shutdown_grace_seconds: float = Field(
+        default=10.0,
+        alias="ROOM_EVENT_RELAY_SHUTDOWN_GRACE_SECONDS",
+        ge=1.0,
+        le=120.0,
+        description="Maximum graceful relay shutdown wait before task cancellation.",
+    )
+    room_event_notify_channel: str = Field(
+        default="aiscriptkill_room_events_v1",
+        alias="ROOM_EVENT_NOTIFY_CHANNEL",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$",
+        description="PostgreSQL notification channel carrying bounded public event references.",
     )
     ai_dm_v1: bool = Field(
         default=False,
