@@ -1,2 +1,3 @@
-# Keep generated browser contracts byte-stable across operating systems.
+# Keep generated browser contracts and shell gates byte-stable across operating systems.
 /apps/web/e2e/fixtures/*.json text eol=lf
+/scripts/*.sh text eol=lf

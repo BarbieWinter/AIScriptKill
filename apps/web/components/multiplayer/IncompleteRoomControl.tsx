@@ -67,6 +67,10 @@ export function IncompleteRoomControl({ client, snapshot }: IncompleteRoomContro
   closePendingRef.current = closeRoom.isPending;
 
   useEffect(() => {
+    if (!canEnd) {
+      if (confirming) setConfirming(false);
+      return;
+    }
     if (!confirming) return;
     const triggerButton = triggerButtonRef.current;
     const previousFocus = document.activeElement instanceof HTMLElement
@@ -132,7 +136,7 @@ export function IncompleteRoomControl({ client, snapshot }: IncompleteRoomContro
         }
       });
     };
-  }, [confirming]);
+  }, [canEnd, confirming]);
 
   if (!canEnd) return null;
 

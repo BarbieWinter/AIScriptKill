@@ -235,6 +235,11 @@ function createClosureApi(initialStatus: InitialStatus) {
 
   return {
     install,
+    closeExternally() {
+      status = "closed";
+      revision = 5;
+      eventHeadSequence = 4;
+    },
     setProcessingReceipt(commandId: string) {
       commandReceipts.set(commandId, {
         command_id: commandId,
@@ -348,6 +353,26 @@ test("host cannot abandon an active room while a gameplay command is unresolved"
     await expect(dialog.getByRole("alert")).toContainText("COMMAND_IN_PROGRESS");
     expect(api.commandCount()).toBe(0);
     await expect(host.page.getByRole("heading", { name: "房间已关闭" })).toHaveCount(0);
+  } finally {
+    await host.context.close();
+  }
+});
+
+test("external closure dismisses an open confirmation and restores page scrolling", async ({ browser }) => {
+  const api = createClosureApi("active");
+  const host = await createPlayerPage(browser, api, "host");
+
+  try {
+    await host.page.goto(`/play/${sessionId}/lobby`);
+    const abandonButton = host.page.getByRole("button", { name: "放弃本局", exact: true });
+    await abandonButton.click();
+    await expect(host.page.getByRole("dialog")).toBeVisible();
+    await expect.poll(() => host.page.evaluate(() => document.body.style.overflow)).toBe("hidden");
+
+    api.closeExternally();
+    await expect(host.page.getByRole("heading", { name: "房间已关闭" })).toBeVisible({ timeout: 5_000 });
+    await expect(host.page.getByRole("dialog")).toHaveCount(0);
+    await expect.poll(() => host.page.evaluate(() => document.body.style.overflow)).toBe("");
   } finally {
     await host.context.close();
   }
