@@ -53,6 +53,14 @@ if [[ -n "$dirty_status" ]]; then
   fail "candidate worktree must be clean"
 fi
 
+ignored_candidate_files="$(git ls-files --others --ignored --exclude-standard -- \
+  script-packages apps/web/e2e/fixtures)" \
+  || fail "cannot inspect ignored candidate files"
+if [[ -n "$ignored_candidate_files" ]]; then
+  printf '%s\n' "$ignored_candidate_files" >&2
+  fail "published packages and browser contracts must not contain ignored untracked files"
+fi
+
 base_commit="$(git merge-base HEAD "$CANDIDATE_BASE_REF")" \
   || fail "cannot resolve candidate base ref: $CANDIDATE_BASE_REF"
 git diff --check "$base_commit"

@@ -638,42 +638,7 @@ R5  旧方向物理清理
 
 ---
 
-## 14. 验证记录
-
-当前候选闭包与标准双人样例迁移在本地工作树运行的验证结果如下：
-
-| 验证 | 结果 | 说明 |
-|---|---|---|
-| `make test-t08-candidate` | **通过** | 同一 clean checkout 从两次空白 Supabase reset 完成迁移、完整静态/后端/数据库/route-mocked/build 门禁、真实管理 API 发布和双匿名身份 Live 通关 |
-| `uv run --frozen pytest engine/tests/ -q` | **577 passed** | T08 候选环境连接本地迁移数据库运行全部显式数据库门禁，包含 8 个候选工作树洁净度与总门禁防绕过回归用例 |
-| T04 package / gameplay 聚焦测试 | **78 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房缺失历史字段的无条件材料恢复与写回、V2 精确历史校验及跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
-| T06 incomplete-room closure 聚焦验收 | **3 database + 6 browser passed** | 覆盖 lobby 关闭、active 放弃、待恢复命令阻止关闭、closed 页面完成 accepted/rejected 本地命令终态恢复、accepted 快照同步失败不降级、跨标签页终态清理、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
-| `make test-durable-commands` | **25 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、stale reclaim、outbox、数据库权限和双人 HTTP 通关 |
-| `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
-| 聚焦多人后端测试 | **76 passed, 12 skipped** | 未提供数据库 URL 时命令 HTTP 集成按设计跳过 |
-| route-mocked Playwright | **58 passed** | 覆盖跨刷新命令恢复、跨标签页单 identity、receipt 缺失或 processing 过期后的 lease 协调字节等价补发与中断接管、首发/receipt/replay 挂起后的有界恢复、Web Lock 等待上限、accepted snapshot 同步超时、processing replay 4xx 不误判终态、processing/accepted/rejected 可见终态、accepted revision/event head 门槛与旧轮询取消、closed 页面 accepted 同步失败与跨标签页清理、事件 gap、大厅启动、未完成房间关闭门禁、活跃游戏私有投影、位置上报生命周期、固定材料/提示/讨论入口、完成态与复盘、390×844 触摸操作 |
-| 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
-| `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
-| `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
-| `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
-| 聚焦 `ruff check` | **通过** | 多人后端变更无 lint 错误 |
-| 聚焦 `basedpyright` | **0 errors** | 多人后端类型检查通过 |
-| `git diff --check` | **通过** | 当前跟踪差异无空白错误 |
-
-这些结果支持“当前双人候选垂直切片已可完整操作”的结论，但不支持以下结论：
-
-- 不支持宣称 AI DM 已实现。
-- 不支持宣称 WebSocket 多人运行时已实现。
-- 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖真实浏览器断网与关闭标签页重开、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本；route-mocked 5xx 不确定命令和刷新恢复已覆盖。
-- `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
-- 不支持宣称旧搜证方向已从代码中清理完成。
-- 旧冻结包继续按宽容规则读取；当前及后续阶段推进会用显式历史版本标记在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入版本化精确历史的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。
-- 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
-
----
-
-## 15. 剧本行业流程校准
+## 14. 剧本行业流程校准
 
 公开资料与从业实践显示，常见流程大体是：
 
@@ -711,7 +676,7 @@ R5  旧方向物理清理
 
 ---
 
-## 16. 文档治理与完成定义
+## 15. 文档治理与完成定义
 
 2026-07-26 文档整理已解决以下冲突（原审计列出）：
 

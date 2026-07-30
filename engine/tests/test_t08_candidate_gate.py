@@ -29,6 +29,7 @@ def _candidate_repository(tmp_path: Path) -> Path:
     shutil.copy2(CANDIDATE_GATE, scripts / CANDIDATE_GATE.name)
     shutil.copy2(CANDIDATE_TREE_CHECK, scripts / CANDIDATE_TREE_CHECK.name)
     (repository / "tracked.txt").write_text("committed\n", encoding="utf-8")
+    (repository / "script-packages").mkdir()
 
     _run_git(repository, "init", "-b", "main")
     _run_git(repository, "config", "user.name", "T08 Gate Test")
@@ -125,7 +126,7 @@ def test_candidate_gate_ignores_legacy_check_only_after_clean_preflight(
 
 @pytest.mark.parametrize(
     "dirty_kind",
-    ["unstaged", "staged", "untracked", "assume-unchanged", "skip-worktree"],
+    ["unstaged", "staged", "untracked", "ignored", "assume-unchanged", "skip-worktree"],
 )
 def test_candidate_tree_check_rejects_dirty_checkout(
     tmp_path: Path,
@@ -134,6 +135,15 @@ def test_candidate_tree_check_rejects_dirty_checkout(
     repository = _candidate_repository(tmp_path)
     if dirty_kind == "untracked":
         (repository / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    elif dirty_kind == "ignored":
+        (repository / ".git" / "info" / "exclude").write_text(
+            "script-packages/ignored.txt\n",
+            encoding="utf-8",
+        )
+        (repository / "script-packages" / "ignored.txt").write_text(
+            "ignored\n",
+            encoding="utf-8",
+        )
     else:
         if dirty_kind in {"assume-unchanged", "skip-worktree"}:
             _run_git(repository, "update-index", f"--{dirty_kind}", "tracked.txt")
@@ -144,4 +154,10 @@ def test_candidate_tree_check_rejects_dirty_checkout(
     result = _run_candidate_check(repository)
 
     assert result.returncode != 0
-    assert "candidate worktree must be clean" in result.stderr
+    assert (
+        "candidate worktree must be clean" in result.stderr
+        or (
+            "published packages and browser contracts must not contain "
+            "ignored untracked files" in result.stderr
+        )
+    )

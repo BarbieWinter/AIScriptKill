@@ -32,6 +32,26 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
+test("legacy review errors stay on the legacy path instead of falling through to multiplayer", async ({ page }) => {
+  let legacyReviewRequests = 0;
+
+  await page.route("**/api/v1/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/v1/sessions/${legacySessionId}/review`) {
+      legacyReviewRequests += 1;
+      await json(route, {
+        error: { code: "TEMPORARY_FAILURE", message: "旧版复盘暂时不可用", details: {} },
+      }, 500);
+      return;
+    }
+    await json(route, { error: { code: "NOT_FOUND", message: pathname, details: {} } }, 404);
+  });
+
+  await page.goto(`/play/${legacySessionId}/review`);
+  await expect(page.getByRole("alert").filter({ hasText: "旧版复盘暂时不可用" })).toBeVisible({ timeout: 8_000 });
+  expect(legacyReviewRequests).toBe(3);
+});
+
 test("legacy UUID review falls back without anonymous auth and returns to library", async ({ context, page }) => {
   let signupRequests = 0;
   let legacyReviewRequests = 0;

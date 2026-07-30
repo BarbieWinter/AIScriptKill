@@ -91,16 +91,20 @@ active / completed    -> MultiplayerMansionShell
 映射到不同 outfit/accessory/palette；本地 pose 约每 500ms
 合并为一次 authenticated HTTP PUT，服务端只保存该成员的最新展示位置，另一端从 2 秒快照
 polling 中渲染真实同伴。坐标不进入 `GameStateV2`、revision 或 event，不能成为剧情或物理权威。
-失败的讨论发送保留草稿；复盘可重试。active gameplay 命令在首发前通过 Web Locks 抢占每成员唯一的
-`localStorage` 槽位并写入完整序列化 envelope；其他标签页恢复既有槽位，不生成替代 identity。网络结果
-不确定或页面刷新后先查询同一 `command_id` 的 receipt，processing 保留存储；receipt 不存在或 processing
-lease 长期未终结时，用可过期 browser replay lease 协调字节等价补发，原 owner 中断后新页面可接管并触发
-服务端 stale reclaim。首发、receipt 查询、replay 与 accepted snapshot 同步都有单请求期限，存储锁等待也有
-上限；超时保持不确定或 accepted 已知状态并允许继续恢复。processing 已知后，replay 自身的 HTTP 拒绝也不能
-替代原命令终态。accepted 先取消同 key 的旧 snapshot 轮询，仅在
-权威 snapshot 的 revision 与 event head 覆盖回执边界后于同一存储锁内条件清理，rejected 显示终态且不按
-新 revision 重建 stale intent；待恢复槽位存在时不能放弃房间。房间被其他玩家关闭后，closed 页面仍继续
-receipt-first 恢复并在理解终态后清理；另一标签页清理同一终态记录时，旧 recovery owner 会撤销陈旧 UI。
+失败的讨论发送保留草稿；复盘可重试。active gameplay 命令在首发前通过
+Web Locks 抢占每成员唯一的 `localStorage` 槽位，并写入完整序列化 envelope；
+其他标签页恢复既有槽位，不生成替代 identity。网络结果不确定或页面刷新后，
+先查询同一 `command_id` 的 receipt，processing 保留存储；receipt 不存在或
+processing lease 长期未终结时，用可过期 browser replay lease 协调字节等价补发，
+原 owner 中断后新页面可接管并触发服务端 stale reclaim。首发、receipt 查询、
+replay 与 accepted snapshot 同步都有单请求期限，存储锁等待也有上限；超时保持
+不确定或 accepted 已知状态并允许继续恢复。processing 已知后，replay 自身的
+HTTP 拒绝也不能替代原命令终态。accepted 先取消同 key 的旧 snapshot 轮询，
+仅在权威 snapshot 的 revision 与 event head 覆盖回执边界后，于同一存储锁内
+条件清理；rejected 显示终态且不按新 revision 重建 stale intent。待恢复槽位存在
+时不能放弃房间。房间被其他玩家关闭后，closed 页面仍继续 receipt-first 恢复，
+并在理解终态后清理；另一标签页清理同一终态记录时，旧 recovery owner 会撤销
+陈旧 UI。
 
 当前 audited tree 只有 `MultiplayerMansionShell` 承担 active/completed gameplay
 产品入口，不存在第二套已接线 gameplay shell。

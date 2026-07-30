@@ -187,6 +187,10 @@ CI=1 npm --prefix apps/web run test:e2e
 log "Building the production frontend"
 npm --prefix apps/web run build
 
+log "Rechecking the candidate tree after static and browser gates"
+T08_CANDIDATE_BASE_REF="$CANDIDATE_BASE_REF" \
+  "$ROOT_DIR/scripts/t08_candidate_tree_check.sh"
+
 # Database-backed tests are allowed to create disposable rows. Reset again so the
 # live journey proves publication and play from a genuinely blank runtime store.
 log "Resetting the live candidate database"
@@ -208,5 +212,9 @@ log "Running the real two-identity candidate journey"
 PLAYWRIGHT_API_BASE_URL="$API_BASE_URL" \
 PLAYWRIGHT_BASE_URL="$WEB_BASE_URL" \
 npm --prefix apps/web run test:e2e:mp2-live
+
+log "Checking the final candidate tree"
+T08_CANDIDATE_BASE_REF="$CANDIDATE_BASE_REF" \
+  "$ROOT_DIR/scripts/t08_candidate_tree_check.sh"
 
 log "Candidate gate passed"

@@ -37,7 +37,7 @@ const USE_MOCK =
 
 export const isMockMode = () => USE_MOCK;
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     public status: number,
     public code: string,

@@ -8,7 +8,7 @@ import { useMemo } from "react";
 
 import { LegacyReview } from "@/components/game/LegacyReview";
 import { CompletedReview } from "@/components/multiplayer/CompletedReview";
-import { api, isMockMode } from "@/lib/api";
+import { ApiError, api, isMockMode } from "@/lib/api";
 import type { Review } from "@/lib/game/types";
 import {
   multiplayerErrorCode,
@@ -91,6 +91,7 @@ export default function ReviewPage() {
         return await loadLegacyReview(sessionId, signal);
       } catch (error) {
         if (signal.aborted) throw error;
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
       }
 
       const payload = await client.getReview(sessionId, signal) as unknown;
