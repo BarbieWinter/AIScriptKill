@@ -84,7 +84,7 @@ route -> request/response model -> service -> OpenAPI test -> browser client
 SHA-256 摘要；重新签发会撤销该成员尚未使用的有效 ticket。
 
 `/api/v1/ws/{session_id}` 要求可信 `Origin`，并以 `connection.hello` 作为首帧。服务端原子消费
- ticket、重新验证 membership，并返回服务端推导的 `connection.ready`。未先发送 hello，或结构
+ticket、重新验证 membership，并返回服务端推导的 `connection.ready`。未先发送 hello，或结构
 合法但 ticket 不存在、过期、已撤销、已消费、跨房间或不可访问，使用统一 `1008` 关闭行为；
 结构非法帧在授权前以 `1003` 关闭，不可信 Origin 在升级阶段以 HTTP `403` 拒绝。当前
 transport 之后只支持认证 heartbeat；`last_event_sequence` replay、`room.event` 和 outbox

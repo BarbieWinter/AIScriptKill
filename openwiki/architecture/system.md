@@ -51,7 +51,7 @@ Browser
 | Durable command | `[LIVE]` | receipt、replay、stale recovery；`/events` page 仅限 legacy single session |
 | Room outbox | `[PARTIAL]` | 表、事务写入和 publisher；无常驻 worker |
 | Slim M2 双人 gameplay | `[LIVE]` | HTTP polling、私有章节、讨论、结算、完成复盘 |
-| Gameplay WebSocket | `[PARTIAL]` | ticket、hello/ready、heartbeat；无 replay/fanout |
+| WS 传输 | `[PARTIAL]` | ticket、hello/ready、heartbeat；无 replay/fanout |
 | 公共 AI DM | `[PLANNED]` | flag 存在，未接多人运行时 |
 
 ## 权威边界
