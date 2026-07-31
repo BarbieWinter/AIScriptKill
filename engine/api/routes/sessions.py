@@ -35,6 +35,7 @@ from engine.api.schemas.multiplayer_rooms import (
     CreateMultiplayerSessionResponse,
     CreateRoomInviteRequest,
     CreateRoomInviteResponse,
+    CreateRoomStreamTicketResponse,
     CurrentMultiplayerSession,
     RoomSnapshotV1,
     UpdateScenePresenceRequest,
@@ -53,6 +54,7 @@ from engine.services.multiplayer_room_service import (
     revoke_room_invite,
     update_scene_presence,
 )
+from engine.services.room_stream_auth import issue_room_stream_ticket
 from engine.services.session_commands import (
     get_command_receipt,
     get_session_events,
@@ -153,6 +155,33 @@ async def accept_invite(
     """使用一次性明文 token 加入房间；token 本身不授予任何读取权限。"""
 
     return await accept_room_invite(token, principal, db)
+
+
+@router.post(
+    "/{session_id}/stream-ticket",
+    response_model=CreateRoomStreamTicketResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_stream_ticket(
+    session_id: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+) -> CreateRoomStreamTicketResponse:
+    """Issue a short-lived one-time credential for the authenticated room stream.
+
+    Args:
+        session_id: Multiplayer room UUID supplied only as the requested authorization scope.
+        principal: Verified anonymous identity used to derive current room membership.
+        db: Request-scoped database session used to persist the one-time credential.
+
+    Returns:
+        The plaintext ticket once, its protocol version, and database-derived expiry.
+
+    Raises:
+        ApiError: The room is malformed or unavailable to the current participant.
+    """
+
+    return await issue_room_stream_ticket(session_id, principal, db)
 
 
 @router.post(

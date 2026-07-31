@@ -99,6 +99,7 @@ REQUIRED_PUBLIC_TABLES: Final[tuple[str, ...]] = (
     "room_invites",
     "room_required_members",
     "room_principal_reservations",
+    "room_stream_tickets",
     "session_checkpoints",
     "session_checkpoint_writes",
     "session_command_identities",

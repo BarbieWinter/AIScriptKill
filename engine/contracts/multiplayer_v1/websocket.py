@@ -15,7 +15,7 @@ WS_PROTOCOL_VERSION: Final = 1
 
 class ConnectionHelloData(ContractModel):
     protocol_version: Literal[1]
-    ticket: str = Field(min_length=1)
+    ticket: str = Field(min_length=32, max_length=256)
     last_event_sequence: int | None = Field(default=None, ge=0)
 
 

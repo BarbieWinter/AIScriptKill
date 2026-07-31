@@ -70,6 +70,14 @@ class AcceptRoomInviteResponse(ApiModel):
     member_id: UUID
 
 
+class CreateRoomStreamTicketResponse(ApiModel):
+    """Return one short-lived credential for the authenticated room event stream."""
+
+    ticket: str = Field(min_length=32, max_length=256)
+    protocol_version: Literal[1] = 1
+    expires_at: datetime
+
+
 class LobbyInvite(ApiModel):
     invite_id: UUID
     expires_at: datetime
@@ -331,6 +339,7 @@ __all__ = [
     "CreateRoomInviteRequest",
     "ClosedRoomSnapshotV1",
     "CreateRoomInviteResponse",
+    "CreateRoomStreamTicketResponse",
     "CurrentMultiplayerSession",
     "GameplayChapter",
     "GameplayDiscussionMessage",

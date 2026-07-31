@@ -31,11 +31,12 @@
 | 双人大厅 | `[LIVE]` | 创建、邀请、选角、准备、开始 |
 | 双人 gameplay | `[LIVE]` | 双浏览器 HTTP polling 通关与 completed-only 复盘 |
 | 共享舞台 presence | `[PARTIAL]` | HTTP PUT 位置上报 + 快照渲染同伴；仅展示，非权威 |
-| AI DM / gameplay WS | `[PLANNED]` | 当前公开 WS 只有 legacy ping/pong |
+| 房间 WebSocket | `[PARTIAL]` | ticket、hello/ready、heartbeat；无 fanout/replay |
+| AI DM | `[PLANNED]` | 未接多人运行时 |
 
 [PASS] 双人 gameplay 已由 route-mocked 双 context、PostgreSQL ASGI 全流程和真实本地
-Supabase/FastAPI/Next 双匿名身份三层验证。当前玩法刻意使用 HTTP polling；这不表示
-认证 WebSocket 事件流或公共 AI DM 已实现。产品边界与逐能力完成度以
+Supabase/FastAPI/Next 双匿名身份三层验证。当前玩法仍使用 HTTP polling；房间 WebSocket
+只完成认证传输边界，不表示实时事件投递、浏览器消费或公共 AI DM 已实现。产品边界与逐能力完成度以
 [产品方向与实现状态](../docs/PRODUCT_DIRECTION_AND_IMPLEMENTATION_STATUS.md) 为准。
 
 ## 事实来源

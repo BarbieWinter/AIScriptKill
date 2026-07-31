@@ -19,7 +19,8 @@
 - [LIVE] **持久命令基础** — receipt 和 stale recovery 已实现；`GET /sessions/{id}/events`
   page 当前只对 `legacy_single` 会话开放，多人客户端仍用快照 polling。
 - [LIVE] **Slim M2 gameplay** — reducer、持久命令、HTTP 快照与复盘已接线。
-- [LEGACY] **WebSocket** — 公开端点只有未认证的 ping/pong。
+- [PARTIAL] **WebSocket** — 一次性短 TTL ticket、
+  `connection.hello/ready` 和认证 heartbeat 已接线；无事件 fanout/replay。
 - [SECURITY] **数据访问** — 浏览器只经 FastAPI 读取白名单投影。
 
 ## 分层
@@ -51,10 +52,11 @@ multiplayer gameplay
 
 ### Session 与 package
 
-- `engine/api/routes/sessions.py`：创建、读取、资源查询、多人房间和命令。
+- `engine/api/routes/sessions.py`：创建、读取、资源查询、多人房间、命令和
+  房间流 ticket。
 - `engine/api/routes/actions.py`：单人 action 与最终提交。
 - `engine/api/routes/packages.py`：管理员导入、发布和玩家安全详情。
-- `engine/api/websocket/handler.py`：有界心跳，不是 gameplay transport。
+- `engine/api/websocket/handler.py`：认证、有界的房间连接；尚不是 gameplay event transport。
 
 不要在 OpenWiki 手抄完整 endpoint 清单。新增或修改接口后，应同时检查：
 
@@ -74,6 +76,19 @@ route -> request/response model -> service -> OpenAPI test -> browser client
 
 每条命令都从 verified JWT principal 推导 actor membership；客户端不能提交
 `member_id`、`character_id` 或 audience。
+
+### 房间流认证
+
+`POST /api/v1/sessions/{session_id}/stream-ticket` 只向当前 joined member 签发 30 秒、
+单次使用的 bearer ticket。ticket 绑定 room、member、principal 和协议版本，持久层只保存
+SHA-256 摘要；重新签发会撤销该成员尚未使用的有效 ticket。
+
+`/api/v1/ws/{session_id}` 要求可信 `Origin`，并以 `connection.hello` 作为首帧。服务端原子消费
+ ticket、重新验证 membership，并返回服务端推导的 `connection.ready`。未先发送 hello，或结构
+合法但 ticket 不存在、过期、已撤销、已消费、跨房间或不可访问，使用统一 `1008` 关闭行为；
+结构非法帧在授权前以 `1003` 关闭，不可信 Origin 在升级阶段以 HTTP `403` 拒绝。当前
+transport 之后只支持认证 heartbeat；`last_event_sequence` replay、`room.event` 和 outbox
+fanout 仍未实现。
 
 ### 场景 Presence
 

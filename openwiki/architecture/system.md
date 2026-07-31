@@ -11,7 +11,7 @@
 │ API        FastAPI / strict participant projections                          │
 │ RUNTIME    LangGraph single-player + pure multiplayer reducer                │
 │ DATA       Supabase Postgres / immutable multiplayer package snapshot        │
-│ DELIVERY   HTTP active; gameplay WebSocket not implemented                   │
+│ DELIVERY   HTTP authoritative; authenticated WS bootstrap only               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -29,11 +29,16 @@ Browser
   |                                                +-- Postgres projections
   |
   +-- multiplayer -- HTTP polling --------------> room/gameplay service
+  |                                                |
+  |                                                +-- frozen package snapshot
+  |                                                +-- deterministic reducer
+  |                                                +-- durable receipt/events
+  |                                                +-- participant-safe snapshot/review
+  |
+  +-- multiplayer -- ticket + WS hello ---------> authenticated room transport
                                                    |
-                                                   +-- frozen package snapshot
-                                                   +-- deterministic reducer
-                                                   +-- durable receipt/events
-                                                   +-- participant-safe snapshot/review
+                                                   +-- server-derived ready/heartbeat
+                                                   +-- no replay or event fanout yet
 ```
 
 ## 能力状态
@@ -46,7 +51,7 @@ Browser
 | Durable command | `[LIVE]` | receipt、replay、stale recovery；`/events` page 仅限 legacy single session |
 | Room outbox | `[PARTIAL]` | 表、事务写入和 publisher；无常驻 worker |
 | Slim M2 双人 gameplay | `[LIVE]` | HTTP polling、私有章节、讨论、结算、完成复盘 |
-| Gameplay WebSocket | `[PLANNED]` | 当前公开 WS 只有 legacy ping/pong |
+| Gameplay WebSocket | `[PARTIAL]` | ticket、hello/ready、heartbeat；无 replay/fanout |
 | 公共 AI DM | `[PLANNED]` | flag 存在，未接多人运行时 |
 
 ## 权威边界
@@ -120,7 +125,7 @@ revision 和 event sequence。秘密结算在全部提交前只返回提交成�
 
 明确推迟：
 
-- gameplay WebSocket、presence、Redis 和 outbox 常驻 worker。
+- gameplay WebSocket 事件 replay/fanout、Redis 和 outbox 常驻 worker；认证 hello/ready 已实现。
 - 共同沉浸地图、远端 avatar pose 和跨日浏览器恢复验收。
 - 未完成对局结束 UI、公共 AI DM、正式负载与多实例稳定性。
 - 真实玩家趣味性验证；技术通关不等于内容已经有趣。

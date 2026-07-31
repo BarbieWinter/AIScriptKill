@@ -414,6 +414,54 @@ Index(
     postgresql_where=text("revoked_at IS NULL"),
 )
 
+room_stream_tickets = Table(
+    "room_stream_tickets",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column(
+        "session_id",
+        UUID(as_uuid=True),
+        ForeignKey("game_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("member_id", UUID(as_uuid=True), nullable=False),
+    Column("principal_id", UUID(as_uuid=True), nullable=False),
+    Column("ticket_hash", LargeBinary, nullable=False),
+    Column("protocol_version", SmallInteger, nullable=False, server_default=text("1")),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("consumed_at", DateTime(timezone=True)),
+    Column("revoked_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("ticket_hash", name="uq_room_stream_tickets_hash"),
+    ForeignKeyConstraint(
+        ["member_id", "session_id", "principal_id"],
+        ["room_members.id", "room_members.session_id", "room_members.principal_id"],
+        name="fk_room_stream_tickets_member",
+        ondelete="CASCADE",
+    ),
+    CheckConstraint(
+        "octet_length(ticket_hash) = 32",
+        name="room_stream_tickets_hash_check",
+    ),
+    CheckConstraint("protocol_version = 1", name="room_stream_tickets_protocol_check"),
+    CheckConstraint("expires_at > created_at", name="room_stream_tickets_expiry_check"),
+    CheckConstraint(
+        "consumed_at IS NULL OR consumed_at >= created_at",
+        name="room_stream_tickets_consumed_check",
+    ),
+    CheckConstraint(
+        "revoked_at IS NULL OR revoked_at >= created_at",
+        name="room_stream_tickets_revoked_check",
+    ),
+)
+Index(
+    "idx_room_stream_tickets_member_active",
+    room_stream_tickets.c.session_id,
+    room_stream_tickets.c.member_id,
+    room_stream_tickets.c.expires_at,
+    postgresql_where=text("consumed_at IS NULL AND revoked_at IS NULL"),
+)
+
 room_required_members = Table(
     "room_required_members",
     metadata,

@@ -35,6 +35,7 @@ MULTIPLAYER_PROTECTED_TABLES = {
     "room_principal_reservations",
     "room_required_members",
     "room_outbox",
+    "room_stream_tickets",
     "session_command_identities",
     "session_command_receipts",
     "session_events",
@@ -175,6 +176,23 @@ def test_room_outbox_table_has_no_browser_role_access() -> None:
     assert 'create policy "service_role_full_access" on public.room_outbox' in sql
     assert "revoke all privileges on table public.room_outbox from anon, authenticated" in sql
     assert "grant all privileges on table public.room_outbox to service_role" in sql
+
+
+def test_room_stream_ticket_table_has_no_browser_role_access() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "supabase"
+        / "migrations"
+        / "20260731010000_room_stream_tickets.sql"
+    )
+    sql = " ".join(migration.read_text(encoding="utf-8").lower().split())
+
+    assert "alter table public.room_stream_tickets enable row level security" in sql
+    assert 'create policy "service_role_full_access" on public.room_stream_tickets' in sql
+    assert (
+        "revoke all privileges on table public.room_stream_tickets from anon, authenticated" in sql
+    )
+    assert "grant all privileges on table public.room_stream_tickets to service_role" in sql
 
 
 def test_checkpoint_metadata_matches_database_idempotency_key() -> None:

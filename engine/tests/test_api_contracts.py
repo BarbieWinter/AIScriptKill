@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import ExitStack
 from inspect import getdoc
 from pathlib import Path
-from types import FunctionType
+from types import FunctionType, SimpleNamespace
 from typing import cast
 from uuid import UUID
 
@@ -19,11 +19,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
+from websockets.typing import Origin
 
 import engine.api.websocket.handler as websocket_handler
 from engine.api.errors import ErrorEnvelope
 from engine.api.main import create_app
-from engine.api.middleware.auth import CurrentUser, SupabaseJwtVerifier, get_current_user
+from engine.api.middleware.auth import (
+    CurrentUser,
+    SupabaseJwtVerifier,
+    VerifiedAnonymousPrincipal,
+    get_current_user,
+    require_verified_anonymous_principal,
+)
 from engine.api.routes import actions, packages, sessions
 from engine.db.session import get_db_session
 
@@ -117,6 +124,45 @@ def test_admin_package_import_rejects_empty_upload_without_database() -> None:
     assert detail.code == "EMPTY_PACKAGE_UPLOAD"
 
 
+def test_current_room_participant_can_issue_stream_ticket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: an authenticated current participant requests a room stream credential.
+    app = _app_without_database()
+    principal_id = UUID("00000000-0000-0000-0000-000000000101")
+    session_id = UUID("12345678-1234-5678-1234-567812345678")
+
+    async def principal() -> VerifiedAnonymousPrincipal:
+        return VerifiedAnonymousPrincipal(id=principal_id)
+
+    async def issue_ticket(
+        received_session_id: str,
+        received_principal: VerifiedAnonymousPrincipal,
+        _db: AsyncSession,
+    ) -> dict[str, object]:
+        assert received_session_id == str(session_id)
+        assert received_principal.id == principal_id
+        return {
+            "ticket": "one-time-room-stream-ticket-0123456789abcdef",
+            "protocol_version": 1,
+            "expires_at": "2030-01-02T03:04:05Z",
+        }
+
+    app.dependency_overrides[require_verified_anonymous_principal] = principal
+    monkeypatch.setattr(sessions, "issue_room_stream_ticket", issue_ticket)
+
+    # When: the participant uses the authenticated HTTP issuance endpoint.
+    response = TestClient(app).post(f"/api/v1/sessions/{session_id}/stream-ticket")
+
+    # Then: only the short-lived bearer credential and its protocol binding are returned.
+    assert response.status_code == 201
+    assert response.json() == {
+        "ticket": "one-time-room-stream-ticket-0123456789abcdef",
+        "protocol_version": 1,
+        "expires_at": "2030-01-02T03:04:05Z",
+    }
+
+
 def test_websocket_rejects_malformed_session_id_before_heartbeat() -> None:
     # 给定：会话路径值不是 UUID 的 WebSocket URL。
     client = TestClient(create_app())
@@ -131,19 +177,161 @@ def test_websocket_rejects_malformed_session_id_before_heartbeat() -> None:
     assert disconnect_info.value.code == 1008
 
 
-def test_websocket_returns_valid_uuid_as_string_in_heartbeat() -> None:
-    # 给定：包含有效会话 UUID 的 WebSocket URL。
+def test_websocket_rejects_heartbeat_before_room_stream_authentication() -> None:
+    # Given: a connection has not supplied any room stream credential.
     client = TestClient(create_app())
     session_id = UUID("12345678-1234-5678-1234-567812345678")
 
-    # 当：客户端发送当前支持的心跳事件。
-    with client.websocket_connect(f"/api/v1/ws/{session_id}") as websocket:
-        websocket.send_json({"type": "session.ping"})
-        # 则：服务器使用稳定的心跳信封和字符串 ID 响应。
+    # When: the client attempts to use heartbeat as its first frame.
+    with client.websocket_connect(
+        f"/api/v1/ws/{session_id}",
+        headers={"origin": "http://localhost:3000"},
+    ) as websocket:
+        websocket.send_json({"type": "session.ping", "data": {}})
+        with pytest.raises(WebSocketDisconnect) as disconnect_info:
+            websocket.receive_json()
+
+    # Then: no path-derived room detail is disclosed before authentication.
+    assert disconnect_info.value.code == 1008
+    assert disconnect_info.value.reason == "Room stream authorization failed"
+
+
+def test_websocket_authenticates_room_stream_before_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a one-time ticket resolves to current server-side room membership.
+    client = TestClient(create_app())
+    session_id = UUID("12345678-1234-5678-1234-567812345678")
+    member_id = UUID("87654321-4321-8765-4321-876543218765")
+
+    async def consume_ticket(
+        received_session_id: UUID,
+        ticket: str,
+        protocol_version: int,
+        _db: AsyncSession,
+    ) -> SimpleNamespace:
+        assert received_session_id == session_id
+        assert ticket == "one-time-room-stream-ticket-0123456789abcdef"
+        assert protocol_version == 1
+        return SimpleNamespace(
+            session_id=session_id,
+            member_id=member_id,
+            protocol_version=1,
+            revision=7,
+            event_head_sequence=11,
+        )
+
+    monkeypatch.setattr(websocket_handler, "consume_room_stream_ticket", consume_ticket)
+
+    # When: the client authenticates before sending its first heartbeat.
+    with client.websocket_connect(
+        f"/api/v1/ws/{session_id}",
+        headers={"origin": "http://localhost:3000"},
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "connection.hello",
+                "data": {
+                    "protocol_version": 1,
+                    "ticket": "one-time-room-stream-ticket-0123456789abcdef",
+                },
+            }
+        )
+
+        # Then: ready data is derived only from the consumed credential.
+        assert websocket.receive_json() == {
+            "type": "connection.ready",
+            "data": {
+                "protocol_version": 1,
+                "session_id": str(session_id),
+                "member_id": str(member_id),
+                "revision": 7,
+                "event_head_sequence": 11,
+            },
+        }
+        websocket.send_json({"type": "session.ping", "data": {}})
         assert websocket.receive_json() == {
             "type": "session.pong",
             "data": {"session_id": str(session_id)},
         }
+
+
+def test_websocket_rejects_all_unavailable_room_credentials_identically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: credential lookup can represent missing, expired, revoked, or inaccessible rooms.
+    async def reject_ticket(
+        _session_id: UUID,
+        _ticket: str,
+        _protocol_version: int,
+        _db: AsyncSession,
+    ) -> None:
+        raise websocket_handler.RoomStreamAuthorizationError
+
+    monkeypatch.setattr(websocket_handler, "consume_room_stream_ticket", reject_ticket)
+    client = TestClient(create_app())
+    outcomes: list[tuple[int, str]] = []
+
+    # When: the same invalid bearer credential is presented for two distinct room paths.
+    for session_id in (
+        UUID("12345678-1234-5678-1234-567812345678"),
+        UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+    ):
+        with client.websocket_connect(
+            f"/api/v1/ws/{session_id}",
+            headers={"origin": "http://localhost:3000"},
+        ) as websocket:
+            websocket.send_json(
+                {
+                    "type": "connection.hello",
+                    "data": {
+                        "protocol_version": 1,
+                        "ticket": "invalid-room-stream-ticket-0123456789abcdef",
+                    },
+                }
+            )
+            with pytest.raises(WebSocketDisconnect) as disconnect_info:
+                websocket.receive_json()
+        outcomes.append((disconnect_info.value.code, disconnect_info.value.reason))
+
+    # Then: stream behavior cannot distinguish a missing room from an inaccessible one.
+    assert outcomes == [
+        (1008, "Room stream authorization failed"),
+        (1008, "Room stream authorization failed"),
+    ]
+
+
+def test_websocket_rejects_untrusted_origin_before_ticket_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a browser connection originates outside the configured frontend origins.
+    called = False
+
+    async def consume_ticket(
+        _session_id: UUID,
+        _ticket: str,
+        _protocol_version: int,
+        _db: AsyncSession,
+    ) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(websocket_handler, "consume_room_stream_ticket", consume_ticket)
+    client = TestClient(create_app())
+    session_id = UUID("12345678-1234-5678-1234-567812345678")
+
+    # When: the WebSocket upgrade carries an untrusted Origin.
+    with pytest.raises(WebSocketDisconnect) as disconnect_info:
+        with client.websocket_connect(
+            f"/api/v1/ws/{session_id}",
+            headers={"origin": "https://untrusted.example"},
+        ):
+            pass
+
+    # Then: authorization fails before ticket storage or room data is touched.
+    assert disconnect_info.value.code == 1008
+    assert disconnect_info.value.reason == "Room stream authorization failed"
+    assert called is False
 
 
 def test_websocket_rejects_binary_messages_with_supported_data_close_code() -> None:
@@ -152,7 +340,10 @@ def test_websocket_rejects_binary_messages_with_supported_data_close_code() -> N
     session_id = UUID("12345678-1234-5678-1234-567812345678")
 
     # 当：客户端提交不受支持的帧类型。
-    with client.websocket_connect(f"/api/v1/ws/{session_id}") as websocket:
+    with client.websocket_connect(
+        f"/api/v1/ws/{session_id}",
+        headers={"origin": "http://localhost:3000"},
+    ) as websocket:
         websocket.send_bytes(b'{"type":"session.ping"}')
         with pytest.raises(WebSocketDisconnect) as disconnect_info:
             websocket.receive_json()
@@ -204,6 +395,7 @@ async def test_uvicorn_transport_rejects_oversized_websocket_frame() -> None:
         # 当：对端发送一个超出传输预算的文本帧。
         async with connect(
             f"ws://127.0.0.1:{port}/api/v1/ws/12345678-1234-5678-1234-567812345678",
+            origin=Origin("http://localhost:3000"),
             max_size=None,
             proxy=None,
         ) as websocket:
@@ -227,11 +419,19 @@ def test_websocket_rejects_connections_beyond_per_client_capacity() -> None:
 
     with ExitStack() as open_connections:
         for _ in range(websocket_handler.MAX_WEBSOCKET_CONNECTIONS_PER_CLIENT):
-            open_connections.enter_context(client.websocket_connect(f"/api/v1/ws/{session_id}"))
+            open_connections.enter_context(
+                client.websocket_connect(
+                    f"/api/v1/ws/{session_id}",
+                    headers={"origin": "http://localhost:3000"},
+                )
+            )
 
         # 当：同一客户端尝试再建立一个连接。
         with pytest.raises(WebSocketDisconnect) as disconnect_info:
-            with client.websocket_connect(f"/api/v1/ws/{session_id}"):
+            with client.websocket_connect(
+                f"/api/v1/ws/{session_id}",
+                headers={"origin": "http://localhost:3000"},
+            ):
                 pass
 
     # 则：使用临时过载关闭码拒绝超出容量的连接。
@@ -252,6 +452,7 @@ async def test_websocket_releases_capacity_when_accept_fails(
         await websocket_handler.websocket_endpoint(
             failing_socket,
             UUID("12345678-1234-5678-1234-567812345678"),
+            AsyncSession(),
         )
 
     # 则：失败的预留容量恰好释放一次。
@@ -262,20 +463,50 @@ async def test_websocket_releases_capacity_when_accept_fails(
 def test_websocket_closes_connection_after_message_rate_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # 给定：单个连接每分钟只能发送一条消息。
-    monkeypatch.setattr(websocket_handler, "MAX_WEBSOCKET_MESSAGES_PER_MINUTE", 1)
-    client = TestClient(create_app())
+    # Given: authentication and one heartbeat consume the two-message budget.
+    monkeypatch.setattr(websocket_handler, "MAX_WEBSOCKET_MESSAGES_PER_MINUTE", 2)
     session_id = UUID("12345678-1234-5678-1234-567812345678")
+    member_id = UUID("87654321-4321-8765-4321-876543218765")
 
-    # 当：第二次心跳超出单连接速率预算。
-    with client.websocket_connect(f"/api/v1/ws/{session_id}") as websocket:
-        websocket.send_json({"type": "session.ping"})
+    async def consume_ticket(
+        _session_id: UUID,
+        _ticket: str,
+        _protocol_version: int,
+        _db: AsyncSession,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            session_id=session_id,
+            member_id=member_id,
+            protocol_version=1,
+            revision=0,
+            event_head_sequence=0,
+        )
+
+    monkeypatch.setattr(websocket_handler, "consume_room_stream_ticket", consume_ticket)
+    client = TestClient(create_app())
+
+    # When: a second heartbeat exceeds the per-connection message budget.
+    with client.websocket_connect(
+        f"/api/v1/ws/{session_id}",
+        headers={"origin": "http://localhost:3000"},
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "connection.hello",
+                "data": {
+                    "protocol_version": 1,
+                    "ticket": "rate-room-stream-ticket-0123456789abcdef",
+                },
+            }
+        )
+        assert websocket.receive_json()["type"] == "connection.ready"
+        websocket.send_json({"type": "session.ping", "data": {}})
         assert websocket.receive_json()["type"] == "session.pong"
-        websocket.send_json({"type": "session.ping"})
+        websocket.send_json({"type": "session.ping", "data": {}})
         with pytest.raises(WebSocketDisconnect) as disconnect_info:
             websocket.receive_json()
 
-    # 则：临时传输使用策略违规代码关闭。
+    # Then: the existing policy-violation close code remains enforced.
     assert disconnect_info.value.code == 1008
 
 
@@ -341,6 +572,7 @@ class _FailingClientAddress:
 
 class _FailingAcceptWebSocket:
     client = _FailingClientAddress()
+    headers = {"origin": "http://localhost:3000"}
 
     async def accept(self) -> None:
         raise RuntimeError("handshake failed")

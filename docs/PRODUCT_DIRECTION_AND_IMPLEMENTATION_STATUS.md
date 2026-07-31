@@ -30,7 +30,7 @@
 
 最重要的校准是：**项目已经不再停留在“只有大厅”阶段。** `af79a9e` 已提交游戏命令服务、活跃游戏界面、私有章节投影、公共讨论、确定性发放、阶段判断、终局、复盘、持久命令、outbox 基础设施和位置同步；真实双身份浏览器验收已经完整通关。
 
-但这也不等于“多人产品已经完成”。当前实现是一个严格双人、固定流程、HTTP 轮询驱动的候选垂直切片。通用活动模型、受控 AI DM、认证实时事件流、完整断线重连验收，以及旧地图搜证依赖清理仍未完成。角色章、公开材料、讨论、判断和复盘现在都有固定 UI 入口；舞台热点只保留为等价快捷入口，但多人壳层仍耦合 legacy hotspot 抽象，物理清理尚未完成。
+但这也不等于“多人产品已经完成”。当前实现是一个严格双人、固定流程、HTTP 轮询驱动的候选垂直切片。房间 WebSocket 已完成短 TTL 一次性 ticket、当前 membership 复核和 `connection.hello/ready` 认证边界，但事件 replay、outbox fanout 和浏览器消费仍未完成；通用活动模型、受控 AI DM、完整断线重连验收，以及旧地图搜证依赖清理也仍未完成。角色章、公开材料、讨论、判断和复盘现在都有固定 UI 入口；舞台热点只保留为等价快捷入口，但多人壳层仍耦合 legacy hotspot 抽象，物理清理尚未完成。
 
 ---
 
@@ -396,13 +396,13 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 
 仍缺少：
 
-- 认证 WebSocket 参与者绑定和房间事件订阅。
+- 已认证房间连接上的事件订阅、outbox fanout 和浏览器消费。
 - 客户端按事件序列 replay / gap detection / resync；当前 `room.resync` 忽略 `last_event_sequence`，只是 no-op。
 - 多人 `/events` 的可用鉴权路径；当前路由最终只允许 legacy single session。
 - 浏览器层面的真实断网和关闭标签页后重新进入验收；route-mocked 刷新、5xx、processing/accepted/rejected receipt 已覆盖。
 - presence 与“玩家是否能继续玩法”的明确分离测试。
 
-现有 `engine/api/websocket/handler.py:52` 仍只是未认证 `session.ping → session.pong` 心跳端点。虽然 contracts 中存在 WebSocket、snapshot 和 resync 类型，但不能把契约存在算作运行时完成。outbox 也尚未形成实时闭环：gameplay command 当前显式不写 outbox，batch dispatcher 没有具体 transport adapter、常驻 worker 或生产启动入口。
+`engine/api/websocket/handler.py` 已要求可信 `Origin` 和 `connection.hello` 首帧，通过 30 秒一次性 ticket 绑定当前 joined member，并返回服务端推导的 `connection.ready`；缺失、过期、撤销、复用、跨房间或离开房间的凭据使用统一拒绝行为。这个边界目前仍只提供认证后的 heartbeat，不能把它算作实时玩法闭环。outbox 也尚未形成实时闭环：gameplay command 当前显式不写 outbox，batch dispatcher 没有具体 transport adapter、常驻 worker 或生产启动入口。
 
 ---
 
@@ -428,7 +428,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
 | 断线后浏览器恢复 | 有快照/重试设计 | pending envelope、receipt-first 恢复、跨标签页单 identity、可回收 lease 下的字节等价补发、accepted 快照边界和 closed 页面收尾已有专项浏览器覆盖；真实断网/关闭标签页重开仍待验收 | **部分完成** |
 | multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
-| 认证实时事件流 | contracts 存在 | 运行时仍只有 ping/pong；前端继续轮询 | **仅设计** |
+| 认证实时事件流 | contracts 存在 | 一次性 ticket、membership 复核、hello/ready 和认证 heartbeat 已接线；无 replay/fanout，前端继续轮询 | **部分完成（认证边界）** |
 | 未完成房间退出/释放 | 无 | 房主可关闭 lobby 或放弃 active 房间；双方获得最小 closed 快照，receipt/event/outbox 与邀请撤销、reservation 释放原子持久化 | **已完成** |
 | 通用 `activities[]` | 无 | 仍是固定四相 | **未开始** |
 | 受控 AI DM | 占位文件 | 只有固定提示和终局 truth，无 LLM 主持链路 | **未开始** |
@@ -465,7 +465,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 
 - 只验证了严格双人包，不是任意人数通用引擎。
 - 流程仍强制四相，第一阶段样例投票只是剧本特例。
-- 传输依赖 2 秒 HTTP 轮询，不是实时事件流。
+- 玩法状态传输仍依赖 2 秒 HTTP 轮询；WebSocket 只完成认证边界，不是实时事件流。
 - 空间交互仍保留旧 hotspot 抽象，但不再作为公开材料的唯一入口。
 - AI DM 没有进入任何可玩路径。
 - 当前提交是后续建设基线，不代表任意人数、任意剧本或实时多人产品已经完成。

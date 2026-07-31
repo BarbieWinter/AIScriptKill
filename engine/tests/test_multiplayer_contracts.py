@@ -539,7 +539,7 @@ def test_websocket_frames_keep_protocol_version_identity_boundary_and_direction(
     ping = CLIENT_FRAME_ADAPTER.validate_json('{"type":"session.ping"}')
     hello = CLIENT_FRAME_ADAPTER.validate_json(
         '{"type":"connection.hello","data":'
-        '{"protocol_version":1,"ticket":"opaque-ticket","last_event_sequence":8}}'
+        '{"protocol_version":1,"ticket":"opaque-ticket-0123456789abcdef012345","last_event_sequence":8}}'
     )
     ready = SERVER_FRAME_ADAPTER.validate_json(
         json.dumps(

@@ -3,9 +3,9 @@
 > **适用范围：单人（`legacy_single`）接口。** 本文描述 FastAPI 单人会话契约，示例使用
 > 单人垂直切片 **《雪落之前：后门的脚印》**（`snow-village`），不描述旧版雪乡谋杀故事。
 >
-> **多人接口不在本文范围内。** 当前多人 HTTP contract、运行边界与变更入口见
+> **多人业务接口不在本文范围内。** 当前多人 HTTP contract、运行边界与变更入口见
 > [`../openwiki/architecture/backend.md`](../openwiki/architecture/backend.md) 和
-> 运行中的 OpenAPI (`/docs`)。
+> 运行中的 OpenAPI (`/docs`)；第 8 节仅记录认证房间流的最小 transport contract。
 
 ## 1. 基础信息
 
@@ -744,6 +744,7 @@ ws://host/api/v1/ws/{session_id}
 | 401 | `AUTH_REQUIRED` | 管理端点没有登录凭据 |
 | 403 | `ADMIN_REQUIRED` | JWT 没有管理员/owner 角色 |
 | 404 | `SESSION_NOT_FOUND` | 会话不存在或调用者无权访问 |
+| 404 | `ROOM_STREAM_UNAVAILABLE` | 房间流 ticket 不可签发；房间不存在与非当前成员使用相同响应 |
 | 404 | `SCRIPT_PACKAGE_NOT_FOUND` | 没有已发布运行时包可用于开局/动作 |
 | 404 | `SESSION_PRESENTATION_NOT_FOUND` | 当前阶段或场景展示记录不可用 |
 | 404 | `EVIDENCE_NOT_DISCOVERED` | 查看端点找不到已发现证物 |

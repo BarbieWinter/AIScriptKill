@@ -1,15 +1,30 @@
-"""为 T-2.6 之前的 API 提供受限的纯心跳 WebSocket 传输。"""
+"""Authenticated, resource-bounded room WebSocket transport."""
 
 import asyncio
 import json
 from collections import defaultdict, deque
-from collections.abc import Mapping
 from threading import Lock
 from time import monotonic
 from typing import Final, cast
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+
+from engine.api.config import get_settings
+from engine.contracts.multiplayer_v1.websocket import (
+    CLIENT_FRAME_ADAPTER,
+    ConnectionHelloFrame,
+    ConnectionReadyData,
+    ConnectionReadyFrame,
+    SessionPingFrame,
+)
+from engine.db.session import SessionDep
+from engine.services.room_stream_auth import (
+    AuthenticatedRoomStream,
+    RoomStreamAuthorizationError,
+    consume_room_stream_ticket,
+)
 
 MAX_WEBSOCKET_CONNECTIONS: Final = 100
 MAX_WEBSOCKET_CONNECTIONS_PER_CLIENT: Final = 4
@@ -50,20 +65,13 @@ _CONNECTIONS = _ConnectionRegistry()
 
 
 @router.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: UUID) -> None:
-    """在 T-2.6 前提供资源受限的心跳通道。
+async def websocket_endpoint(websocket: WebSocket, session_id: UUID, db: SessionDep) -> None:
+    """Authenticate one room membership before exposing ready or heartbeat frames."""
 
-    Args:
-        websocket: 通过路径和容量校验后接受的客户端连接。
-        session_id: 处理器运行前由 FastAPI 解析的会话 UUID。
+    if not _origin_allowed(websocket):
+        await websocket.close(code=1008, reason="Room stream authorization failed")
+        return
 
-    Returns:
-        无返回值。处理器只针对 `session.ping` 输入发送 `session.pong`。
-
-    Notes:
-        JWT 会话绑定和玩法事件流仍属于 T-2.6。本临时端点仍会限制并发连接、输入
-        大小与速率以及空闲时长，避免未认证心跳无限占用资源。
-    """
     client = websocket.client.host if websocket.client is not None else "unknown"
     if not _CONNECTIONS.acquire(client):
         await websocket.close(code=1013, reason="WebSocket capacity exceeded")
@@ -71,6 +79,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: UUID) -> None:
 
     try:
         request_times: deque[float] = deque()
+        authenticated: AuthenticatedRoomStream | None = None
         await websocket.accept()
         while True:
             try:
@@ -94,22 +103,52 @@ async def websocket_endpoint(websocket: WebSocket, session_id: UUID) -> None:
                 await websocket.close(code=1008, reason="WebSocket message rate exceeded")
                 return
             try:
-                raw_event = cast(object, json.loads(raw_text))
-            except json.JSONDecodeError:
-                await websocket.close(code=1003, reason="WebSocket message must be JSON")
+                frame = CLIENT_FRAME_ADAPTER.validate_json(raw_text)
+            except (ValidationError, json.JSONDecodeError):
+                await websocket.close(code=1003, reason="WebSocket message must match protocol")
                 return
-            event_type: object | None = None
-            if isinstance(raw_event, Mapping):
-                event = cast(Mapping[str, object], raw_event)
-                event_type = event.get("type")
-            if event_type == "session.ping":
+
+            if authenticated is None:
+                if not isinstance(frame, ConnectionHelloFrame):
+                    await websocket.close(code=1008, reason="Room stream authorization failed")
+                    return
+                try:
+                    authenticated = await consume_room_stream_ticket(
+                        session_id,
+                        frame.data.ticket,
+                        frame.data.protocol_version,
+                        db,
+                    )
+                except RoomStreamAuthorizationError:
+                    await websocket.close(code=1008, reason="Room stream authorization failed")
+                    return
+                ready = ConnectionReadyFrame(
+                    type="connection.ready",
+                    data=ConnectionReadyData(
+                        protocol_version=1,
+                        session_id=authenticated.session_id,
+                        member_id=str(authenticated.member_id),
+                        revision=authenticated.revision,
+                        event_head_sequence=authenticated.event_head_sequence,
+                    ),
+                )
+                await websocket.send_json(ready.model_dump(mode="json"))
+                continue
+
+            if isinstance(frame, SessionPingFrame):
                 await websocket.send_json(
-                    {"type": "session.pong", "data": {"session_id": str(session_id)}},
+                    {"type": "session.pong", "data": {"session_id": str(authenticated.session_id)}},
                 )
     except WebSocketDisconnect:
         return
     finally:
         _CONNECTIONS.release(client)
+
+
+def _origin_allowed(websocket: WebSocket) -> bool:
+    origin = websocket.headers.get("origin")
+    allowed = get_settings().cors_origins
+    return origin is not None and (origin in allowed or "*" in allowed)
 
 
 def _within_message_rate(request_times: deque[float]) -> bool:
