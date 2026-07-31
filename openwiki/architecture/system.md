@@ -139,7 +139,7 @@ revision 和 event sequence。秘密结算在全部提交前只返回提交成�
 | `/play/{room}/lobby` | 多人大厅 | `[LIVE]` |
 | `/demo/*` | 兼容重定向 | `[LEGACY]` |
 | `/api/v1/sessions/*` | FastAPI session surface | `[LIVE]` |
-| `/api/v1/ws/*` | 心跳端点 | `[LEGACY]` |
+| `/api/v1/ws/*` | 认证房间流 bootstrap | `[PARTIAL]` |
 
 完整路由与模型以 `engine/api/routes/`、`apps/web/app/` 和生成的 OpenAPI 为准，
 不在本页复制枚举。

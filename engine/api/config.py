@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     room_events_v1: bool = Field(
         default=False,
         alias="ROOM_EVENTS_V1",
-        description="Reserved MP-0 room-event rollout flag; it does not enable an entry point.",
+        description="Enable authenticated room stream ticket and WebSocket bootstrap.",
     )
     ai_dm_v1: bool = Field(
         default=False,

@@ -689,7 +689,16 @@ curl -X POST \
 
 ## 8. WebSocket
 
-### 8.1 当前已实现：仅心跳
+### 8.1 当前已实现：认证房间流 bootstrap
+
+房间成员先调用以下端点获取一次性短期 ticket：
+
+```text
+POST /api/v1/sessions/{session_id}/stream-ticket
+```
+
+只有当前 joined member 可以签发 ticket。ticket 有效期 30 秒、只能消费一次，
+持久层只保存 SHA-256 摘要；重新签发会撤销该成员尚未消费的 ticket。
 
 连接地址：
 
@@ -697,31 +706,44 @@ curl -X POST \
 ws://host/api/v1/ws/{session_id}
 ```
 
-`session_id` 必须是 UUID。当前端点不验证 JWT，也不绑定数据库会话；它只处理 JSON 文本 `session.ping`：
+连接要求可信 `Origin`，首帧必须是 `connection.hello`：
 
 ```json
 {
-  "type": "session.ping",
-  "data": {}
+  "type": "connection.hello",
+  "data": {"protocol_version": 1, "ticket": "<ticket>"}
 }
 ```
 
-响应：
+服务端重新验证房间成员身份，并返回服务端推导的 `connection.ready`：
 
 ```json
 {
-  "type": "session.pong",
+  "type": "connection.ready",
   "data": {
-    "session_id": "12345678-1234-5678-1234-567812345678"
+    "protocol_version": 1,
+    "session_id": "12345678-1234-5678-1234-567812345678",
+    "member_id": "member-id",
+    "revision": 0,
+    "event_head_sequence": 0
   }
 }
 ```
 
-当前资源边界：单条消息 64 KiB、全局 100 个连接、单客户端 4 个连接、每连接每分钟 30 条消息、60 秒空闲超时；binary、非法 JSON、超限消息会关闭连接。除 `session.ping` 外的 JSON 文本当前不会得到玩法响应。
+认证后当前只支持 JSON 文本 `session.ping` / `session.pong`。符合 frame contract
+但 ticket 不存在、过期、已撤销、已消费、跨房间或当前 membership 不可用时，关闭
+`1008 Room stream authorization failed`；二进制、非法 JSON 或不符合 frame contract
+的消息关闭 `1003`。资源边界保持为：
+单条消息 64 KiB、全局 100 个连接、单客户端 4 个连接、每连接每分钟 30 条消息、
+60 秒空闲超时。
 
-### 8.2 未实现的多人/事件传输
+### 8.2 未实现的多人事件传输
 
-旧文档中的 `chat.message`、`chat.send`、`action.perform`、`stage.changed`、`clue.unlocked`、`evidence.discovered`、`media.*`、`npc.state_changed`、`event.triggered` 和 `hint.shown` 示例都不是当前 wire contract。它们属于未来多人房间/事件流设计；当前服务端既不会发送，也不会处理。MP-0 仅有独立 authoring contract，不包含 WebSocket 命令或事件实现。
+旧文档中的 `chat.message`、`chat.send`、`action.perform`、`stage.changed`、
+`clue.unlocked`、`evidence.discovered`、`media.*`、`npc.state_changed`、
+`event.triggered` 和 `hint.shown` 示例都不是当前 wire contract。当前服务端尚未
+实现 replay、`room.event`、outbox relay 或浏览器事件消费；MP-0 仍只有独立
+authoring contract。
 
 ## 9. 当前公开错误码
 
