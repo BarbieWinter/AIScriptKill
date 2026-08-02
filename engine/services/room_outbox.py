@@ -45,6 +45,7 @@ class RoomOutboxLease:
     lease_token: UUID
     worker_id: str
     attempts: int
+    failure_attempts: int
     message: RoomOutboxMessage
 
 
@@ -67,6 +68,7 @@ class RoomOutboxHealth:
     active_leases: int
     expired_leases: int
     poisoned_count: int
+    retry_attempts: int
     oldest_pending_at: datetime | None
     last_published_at: datetime | None
 
@@ -161,6 +163,7 @@ async def claim_room_outbox_batch(
                     room_outbox.c.id.label("outbox_id"),
                     room_outbox.c.lease_token,
                     room_outbox.c.attempts,
+                    room_outbox.c.failure_attempts,
                 )
             )
         )
@@ -174,6 +177,7 @@ async def claim_room_outbox_batch(
             lease_token=cast(UUID, claimed_by_id[outbox_id]["lease_token"]),
             worker_id=normalized_worker_id,
             attempts=int(claimed_by_id[outbox_id]["attempts"]),
+            failure_attempts=int(claimed_by_id[outbox_id]["failure_attempts"]),
             message=RoomOutboxMessage(
                 event_id=cast(UUID, row["room_event_id"]),
                 session_id=cast(UUID, row["session_id"]),
@@ -193,7 +197,7 @@ async def acknowledge_room_outbox_success(
     db: AsyncSession,
     lease: RoomOutboxLease,
 ) -> bool:
-    """Mark one publication complete only while the exact lease remains active."""
+    """Mark one publication complete while this token remains the current lease."""
 
     result = cast(
         CursorResult[object],
@@ -203,7 +207,6 @@ async def acknowledge_room_outbox_success(
                 room_outbox.c.id == lease.outbox_id,
                 room_outbox.c.lease_token == lease.lease_token,
                 room_outbox.c.lease_owner == lease.worker_id,
-                room_outbox.c.lease_expires_at > func.clock_timestamp(),
                 room_outbox.c.published_at.is_(None),
                 room_outbox.c.poisoned_at.is_(None),
             )
@@ -229,7 +232,7 @@ async def acknowledge_room_outbox_failure(
     retry_max_seconds: int = DEFAULT_OUTBOX_RETRY_MAX_SECONDS,
     max_attempts: int = DEFAULT_OUTBOX_MAX_ATTEMPTS,
 ) -> FailureOutcome:
-    """Release one active lease into retry backoff or poison quarantine."""
+    """Record one transport failure while this token remains the current lease."""
 
     normalized_error = _bounded_error_name(error_name)
     _validate_retry_settings(
@@ -237,8 +240,10 @@ async def acknowledge_room_outbox_failure(
         retry_max_seconds=retry_max_seconds,
         max_attempts=max_attempts,
     )
-    poisoned = lease.attempts >= max_attempts
+    failure_attempts = lease.failure_attempts + 1
+    poisoned = failure_attempts >= max_attempts
     values: dict[str, object] = {
+        "failure_attempts": failure_attempts,
         "lease_token": None,
         "lease_owner": None,
         "lease_expires_at": None,
@@ -253,7 +258,7 @@ async def acknowledge_room_outbox_failure(
     else:
         values["available_at"] = func.clock_timestamp() + timedelta(
             seconds=_retry_delay_seconds(
-                attempts=lease.attempts,
+                attempts=failure_attempts,
                 retry_base_seconds=retry_base_seconds,
                 retry_max_seconds=retry_max_seconds,
             )
@@ -267,7 +272,6 @@ async def acknowledge_room_outbox_failure(
                 room_outbox.c.id == lease.outbox_id,
                 room_outbox.c.lease_token == lease.lease_token,
                 room_outbox.c.lease_owner == lease.worker_id,
-                room_outbox.c.lease_expires_at > func.clock_timestamp(),
                 room_outbox.c.published_at.is_(None),
                 room_outbox.c.poisoned_at.is_(None),
             )
@@ -396,6 +400,9 @@ async def read_room_outbox_health(db: AsyncSession) -> RoomOutboxHealth:
                 )
                 .label("expired_leases"),
                 func.count().filter(room_outbox.c.poisoned_at.is_not(None)).label("poisoned_count"),
+                func.coalesce(func.sum(room_outbox.c.failure_attempts), 0).label(
+                    "retry_attempts"
+                ),
                 func.min(room_outbox.c.created_at).filter(pending).label("oldest_pending_at"),
                 func.max(room_outbox.c.published_at).label("last_published_at"),
             )
@@ -406,6 +413,7 @@ async def read_room_outbox_health(db: AsyncSession) -> RoomOutboxHealth:
         active_leases=int(row.active_leases),
         expired_leases=int(row.expired_leases),
         poisoned_count=int(row.poisoned_count),
+        retry_attempts=int(row.retry_attempts),
         oldest_pending_at=cast(datetime | None, row.oldest_pending_at),
         last_published_at=cast(datetime | None, row.last_published_at),
     )

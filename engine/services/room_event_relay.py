@@ -71,6 +71,7 @@ class RoomEventRelayHealth:
             "active_leases": self.queue.active_leases,
             "expired_leases": self.queue.expired_leases,
             "poisoned_count": self.queue.poisoned_count,
+            "retry_attempts": self.queue.retry_attempts,
             "oldest_pending_age_seconds": self.queue.oldest_pending_age_seconds,
             "last_cycle_at": _datetime_value(self.last_cycle_at),
             "last_published_at": _datetime_value(self.queue.last_published_at),
@@ -118,6 +119,19 @@ class RoomEventRelay:
             max_attempts=self._config.max_attempts,
         )
 
+    def record_cycle(self, result: RoomOutboxBatchResult) -> None:
+        """Update readiness without letting idle cycles hide publication failures."""
+
+        first_cycle = self.status.last_cycle_at is None
+        self.status.last_batch = result
+        if result.failed > 0:
+            self.status.last_cycle_error = "PublicationFailed"
+            self.status.ready = False
+        elif result.published > 0 or first_cycle:
+            self.status.last_cycle_error = None
+            self.status.ready = True
+        self.status.last_cycle_at = datetime.now(UTC)
+
     async def run(self, stop: asyncio.Event) -> None:
         if self.status.running:
             raise RuntimeError("room event relay is already running")
@@ -126,15 +140,15 @@ class RoomEventRelay:
         try:
             while not stop.is_set():
                 try:
-                    self.status.last_batch = await self.run_once()
+                    result = await self.run_once()
                 except Exception as exc:
                     self.status.last_batch = None
                     self.status.last_cycle_error = exc.__class__.__name__
                     self.status.ready = False
+                    self.status.last_cycle_at = datetime.now(UTC)
+                    raise
                 else:
-                    self.status.last_cycle_error = None
-                    self.status.ready = True
-                self.status.last_cycle_at = datetime.now(UTC)
+                    self.record_cycle(result)
                 if stop.is_set():
                     break
                 try:

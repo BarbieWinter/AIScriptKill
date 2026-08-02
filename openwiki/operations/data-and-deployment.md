@@ -17,6 +17,7 @@
 - [LIVE] **FastAPI data path** — async SQLAlchemy 访问 Supabase/Postgres。
 - [LIVE] **Package persistence** — 规范化 package 与 runtime 表已接入。
 - [LIVE] **Durable commands** — receipt、events、tombstones 和 outbox 表已实现。
+- [LIVE] **Room event relay** — 独立 worker、租约恢复、退避/poison、NOTIFY adapter 与健康面已实现。
 - [LIVE] **真实多人验证** — durable PostgreSQL 与双匿名浏览器 live gate 已接入。
 - [SECURITY] **浏览器访问** — 只允许经 FastAPI，不直接读写底层表。
 
@@ -29,7 +30,8 @@
 | Supabase | `SUPABASE_URL`, keys | secret key 仅服务端使用 |
 | Database | `DATABASE_URL`, pooler | pooler 存在时优先 |
 | Frontend | `NEXT_PUBLIC_*` | 只能放公开值 |
-| Rollout | `MULTIPLAYER_V1` | 本地 `make dev` 显式开启 |
+| Rollout | `MULTIPLAYER_V1`, `ROOM_EVENTS_V1` | API 与 room-event relay 独立启用 |
+| Relay | `ROOM_EVENT_RELAY_*`, `ROOM_EVENT_NOTIFY_CHANNEL` | 租约、重试、停机和 NOTIFY channel |
 | RAG | `RAG_*`, `DASHSCOPE_*` | embedding 维度 1024 |
 | NPC | `NPC_*`, `OPENAI_*` | 配置不全时安全 fallback |
 
@@ -51,6 +53,7 @@ make db-reset
 
 make dev
 make dev-api
+make dev-relay
 make dev-web
 
 make test
@@ -58,10 +61,11 @@ make lint
 make typecheck-api
 ```
 
-持久命令数据库 lane：
+持久命令与 room-event relay 数据库 lane：
 
 ```bash
 make test-durable-commands
+make test-room-event-relay
 ```
 
 浏览器验证：
@@ -136,8 +140,13 @@ advisory lock transaction
 成功终态可在同一事务中更新 room、receipt、event 和 outbox。stale processing 通过
 lease/attempt 恢复；同一 `command_id` 绑定稳定 request hash 和 session identity。
 
-[CAUTION] outbox publisher 不等于正在运行的 worker。部署异步 publisher 前还需定义
-进程托管、监控、重试告警和下游幂等。
+room-event relay 以独立 ASGI 进程运行；claim 事务提交后才调用 transport，活跃租约以 token
+fencing，失败按上限退避并在阈值后进入 poison。`/health/ready` 暴露聚合 queue lag、累计
+retry attempts 与 poison 状态，部署入口见 `docker-compose.yml` 的 `room-event-relay` 服务。
+应用优先在配置期限内 graceful shutdown；Compose 在 15 秒后强制终止，保证停机有界。
+
+[CAUTION] PostgreSQL NOTIFY 可能重复或在 listener 离线时丢失，因此只作为稳定事件引用的低延迟
+唤醒；下游必须从持久事件读取并按 `event_id` 幂等。认证 WebSocket fan-out/replay 仍属后续工作。
 
 ## 本地数据注意事项
 

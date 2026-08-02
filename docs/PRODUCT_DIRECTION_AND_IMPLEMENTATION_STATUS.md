@@ -402,7 +402,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 - 浏览器层面的真实断网和关闭标签页后重新进入验收；route-mocked 刷新、5xx、processing/accepted/rejected receipt 已覆盖。
 - presence 与“玩家是否能继续玩法”的明确分离测试。
 
-`engine/api/websocket/handler.py` 已要求可信 `Origin` 和 `connection.hello` 首帧，通过 30 秒一次性 ticket 绑定当前 joined member，并返回服务端推导的 `connection.ready`；缺失、过期、撤销、复用、跨房间或离开房间的凭据使用统一拒绝行为。这个边界目前仍只提供认证后的 heartbeat，不能把它算作实时玩法闭环。所有会产生公开事件的 lobby、gameplay 与房间终止命令已在成功事务中写入 `room.events.v1` outbox，但 batch dispatcher 仍没有具体 transport adapter、常驻 worker 或生产启动入口。
+`engine/api/websocket/handler.py` 已要求可信 `Origin` 和 `connection.hello` 首帧，通过 30 秒一次性 ticket 绑定当前 joined member，并返回服务端推导的 `connection.ready`；缺失、过期、撤销、复用、跨房间或离开房间的凭据使用统一拒绝行为。这个边界目前仍只提供认证后的 heartbeat，不能把它算作实时玩法闭环。所有会产生公开事件的 lobby、gameplay 与房间终止命令已在成功事务中写入 `room.events.v1` outbox；独立常驻 relay 通过 committed lease、stale fencing、退避/poison 和 PostgreSQL NOTIFY adapter 发布稳定事件引用，但认证连接上的 replay/fanout 与浏览器消费尚未接通。
 
 ---
 
@@ -423,7 +423,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | authoring schema 与 runtime 闭合 | 多人 schema 已存在 | 统一 playability 决策拒绝线性 executor 不消费或会破坏双人复盘的组合 | **严格双人 contract 已完成** |
 | 样例内容一致性 | 双人样例已存在 | 已修正第一阶段调查员选项的错误归因，并锁定目录/archive 完整库存和两个冻结终局 | **已完成（严格双人样例）** |
 | 持久命令与数据库恢复 | 部分命令恢复基础 | 服务端回执、幂等、stale reclaim、attempt fencing 和权限已接通 | **已完成（服务端已测范围）** |
-| outbox 实时投递 | 基础表/设计存在 | lobby、gameplay 与房间终止事件均事务写入 outbox，batch dispatcher 已覆盖并发 claim/重试；仍无 adapter/worker | **部分完成** |
+| outbox relay | 基础表/设计存在 | 全部公开事件事务写入 outbox；独立 worker 已实现租约恢复、退避/poison、NOTIFY adapter 与健康面 | **已完成（relay 边界）** |
 | 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段禁用请求/确认并保留已公开内容只读 | **已完成（候选基线）** |
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
 | 断线后浏览器恢复 | 有快照/重试设计 | pending envelope、receipt-first 恢复、跨标签页单 identity、可回收 lease 下的字节等价补发、accepted 快照边界和 closed 页面收尾已有专项浏览器覆盖；真实断网/关闭标签页重开仍待验收 | **部分完成** |
@@ -507,14 +507,17 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 │ room state + events + command receipts     │
 │ checkpoint writes + outbox + presence      │
 └──────────────────┬────────────────────────┘
-                   │ outbox batch dispatcher + Publisher Protocol
+                   │ committed lease + independent relay
                    ▼
-        [无具体传输 adapter、常驻 worker 或浏览器订阅通道]
+        PostgreSQL NOTIFY stable event reference
+                   │
+                   ▼
+        [无认证 replay/fanout 或浏览器订阅消费]
 
 Browser B 通过相同 HTTP 路径独立轮询。
 ```
 
-这里的 outbox 仍是基础设施，不是已上线事件总线：公开 lobby、gameplay 与房间终止事件都已在权威状态、终态 receipt、event 和 event head 的同一事务中写入 `room.events.v1`，但 `publish_room_outbox_batch()` 仍没有 transport adapter、常驻 worker 或 lifespan 接线。快照投影已只读取不超过当前 `event_head_sequence` 的 `discussion.message`；但 active 房间仍会每 2 秒读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。completed 页面会停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
+这里的 outbox relay 已形成生产基础设施，但不是完整实时事件总线：公开 lobby、gameplay 与房间终止事件都在权威状态、终态 receipt、event 和 event head 的同一事务中写入 `room.events.v1`；独立进程通过 committed lease 在数据库锁外发布 PostgreSQL NOTIFY 稳定事件引用，失败会退避并隔离 poison。NOTIFY 只负责低延迟唤醒，持久 `session_events` 和 HTTP snapshot 仍是恢复权威；认证 replay/fanout 与浏览器消费尚未接通。快照投影已只读取不超过当前 `event_head_sequence` 的 `discussion.message`；但 active 房间仍会每 2 秒读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。completed 页面会停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
 
 ### 11.2 目标多人运行架构
 
@@ -543,7 +546,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 |---|---|
 | 房间、邀请、选角、准备、开始 | 已形成真实多人入口 |
 | 持久命令、revision、幂等回执 | 是可靠多人执行的基础 |
-| 事务状态、事件日志与 outbox schema/dispatcher | 支持恢复、审计和未来实时流；gameplay 已接线，仍需生产 adapter/worker |
+| 事务状态、事件日志与 outbox relay | 支持恢复、审计和低延迟通知；仍需认证 replay/fanout 与浏览器消费 |
 | 参与者安全快照 | 保护私有章节和秘密提交 |
 | 有序 stage index | 可以作为线性流程基础 |
 | 确定性材料发放 | 符合 YAML 创作权边界 |
@@ -583,7 +586,7 @@ HTTP 应继续承担可靠命令提交和快照恢复；WebSocket 用于低延�
 ### 12.4 下一步必须建设
 
 1. 补真实断网、关闭标签页重开和继续全员门槛的浏览器验收；5xx 不确定结果、刷新恢复和 pending command/receipt 已完成。
-2. 补生产 outbox dispatcher/adapter，打通 multiplayer events 鉴权并实现 sequence gap / replay / resync。
+2. 将 relay 的稳定事件引用接入认证房间流，实现 sequence gap / replay / resync 与浏览器消费。
 3. 将 active 房间的累计讨论历史改为增量或有界投影。
 4. 引入兼容式 `activities[]`，不再假设每阶段有 settlement。
 5. 为样例包增加分阶段私有 DM 主持稿与 checkpoint 声明，并实现受控 AI DM 调用、输入裁剪、输出策略校验和审计记录。
@@ -638,41 +641,7 @@ R5  旧方向物理清理
 
 ---
 
-## 14. 验证记录
-
-当前候选闭包与标准双人样例迁移在本地工作树运行的验证结果如下：
-
-| 验证 | 结果 | 说明 |
-|---|---|---|
-| `make test-t08-candidate` | **通过** | 同一 clean checkout 从两次空白 Supabase reset 完成迁移、完整静态/后端/数据库/route-mocked/build 门禁、真实管理 API 发布和双匿名身份 Live 通关 |
-| `uv run --frozen pytest engine/tests/ -q` | **578 passed** | 当前本地迁移数据库运行全部显式数据库门禁；新增 T10 gameplay outbox、提交前回滚、提交后响应丢失、并发 claim、stale attempt 与跨房 identity 回归 |
-| T04 package / gameplay 聚焦测试 | **78 passed** | 覆盖目录/archive 完整库存、跨阶段材料 ID 唯一性、旧房缺失历史字段的无条件材料恢复与写回、V2 精确历史校验及跨阶段归档、legacy frozen 非终局 outcome 材料、收据序列语义与两个冻结终局复盘 |
-| T06 incomplete-room closure 聚焦验收 | **3 database + 6 browser passed** | 覆盖 lobby 关闭、active 放弃、待恢复命令阻止关闭、closed 页面完成 accepted/rejected 本地命令终态恢复、accepted 快照同步失败不降级、跨标签页终态清理、双方 closed 投影、幂等重放、权限拒绝、清理与重新入房 |
-| `make test-durable-commands` | **26 passed** | 覆盖命令幂等、未完成房间关闭、持久拒绝、事务回滚、response loss、stale reclaim、并发 outbox claim、数据库权限和双人 HTTP 通关 |
-| `make test-checkpoint-recovery` | **1 passed** | 覆盖 worker 被强杀后的 checkpoint 恢复 |
-| route-mocked Playwright | **58 passed** | 覆盖跨刷新命令恢复、跨标签页单 identity、receipt 缺失或 processing 过期后的 lease 协调字节等价补发与中断接管、首发/receipt/replay 挂起后的有界恢复、Web Lock 等待上限、accepted snapshot 同步超时、processing replay 4xx 不误判终态、processing/accepted/rejected 可见终态、accepted revision/event head 门槛与旧轮询取消、closed 页面 accepted 同步失败与跨标签页清理、事件 gap、大厅启动、未完成房间关闭门禁、活跃游戏私有投影、位置上报生命周期、固定材料/提示/讨论入口、完成态与复盘、390×844 触摸操作 |
-| 独立 Next 运行时验证 | **通过** | 参与者安全 fixture 下完成匿名登录、快照轮询、场景移动与 5 次位置上报，并打开生成契约中的公开材料 |
-| `make test-mp2-live` | **1 passed** | 真实 Supabase + FastAPI + Next，双匿名身份完成候选游戏和复盘 |
-| `npm --prefix apps/web run lint` | **通过** | ESLint 无错误 |
-| `npm --prefix apps/web run build` | **通过** | Next 15 生产构建和类型检查成功 |
-| 聚焦 `ruff check` | **通过** | 多人后端变更无 lint 错误 |
-| 聚焦 `basedpyright` | **0 errors** | 多人后端类型检查通过 |
-| `git diff --check` | **通过** | 当前跟踪差异无空白错误 |
-
-这些结果支持“当前双人候选垂直切片已可完整操作”的结论，但不支持以下结论：
-
-- 不支持宣称 AI DM 已实现。
-- 不支持宣称 WebSocket 多人运行时已实现。
-- 不支持宣称任意人数、任意剧本和任意活动都可运行。
-- 不覆盖真实浏览器断网与关闭标签页重开、multiplayer `/events` 鉴权、生产 outbox worker 或长讨论历史轮询成本；route-mocked 5xx 不确定命令和刷新恢复已覆盖。
-- `engine/tests/test_checkpoint.py` 当前被删除；仍需说明其旧 round-trip 覆盖由哪些现有测试替代，不能只用进程强杀恢复测试默认代替全部语义。
-- 不支持宣称旧搜证方向已从代码中清理完成。
-- 旧冻结包继续按宽容规则读取；当前及后续阶段推进会用显式历史版本标记在 V2 中精确保留非终局 `outcome:*` 公共材料。已经推进且从未写入版本化精确历史的旧房仍无法反推出当时未保存的 outcome 结果材料；新导入包继续禁止产生这种歧义。
-- 不支持把严格双人候选基线描述为任意剧本可用的稳定多人产品。
-
----
-
-## 15. 剧本行业流程校准
+## 14. 剧本行业流程校准
 
 公开资料与从业实践显示，常见流程大体是：
 

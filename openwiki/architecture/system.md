@@ -11,7 +11,7 @@
 │ API        FastAPI / strict participant projections                          │
 │ RUNTIME    LangGraph single-player + pure multiplayer reducer                │
 │ DATA       Supabase Postgres / immutable multiplayer package snapshot        │
-│ DELIVERY   HTTP authoritative; authenticated WS bootstrap only               │
+│ DELIVERY   HTTP authority + outbox relay; authenticated WS bootstrap          │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,7 +49,7 @@ Browser
 | 单人 Live UI | `[LIVE]` | Session API、YAML presentation、LangGraph action |
 | 双人大厅 | `[LIVE]` | 匿名身份、邀请、选角、准备、启动 |
 | Durable command | `[LIVE]` | receipt、replay、stale recovery；`/events` page 仅限 legacy single session |
-| Room outbox | `[PARTIAL]` | 表、事务写入和 publisher；无常驻 worker |
+| Room event relay | `[LIVE]` | 事务 outbox、租约/退避/poison、独立 worker、PostgreSQL NOTIFY 与健康面 |
 | Slim M2 双人 gameplay | `[LIVE]` | HTTP polling、私有章节、讨论、结算、完成复盘 |
 | WS 传输 | `[PARTIAL]` | ticket、hello/ready、heartbeat；无 replay/fanout |
 | 公共 AI DM | `[PLANNED]` | flag 存在，未接多人运行时 |
@@ -122,11 +122,12 @@ revision 和 event sequence。秘密结算在全部提交前只返回提交成�
 - 只追加公开讨论、结束确认/撤销和秘密投票统一揭晓。
 - 显式同步推进、共同最终判断、authored ending 和 completed-only review。
 - durable receipt 重放、revision 冲突刷新、完成时 reservation 释放。
-- event-producing gameplay/termination 命令在同一事务提交公开 event 与同 identity outbox；拒绝、no-op 与 replay 不追加消息。
+- event-producing gameplay/termination 命令在同一事务提交公开 event 与同 identity
+  outbox；拒绝、no-op 与 replay 不追加消息。
 
 明确推迟：
 
-- gameplay WebSocket 事件 replay/fanout、Redis 和 outbox 常驻 worker；认证 hello/ready 已实现。
+- gameplay WebSocket 事件 replay/fanout 与浏览器消费；认证 hello/ready 和 outbox relay 已实现。
 - 共同沉浸地图、远端 avatar pose 和跨日浏览器恢复验收。
 - 未完成对局结束 UI、公共 AI DM、正式负载与多实例稳定性。
 - 真实玩家趣味性验证；技术通关不等于内容已经有趣。

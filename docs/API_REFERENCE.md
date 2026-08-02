@@ -741,9 +741,10 @@ ws://host/api/v1/ws/{session_id}
 
 旧文档中的 `chat.message`、`chat.send`、`action.perform`、`stage.changed`、
 `clue.unlocked`、`evidence.discovered`、`media.*`、`npc.state_changed`、
-`event.triggered` 和 `hint.shown` 示例都不是当前 wire contract。当前服务端尚未
-实现 replay、`room.event`、outbox relay 或浏览器事件消费；MP-0 仍只有独立
-authoring contract。
+`event.triggered` 和 `hint.shown` 示例都不是当前 wire contract。服务端已通过独立
+outbox relay 将稳定事件引用发布到 PostgreSQL NOTIFY；它不发送投影，也不改变 HTTP
+snapshot 作为恢复权威的地位。认证 replay、`room.event` fan-out 和浏览器事件消费仍未
+实现；MP-0 仍只有独立 authoring contract。
 
 ## 9. 当前公开错误码
 

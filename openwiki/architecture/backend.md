@@ -124,10 +124,12 @@ published package
 - stale processing reclaim 与稳定 replay。
 - 有序 `session_events` 和 participant-safe snapshot page。
 - 与成功事务一起写入的 `room_outbox` 记录。
-- `SKIP LOCKED` batch publisher、重试次数和下次可用时间。
+- 提交后生效的排他租约、stale fencing、指数退避和 poison 隔离。
+- 独立常驻 relay 及 PostgreSQL NOTIFY 稳定事件引用 adapter。
+- 聚合 readiness、pending/lease/poison 数量和 oldest-pending lag。
 
-[CAUTION] outbox publisher 是可调用服务，不代表已有常驻 worker、broker 或
-WebSocket fan-out。Slim M1 也不依赖这些设施。
+[CAUTION] relay 的 NOTIFY 只唤醒后续 replay reader，不发送私有投影或成为状态权威。
+认证 WebSocket 的 replay、`room.event` fan-out 与浏览器消费仍未实现。
 
 ## 运行时
 
@@ -177,6 +179,7 @@ zip or directory
 | Session API | `engine/api/routes/sessions.py` | `test_api_contracts.py` |
 | 多人 room/gameplay | `multiplayer_room_service.py`, `multiplayer_gameplay_service.py` | gameplay service + durable HTTP tests |
 | 持久命令 | `session_command_repository.py` | `test_multiplayer_command_http.py` |
+| Room event relay | `room_outbox.py`, `room_event_relay.py` | `make test-room-event-relay` |
 | 多人 reducer | `multiplayer_state_machine.py` | offline state-machine tests |
 | Package loader | `package_loader.py` | `test_multiplayer_package_loader.py` |
 

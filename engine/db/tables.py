@@ -768,6 +768,7 @@ room_outbox = Table(
     Column("room_event_id", UUID(as_uuid=True), nullable=False),
     Column("topic", Text, nullable=False),
     Column("attempts", Integer, nullable=False, server_default=text("0")),
+    Column("failure_attempts", Integer, nullable=False, server_default=text("0")),
     Column("available_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("lease_token", UUID(as_uuid=True)),
     Column("lease_owner", Text),
@@ -787,6 +788,10 @@ room_outbox = Table(
     UniqueConstraint("room_event_id", "topic", name="uq_room_outbox_event_topic"),
     CheckConstraint("length(btrim(topic)) > 0", name="room_outbox_topic_check"),
     CheckConstraint("attempts >= 0", name="room_outbox_attempts_check"),
+    CheckConstraint(
+        "failure_attempts >= 0",
+        name="room_outbox_failure_attempts_check",
+    ),
     CheckConstraint(
         "(lease_token IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL) OR "
         "(lease_token IS NOT NULL AND lease_owner IS NOT NULL "

@@ -22,10 +22,15 @@ services:
       - .env
     environment:
       ROOM_EVENTS_V1: "true"
+      DATABASE_URL: ${ROOM_EVENT_RELAY_DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:54322/postgres}
+      DATABASE_POOLER_URL: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./engine:/app/engine
     command: uv run uvicorn engine.relay.main:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
+    stop_grace_period: 15s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=2).read()"]
       interval: 10s

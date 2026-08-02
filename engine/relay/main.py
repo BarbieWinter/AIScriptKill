@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import socket
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from engine.services.room_event_transport import PostgresNotifyRoomOutboxPublish
 from engine.services.room_outbox import RoomOutboxPublisher
 
 Dispose = Callable[[], Awaitable[None]]
+StopProcess = Callable[[], None]
 
 
 def create_room_event_relay_app(
@@ -28,6 +30,7 @@ def create_room_event_relay_app(
     publisher: RoomOutboxPublisher | None = None,
     dispose: Dispose = dispose_engine,
     worker_id: str | None = None,
+    stop_process: StopProcess = lambda: os.kill(os.getpid(), signal.SIGTERM),
 ) -> FastAPI:
     """Build an ASGI process that owns the relay lifecycle and health surface."""
 
@@ -57,20 +60,18 @@ def create_room_event_relay_app(
         task: asyncio.Task[None] | None = None
         if runtime_settings.room_events_v1:
             task = asyncio.create_task(relay.run(stop), name="room-event-relay")
+            task.add_done_callback(
+                lambda completed: _stop_process_for_failed_relay(completed, stop, stop_process)
+            )
         try:
             yield
         finally:
             stop.set()
-            if task is not None:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(task),
-                        timeout=runtime_settings.room_event_relay_shutdown_grace_seconds,
-                    )
-                except TimeoutError:
-                    task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            await dispose()
+            await _stop_relay_and_dispose(
+                task,
+                dispose,
+                grace_seconds=runtime_settings.room_event_relay_shutdown_grace_seconds,
+            )
 
     application = FastAPI(
         title="AI Script Kill Room Event Relay",
@@ -107,6 +108,41 @@ def create_room_event_relay_app(
     application.add_api_route("/health", live_health, methods=["GET"])
     application.add_api_route("/health/ready", ready_health, methods=["GET"])
     return application
+
+
+async def _stop_relay_and_dispose(
+    task: asyncio.Task[None] | None,
+    dispose: Dispose,
+    *,
+    grace_seconds: float,
+) -> None:
+    if task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=grace_seconds * 0.75)
+        except TimeoutError:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=grace_seconds / 4)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+        except Exception:
+            pass
+    await asyncio.wait_for(dispose(), timeout=grace_seconds / 2)
+
+
+def _stop_process_for_failed_relay(
+    task: asyncio.Task[None],
+    stop: asyncio.Event,
+    stop_process: StopProcess,
+) -> None:
+    if stop.is_set() or task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        stop_process()
 
 
 def _default_worker_id() -> str:
