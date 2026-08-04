@@ -68,7 +68,21 @@ async def get_participant_room_events(
         through_sequence=authorization.snapshot.event_head_sequence,
     )
     page_events = _participant_events(rows)
-    _require_contiguous(after_sequence, page_events)
+    if _page_requires_reset(
+        after_sequence,
+        authorization.snapshot.event_head_sequence,
+        page_events,
+    ):
+        return ParticipantRoomEventPage(
+            revision=authorization.snapshot.revision,
+            event_head_sequence=authorization.snapshot.event_head_sequence,
+            snapshot=authorization.snapshot,
+            events=(),
+            next_after_sequence=authorization.snapshot.event_head_sequence,
+            has_more=False,
+            reset_required=True,
+            available_from_sequence=available_from_sequence,
+        )
     next_cursor = page_events[-1].sequence if page_events else after_sequence
     return ParticipantRoomEventPage(
         revision=authorization.snapshot.revision,
@@ -193,12 +207,18 @@ def _public_event_payload(event_type: str, value: object) -> dict[str, object]:
     return cast(dict[str, object], dict(payload))
 
 
-def _require_contiguous(
+def _page_requires_reset(
     after_sequence: int,
+    event_head_sequence: int,
     events: tuple[ParticipantRoomEvent, ...],
-) -> None:
+) -> bool:
+    """Require snapshot recovery when retained rows cannot continue the exclusive cursor."""
+
+    if after_sequence == event_head_sequence:
+        return False
     expected = after_sequence + 1
     for event in events:
         if event.sequence != expected:
-            raise conflict("ROOM_EVENT_GAP", "房间事件序列不连续，请刷新快照")
+            return True
         expected += 1
+    return not events

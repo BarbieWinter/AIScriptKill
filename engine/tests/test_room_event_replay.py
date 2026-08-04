@@ -273,7 +273,7 @@ async def test_replay_hides_missing_and_inaccessible_rooms_identically(
 
 
 @pytest.mark.asyncio
-async def test_replay_rejects_ahead_cursor_and_detects_persisted_gap(
+async def test_replay_rejects_ahead_cursor(
     monkeypatch: pytest.MonkeyPatch,
     principal: VerifiedAnonymousPrincipal,
     room: StoredMultiplayerRoom,
@@ -302,17 +302,50 @@ async def test_replay_rejects_ahead_cursor_and_detects_persisted_gap(
         )
     assert ahead.value.error.code == "INVALID_EVENT_CURSOR"
 
-    gapped_events = _EventsRepository((_row(1), _row(3)), first_sequence=1)
+
+@pytest.mark.asyncio
+async def test_replay_resets_for_a_purged_or_noncontiguous_retained_page(
+    monkeypatch: pytest.MonkeyPatch,
+    principal: VerifiedAnonymousPrincipal,
+    room: StoredMultiplayerRoom,
+    member: StoredRoomMember,
+    snapshot: ClosedRoomSnapshotV1,
+) -> None:
+    monkeypatch.setattr(room_event_replay, "require_multiplayer_enabled", lambda: None)
+    monkeypatch.setattr(
+        room_event_replay, "MultiplayerRoomRepository", lambda _db: _ReplayRepository(room, member)
+    )
+
+    async def get_snapshot(*_args: object) -> ClosedRoomSnapshotV1:
+        return snapshot
+
+    monkeypatch.setattr(room_event_replay, "get_room_snapshot", get_snapshot)
+
+    purged_events = _EventsRepository((), first_sequence=None)
+    monkeypatch.setattr(room_event_replay, "SessionCommandRepository", lambda _db: purged_events)
+    purged = await room_event_replay.get_participant_room_events(
+        str(room.id),
+        0,
+        10,
+        principal,
+        object(),  # type: ignore[arg-type]
+    )
+    assert purged.reset_required is True
+    assert purged.next_after_sequence == room.event_head_sequence
+    assert purged.events == ()
+
+    gapped_events = _EventsRepository((_row(3), _row(4)), first_sequence=1)
     monkeypatch.setattr(room_event_replay, "SessionCommandRepository", lambda _db: gapped_events)
-    with pytest.raises(ApiError) as gap:
-        await room_event_replay.get_participant_room_events(
-            str(room.id),
-            0,
-            2,
-            principal,
-            object(),  # type: ignore[arg-type]
-        )
-    assert gap.value.error.code == "ROOM_EVENT_GAP"
+    gapped = await room_event_replay.get_participant_room_events(
+        str(room.id),
+        0,
+        10,
+        principal,
+        object(),  # type: ignore[arg-type]
+    )
+    assert gapped.reset_required is True
+    assert gapped.next_after_sequence == room.event_head_sequence
+    assert gapped.events == ()
 
 
 @pytest.mark.asyncio
