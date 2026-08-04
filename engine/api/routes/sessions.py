@@ -40,6 +40,7 @@ from engine.api.schemas.multiplayer_rooms import (
     RoomSnapshotV1,
     UpdateScenePresenceRequest,
 )
+from engine.api.schemas.room_events import DiscussionHistoryPage, ParticipantRoomEventPage
 from engine.contracts.multiplayer_v1.commands import CommandResultV1, MultiplayerCommand
 from engine.contracts.multiplayer_v1.reviews import CompletedReviewV1
 from engine.db.session import SessionDep
@@ -53,6 +54,14 @@ from engine.services.multiplayer_room_service import (
     get_room_snapshot,
     revoke_room_invite,
     update_scene_presence,
+)
+from engine.services.room_event_replay import (
+    DEFAULT_DISCUSSION_HISTORY_PAGE_SIZE,
+    DEFAULT_ROOM_EVENT_PAGE_SIZE,
+    MAX_DISCUSSION_HISTORY_PAGE_SIZE,
+    MAX_ROOM_EVENT_PAGE_SIZE,
+    get_participant_discussion_history,
+    get_participant_room_events,
 )
 from engine.services.room_stream_auth import issue_room_stream_ticket
 from engine.services.session_commands import (
@@ -263,6 +272,80 @@ async def get_room_snapshot_route(
     """
 
     return await get_room_snapshot(session_id, principal, db)
+
+
+@router.get("/{session_id}/room-events", response_model=ParticipantRoomEventPage)
+async def list_participant_room_events(
+    session_id: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=DEFAULT_ROOM_EVENT_PAGE_SIZE, ge=1, le=MAX_ROOM_EVENT_PAGE_SIZE),
+) -> ParticipantRoomEventPage:
+    """Replay immutable public room events for one current participant.
+
+    Args:
+        session_id: Multiplayer room UUID resolved only with the authenticated principal.
+        principal: Verified anonymous identity that must remain a joined room member.
+        db: Request-scoped asynchronous database session.
+        after_sequence: Exclusive durable event cursor, from zero through the current head.
+        limit: Bounded ascending page size from one through 500.
+
+    Returns:
+        Participant-safe recovery snapshot and stable-ID public event page.
+
+    Raises:
+        ApiError: If the room is unavailable, the cursor is invalid, or durable history needs reset.
+
+    The response always includes a current participant-safe snapshot because HTTP remains
+    recovery authority; consumers deduplicate ``event_id`` and may request the next page
+    using ``next_after_sequence``.
+    """
+
+    return await get_participant_room_events(
+        session_id,
+        after_sequence,
+        limit,
+        principal,
+        db,
+    )
+
+
+@router.get("/{session_id}/discussion-history", response_model=DiscussionHistoryPage)
+async def list_participant_discussion_history(
+    session_id: str,
+    principal: VerifiedAnonymousPrincipalDep,
+    db: SessionDep,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(
+        default=DEFAULT_DISCUSSION_HISTORY_PAGE_SIZE,
+        ge=1,
+        le=MAX_DISCUSSION_HISTORY_PAGE_SIZE,
+    ),
+) -> DiscussionHistoryPage:
+    """Read bounded append-only public discussion history independently of snapshots.
+
+    Args:
+        session_id: Multiplayer room UUID resolved only with the authenticated principal.
+        principal: Verified anonymous identity that must remain a joined room member.
+        db: Request-scoped asynchronous database session.
+        after_sequence: Exclusive room-sequence cursor for public discussion messages.
+        limit: Bounded ascending page size from one through 200.
+
+    Returns:
+        Ordered public discussion event page with a deterministic continuation cursor.
+
+    Raises:
+        ApiError: If the room is unavailable or the cursor is beyond its current event head.
+    """
+
+    return await get_participant_discussion_history(
+        session_id,
+        after_sequence,
+        limit,
+        principal,
+        db,
+    )
 
 
 @router.put(

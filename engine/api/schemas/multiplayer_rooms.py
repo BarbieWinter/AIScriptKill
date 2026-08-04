@@ -128,6 +128,7 @@ class LobbySnapshotV1(ApiModel):
     mode: Literal["multiplayer_v1"] = "multiplayer_v1"
     status: Literal["lobby"]
     revision: int = Field(ge=0)
+    event_head_sequence: int = Field(default=0, ge=0)
     package: LobbyPackageSummary
     capacity: LobbyCapacity
     self: LobbyMember

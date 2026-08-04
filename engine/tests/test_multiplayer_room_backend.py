@@ -278,19 +278,20 @@ def test_repository_source_contains_no_commit_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discussion_event_query_is_bounded_by_snapshot_event_head() -> None:
+async def test_discussion_event_query_is_bounded_by_snapshot_event_head_and_limit() -> None:
     db = _StatementRecordingDb()
 
     await SessionCommandRepository(db).list_events_by_type(  # type: ignore[arg-type]
         uuid4(),
         "discussion.message",
         7,
+        limit=100,
     )
 
     assert db.statement is not None
     statement = str(db.statement)
     assert "session_events.sequence <=" in statement
-    assert "LIMIT" not in statement
+    assert "LIMIT" in statement
 
 
 def test_current_route_precedes_dynamic_session_route() -> None:

@@ -397,8 +397,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 仍缺少：
 
 - 已认证房间连接上的事件订阅、outbox fanout 和浏览器消费。
-- 客户端按事件序列 replay / gap detection / resync；当前 `room.resync` 忽略 `last_event_sequence`，只是 no-op。
-- 多人 `/events` 的可用鉴权路径；当前路由最终只允许 legacy single session。
+- WebSocket 上的客户端 sequence gap detection / live resync；`room.resync` 仍是不推进 revision 的兼容 no-op。
 - 浏览器层面的真实断网和关闭标签页后重新进入验收；route-mocked 刷新、5xx、processing/accepted/rejected receipt 已覆盖。
 - presence 与“玩家是否能继续玩法”的明确分离测试。
 
@@ -427,7 +426,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 | 固定协作提示 | reducer/contract 已有 | snapshot、三级全员确认和实际 Mansion shell 固定入口已接通；刷新恢复，正式判断阶段禁用请求/确认并保留已公开内容只读 | **已完成（候选基线）** |
 | 共享舞台位置同步 | 未形成多人闭环 | HTTP presence、远端头像与在线新鲜度存在 | **部分完成** |
 | 断线后浏览器恢复 | 有快照/重试设计 | pending envelope、receipt-first 恢复、跨标签页单 identity、可回收 lease 下的字节等价补发、accepted 快照边界和 closed 页面收尾已有专项浏览器覆盖；真实断网/关闭标签页重开仍待验收 | **部分完成** |
-| multiplayer events / resync | contracts 存在 | `/events` 被 legacy 鉴权挡住，`room.resync` 忽略游标 | **仅契约/假实现** |
+| multiplayer events / resync | contracts 存在 | participant-safe HTTP cursor replay、retention reset 和有界讨论历史已接通；WebSocket replay/fanout/browser 消费仍待实现，`room.resync` 保持无状态兼容 no-op | **部分完成（HTTP recovery）** |
 | 认证实时事件流 | contracts 存在 | 一次性 ticket、membership 复核、hello/ready 和认证 heartbeat 已接线；无 replay/fanout，前端继续轮询 | **部分完成（认证边界）** |
 | 未完成房间退出/释放 | 无 | 房主可关闭 lobby 或放弃 active 房间；双方获得最小 closed 快照，receipt/event/outbox 与邀请撤销、reservation 释放原子持久化 | **已完成** |
 | 通用 `activities[]` | 无 | 仍是固定四相 | **未开始** |
@@ -517,7 +516,7 @@ YAML 活动序列 ─────────── 独立控制读本、讨论�
 Browser B 通过相同 HTTP 路径独立轮询。
 ```
 
-这里的 outbox relay 已形成生产基础设施，但不是完整实时事件总线：公开 lobby、gameplay 与房间终止事件都在权威状态、终态 receipt、event 和 event head 的同一事务中写入 `room.events.v1`；独立进程通过 committed lease 在数据库锁外发布 PostgreSQL NOTIFY 稳定事件引用，失败会退避并隔离 poison。NOTIFY 只负责低延迟唤醒，持久 `session_events` 和 HTTP snapshot 仍是恢复权威；认证 replay/fanout 与浏览器消费尚未接通。快照投影已只读取不超过当前 `event_head_sequence` 的 `discussion.message`；但 active 房间仍会每 2 秒读取累计讨论历史，长讨论依然存在随消息数线性增长的成本。completed 页面会停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
+这里的 outbox relay 已形成生产基础设施，但不是完整实时事件总线：公开 lobby、gameplay 与房间终止事件都在权威状态、终态 receipt、event 和 event head 的同一事务中写入 `room.events.v1`；独立进程通过 committed lease 在数据库锁外发布 PostgreSQL NOTIFY 稳定事件引用，失败会退避并隔离 poison。NOTIFY 只负责低延迟唤醒，持久 `session_events` 和 HTTP snapshot 仍是恢复权威。当前 joined member 可通过有界 HTTP cursor replay 读取白名单公开事件；保留期之外的游标会得到 reset 和新 participant-safe snapshot。认证 WebSocket fanout 与浏览器消费尚未接通。快照投影已只读取不超过当前 `event_head_sequence` 的最近 100 条 `discussion.message`；完整的有序公共讨论由独立有界 history 页面提供。completed 页面会停止自动快照轮询、presence heartbeat 以及窗口聚焦/重连刷新，复盘只在直接重载或显式刷新时读取。
 
 ### 11.2 目标多人运行架构
 

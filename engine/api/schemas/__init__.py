@@ -48,6 +48,11 @@ from engine.api.schemas.queries import (
     EvidenceViewedResponse,
 )
 from engine.api.schemas.reviews import ReviewResponse
+from engine.api.schemas.room_events import (
+    DiscussionHistoryPage,
+    ParticipantRoomEvent,
+    ParticipantRoomEventPage,
+)
 from engine.api.schemas.sessions import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -65,6 +70,9 @@ __all__ = [
     "AcceptRoomInviteResponse",
     "CommandActionResponse",
     "CommandReceiptResponse",
+    "DiscussionHistoryPage",
+    "ParticipantRoomEvent",
+    "ParticipantRoomEventPage",
     "SessionEvent",
     "SessionEventPage",
     "AdvanceDenied",

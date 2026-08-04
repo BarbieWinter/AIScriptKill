@@ -737,14 +737,30 @@ ws://host/api/v1/ws/{session_id}
 单条消息 64 KiB、全局 100 个连接、单客户端 4 个连接、每连接每分钟 30 条消息、
 60 秒空闲超时。
 
-### 8.2 未实现的多人事件传输
+### 8.2 参与者安全 HTTP 回放与讨论历史
 
-旧文档中的 `chat.message`、`chat.send`、`action.perform`、`stage.changed`、
-`clue.unlocked`、`evidence.discovered`、`media.*`、`npc.state_changed`、
-`event.triggered` 和 `hint.shown` 示例都不是当前 wire contract。服务端已通过独立
-outbox relay 将稳定事件引用发布到 PostgreSQL NOTIFY；它不发送投影，也不改变 HTTP
-snapshot 作为恢复权威的地位。认证 replay、`room.event` fan-out 和浏览器事件消费仍未
-实现；MP-0 仍只有独立 authoring contract。
+当前 joined member 可以通过以下端点从持久 `session_events` 读取有界升序页面：
+
+```text
+GET /api/v1/sessions/{session_id}/room-events?after_sequence=0&limit=100
+GET /api/v1/sessions/{session_id}/discussion-history?after_sequence=0&limit=100
+```
+
+`room-events` 的 `limit` 范围是 `1..500`，每个事件包含稳定 `event_id`（消费者去重键）、
+`sequence`、`revision`、类型、版本和经服务端白名单验证的公开 payload。响应同时携带当前
+participant-safe snapshot、`event_head_sequence`、确定的 `next_after_sequence` 与 `has_more`；
+HTTP snapshot 仍是恢复权威，NOTIFY 仍只是唤醒引用。
+
+游标超过当前 head 时返回 `INVALID_EVENT_CURSOR`。如果游标早于已保留事件，则 `room-events`
+返回 `reset_required=true` 和新的 participant-safe snapshot，而不会暴露已删除事件。不存在房间和
+非成员访问都返回同一个 `ROOM_REPLAY_UNAVAILABLE` 404，且永不读取或返回其他成员的 command
+receipt、私有角色章节、未揭晓提交或私有状态。
+
+`discussion-history` 是独立的 `1..200` 有界公共讨论页面，用于避免 active snapshot 随累计聊天
+无限增长；routine gameplay snapshot 只保留最近 100 条讨论消息。它不会改写事件或状态。
+
+认证 WebSocket 仍只提供 bootstrap 和 heartbeat。`room.event` fan-out 与浏览器实时消费将在后续
+传输切片接入；它们必须复用上述持久回放与 snapshot 恢复边界，而不能把 WebSocket 变成状态权威。
 
 ## 9. 当前公开错误码
 

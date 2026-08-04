@@ -383,23 +383,79 @@ class SessionCommandRepository:
         session_id: UUID,
         event_type: str,
         through_sequence: int,
+        *,
+        limit: int | None = None,
     ) -> Sequence[dict[str, object]]:
-        rows = (
-            (
-                await self.db.execute(
-                    select(session_events)
-                    .where(
-                        session_events.c.session_id == session_id,
-                        session_events.c.event_type == event_type,
-                        session_events.c.sequence <= through_sequence,
-                    )
-                    .order_by(session_events.c.sequence)
-                )
+        statement = select(session_events).where(
+            session_events.c.session_id == session_id,
+            session_events.c.event_type == event_type,
+            session_events.c.sequence <= through_sequence,
+        )
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be positive")
+            newest_first = (
+                statement.order_by(session_events.c.sequence.desc()).limit(limit).subquery()
             )
+            statement = select(newest_first).order_by(newest_first.c.sequence)
+        else:
+            statement = statement.order_by(session_events.c.sequence)
+        rows = (await self.db.execute(statement)).mappings().all()
+        return cast(Sequence[dict[str, object]], rows)
+
+    async def list_participant_events(
+        self,
+        session_id: UUID,
+        after_sequence: int,
+        limit: int,
+        *,
+        through_sequence: int,
+        event_type: str | None = None,
+    ) -> Sequence[dict[str, object]]:
+        """Read one ordered page of immutable public events, never command receipts."""
+
+        statement = select(session_events).where(
+            session_events.c.session_id == session_id,
+            session_events.c.sequence > after_sequence,
+            session_events.c.sequence <= through_sequence,
+        )
+        if event_type is not None:
+            statement = statement.where(session_events.c.event_type == event_type)
+        rows = (
+            (await self.db.execute(statement.order_by(session_events.c.sequence).limit(limit)))
             .mappings()
             .all()
         )
         return cast(Sequence[dict[str, object]], rows)
+
+    async def first_event_sequence(self, session_id: UUID) -> int | None:
+        """Return the retained floor for detecting cursors compacted from event history."""
+
+        value = (
+            await self.db.execute(
+                select(func.min(session_events.c.sequence)).where(
+                    session_events.c.session_id == session_id
+                )
+            )
+        ).scalar_one()
+        return int(value) if value is not None else None
+
+    async def has_event_after(
+        self,
+        session_id: UUID,
+        after_sequence: int,
+        *,
+        through_sequence: int,
+        event_type: str | None = None,
+    ) -> bool:
+        statement = select(session_events.c.id).where(
+            session_events.c.session_id == session_id,
+            session_events.c.sequence > after_sequence,
+            session_events.c.sequence <= through_sequence,
+        )
+        if event_type is not None:
+            statement = statement.where(session_events.c.event_type == event_type)
+        return (await self.db.execute(statement.limit(1))).scalar_one_or_none() is not None
 
 
 def _lease_deadline(seconds: int):

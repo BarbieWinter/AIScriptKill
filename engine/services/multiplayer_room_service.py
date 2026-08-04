@@ -104,6 +104,7 @@ from engine.services.multiplayer_gameplay_service import (
 )
 
 MAX_MULTIPLAYER_COMMAND_ATTEMPTS = 3
+MAX_SNAPSHOT_DISCUSSION_MESSAGES = 100
 
 
 _LOBBY_COMMANDS = (
@@ -350,6 +351,7 @@ async def get_room_snapshot(
             room.id,
             "discussion.message",
             room.event_head_sequence,
+            limit=MAX_SNAPSHOT_DISCUSSION_MESSAGES,
         )
         members = await repository.joined_members(room.id)
         presence_now = await repository.database_now()
@@ -992,6 +994,7 @@ def _lobby_snapshot(
         session_id=room.id,
         status="lobby",
         revision=room.revision,
+        event_head_sequence=room.event_head_sequence,
         package=LobbyPackageSummary(
             script_id=package.package.id,
             title=package.package.title,
